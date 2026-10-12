@@ -1,12 +1,25 @@
 package com.onetake.app.models
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccessibilityNew
+import androidx.compose.material.icons.outlined.AccountBox
+import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.ui.graphics.vector.ImageVector
+import java.time.Duration
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.util.Locale
 import java.util.UUID
 
-enum class PieceKind(val displayName: String) {
-    HEADSHOT("Headshot"),
-    SLATE("Slate"),
-    FULL_LENGTH("Full length"),
-    SCENE("Scene")
+// Mirrors iOS Models.swift one-to-one so both apps share the same states and copy.
+
+enum class PieceKind(val icon: ImageVector) {
+    Headshot(Icons.Outlined.AccountBox),
+    Slate(Icons.Outlined.Badge),
+    FullLength(Icons.Outlined.AccessibilityNew),
+    Scene(Icons.Outlined.Movie),
 }
 
 data class Piece(
@@ -14,14 +27,14 @@ data class Piece(
     val kind: PieceKind,
     val title: String,
     val detail: String,
-    val isDone: Boolean = false
+    val isDone: Boolean,
 )
 
 data class ScriptLine(
     val id: String = UUID.randomUUID().toString(),
     val character: String,
     val text: String,
-    val isMine: Boolean
+    val isMine: Boolean,
 )
 
 data class ScriptScene(
@@ -30,18 +43,16 @@ data class ScriptScene(
     val title: String,
     val heading: String,
     val lines: List<ScriptLine>,
-    val estimatedSeconds: Int
+    val estimatedSeconds: Int,
 )
 
-enum class AuditionStatus {
-    DUE, READY, SENT
-}
+enum class AuditionStatus { Due, Ready, Sent }
 
-enum class Destination(val displayName: String, val spec: String) {
-    ACTORS_ACCESS("Actors Access", "H.264 .mp4 · 1080p · under 500 MB"),
-    CASTING_NETWORKS("Casting Networks", "H.264 .mp4 · 1080p · up to 300 MB"),
-    SPOTLIGHT("Spotlight", "H.264 .mp4 · 1080p"),
-    EMAIL_OR_LINK("Email or link", "Private link · 30 days")
+enum class Destination(val label: String, val spec: String) {
+    ActorsAccess("Actors Access", "H.264 .mp4 · 1080p · under 500 MB"),
+    CastingNetworks("Casting Networks", "H.264 .mp4 · 1080p · up to 300 MB"),
+    Spotlight("Spotlight", "H.264 .mp4 · 1080p"),
+    EmailOrLink("Email or link", "Private link · 30 days"),
 }
 
 data class Audition(
@@ -51,46 +62,43 @@ data class Audition(
     val role: String,
     val roleSize: String,
     val castingOffice: String,
-    val dueEpochMs: Long,
+    val due: LocalDateTime,
     val asks: List<String>,
     val pieces: List<Piece>,
-    val scenes: List<ScriptScene> = emptyList(),
-    val destination: Destination = Destination.ACTORS_ACCESS,
-    val status: AuditionStatus = AuditionStatus.DUE,
-    val sentDateEpochMs: Long? = null,
-    val headshotAsset: String = "Headshot"
+    val scenes: List<ScriptScene>,
+    val destination: Destination,
+    val status: AuditionStatus,
+    val sentDate: LocalDateTime? = null,
+    val headshotAsset: String = "headshot",
 ) {
     val readyCount: Int get() = pieces.count { it.isDone }
     val totalCount: Int get() = pieces.size
     val nextPiece: Piece? get() = pieces.firstOrNull { !it.isDone }
 
+    /** The single "Next:" line used on Home and on audition rows. */
     val nextAction: String
         get() {
-            if (status == AuditionStatus.SENT) return "Sent · link active"
+            if (status == AuditionStatus.Sent) return "Sent · link active"
             val next = nextPiece ?: return "Watch it once, then send"
             return when (next.kind) {
-                PieceKind.HEADSHOT -> "Take your headshot"
-                PieceKind.SLATE -> "Record the slate"
-                PieceKind.FULL_LENGTH -> "Record the full-length shot"
-                PieceKind.SCENE -> "Record ${next.title}"
+                PieceKind.Headshot -> "Take your headshot"
+                PieceKind.Slate -> "Record the slate"
+                PieceKind.FullLength -> "Record the full-length shot"
+                PieceKind.Scene -> "Record ${next.title}"
             }
         }
 
-    val hoursLeft: Int
-        get() {
-            val diffMs = dueEpochMs - System.currentTimeMillis()
-            return (diffMs / (1000 * 60 * 60)).coerceAtLeast(0).toInt()
-        }
+    val hoursLeft: Int get() = maxOf(0, Duration.between(LocalDateTime.now(), due).toHours().toInt())
 }
 
 data class Take(
     val id: String = UUID.randomUUID().toString(),
     val number: Int,
     val durationSeconds: Int,
-    val recordedAtEpochMs: Long,
+    val recordedAt: LocalDateTime,
     val isCircled: Boolean,
     val notes: List<String>,
-    val videoUri: String? = null
+    val fileUri: String? = null,
 )
 
 data class TapeFinding(
@@ -98,15 +106,15 @@ data class TapeFinding(
     val category: String,
     val title: String,
     val where: String,
-    val advice: String
+    val advice: String,
 )
 
 data class ScheduleItem(
     val id: String = UUID.randomUUID().toString(),
-    val whenDay: String,
+    val whenLabel: String,
     val time: String,
     val title: String,
-    val detail: String
+    val detail: String,
 )
 
 data class PracticePiece(
@@ -114,14 +122,46 @@ data class PracticePiece(
     val title: String,
     val detail: String,
     val linesLearned: Int,
-    val linesTotal: Int
+    val linesTotal: Int,
 )
 
 data class SlateInfo(
     val name: String = "Kabir Sharma",
     val height: String = "5′ 11″",
     val basedIn: String = "Mumbai",
-    val representation: String = ""
+    val representation: String = "",
 ) {
     val spoken: String get() = "$name. $height. $basedIn."
 }
+
+// MARK: - Date formatting helpers (same output as iOS `Date.otDue` / `otDayMonth`)
+
+private val timeFmt = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
+private val dayMonthFmt = DateTimeFormatter.ofPattern("d MMM", Locale.US)
+
+/** "Fri, 10:00 AM" */
+val LocalDateTime.otDue: String
+    get() = "${dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.US)}, ${format(timeFmt)}"
+
+/** "20 Sep" */
+val LocalDateTime.otDayMonth: String get() = format(dayMonthFmt)
+
+/** "FRI" */
+val LocalDateTime.otWeekdayCaps: String get() = dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.US).uppercase()
+
+/** "6:00 PM" */
+val LocalDateTime.otTime: String get() = format(timeFmt)
+
+/** "Tomorrow, 2:30 PM" / "Today, 6:00 PM" / "Fri, 10:00 AM" */
+val LocalDateTime.otRelative: String
+    get() {
+        val days = Duration.between(LocalDateTime.now().toLocalDate().atStartOfDay(), toLocalDate().atStartOfDay()).toDays()
+        return when (days) {
+            0L -> "Today, ${format(timeFmt)}"
+            1L -> "Tomorrow, ${format(timeFmt)}"
+            else -> otDue
+        }
+    }
+
+/** "1:28" */
+fun formatDuration(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)

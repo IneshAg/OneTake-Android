@@ -1,7 +1,10 @@
 package com.onetake.app.ui.home
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,326 +15,414 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.onetake.app.AppViewModel
+import com.onetake.app.AppTab
+import com.onetake.app.LocalAppStore
+import com.onetake.app.LocalNavigator
+import com.onetake.app.Navigator
+import com.onetake.app.Route
+import com.onetake.app.TabBarClearance
 import com.onetake.app.models.Audition
 import com.onetake.app.models.PieceKind
 import com.onetake.app.models.SampleData
-import com.onetake.app.models.ScheduleItem
+import com.onetake.app.models.otDayMonth
+import com.onetake.app.models.otDue
+import com.onetake.app.models.otTime
+import com.onetake.app.ui.components.CircleIconButton
+import com.onetake.app.ui.components.HeadshotImage
+import com.onetake.app.ui.components.OTDivider
+import com.onetake.app.ui.components.PillButton
 import com.onetake.app.ui.components.ReadinessDial
+import com.onetake.app.ui.components.ScheduleRow
 import com.onetake.app.ui.components.SectionLabel
-import com.onetake.app.ui.theme.OneTakeTheme
+import com.onetake.app.ui.components.otCard
+import com.onetake.app.ui.system.Haptics
+import com.onetake.app.ui.system.rememberHaptics
+import com.onetake.app.ui.theme.OT
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
+/** H0 Home — the whole photo card is the button; one "Next:" line, readiness dial top-right. */
 @Composable
-fun HomeScreen(
-    viewModel: AppViewModel,
-    onNavigateToAudition: (String) -> Unit,
-    onNavigateToShoot: (String) -> Unit,
-    onNavigateToPackage: (String) -> Unit,
-    onAddAudition: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val uiState by viewModel.uiState.collectAsState()
-    val nextPriority = viewModel.nextPriority
+fun HomeScreen() {
+    val store = LocalAppStore.current
+    val nav = LocalNavigator.current
+    val haptics = rememberHaptics()
+    val c = OT.colors
+    val next = store.nextPriority
+    val isEmpty = store.auditions.isEmpty()
 
-    Box(modifier = modifier.fillMaxSize().background(OneTakeTheme.colors.bgCanvas)) {
+    Box(Modifier.fillMaxSize().background(c.bgCanvas)) {
         Column(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 20.dp)
+                .statusBarsPadding()
+                .padding(horizontal = OT.dims.gutter)
+                .padding(bottom = TabBarClearance + 24.dp),
         ) {
-            // Header
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
-            ) {
-                Column {
-                    Text(
-                        text = "OneTake",
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = OneTakeTheme.colors.labelPrimary
-                    )
-                    Text(
-                        text = "Actor self-tape studio",
-                        fontSize = 14.sp,
-                        color = OneTakeTheme.colors.labelTertiary
-                    )
-                }
+            HomeHeader(
+                greetingPrefix = when {
+                    isEmpty -> "Welcome"
+                    next == null -> "All clear"
+                    else -> homeGreeting()
+                },
+                firstName = store.slate.name.split(" ").firstOrNull().orEmpty(),
+                onAdd = { nav.showAddAudition() },
+            )
 
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(OneTakeTheme.colors.surfaceCard)
-                        .clickable { onAddAudition() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add Audition",
-                        tint = OneTakeTheme.colors.labelPrimary
-                    )
+            when {
+                next != null -> {
+                    HomeNextPriorityCard(next, Modifier.padding(top = 18.dp)) { homeOpen(next, nav, haptics) }
+                    HomePickUp(Modifier.padding(top = 26.dp))
+                    HomeSchedule(Modifier.padding(top = 22.dp))
                 }
-            }
-
-            // Priority Audition Card
-            if (nextPriority != null) {
-                PriorityAuditionHeroCard(
-                    audition = nextPriority,
-                    onClick = { onNavigateToAudition(nextPriority.id) },
-                    onActionClick = {
-                        val next = nextPriority.nextPiece
-                        if (next == null) {
-                            onNavigateToPackage(nextPriority.id)
-                        } else {
-                            onNavigateToShoot(nextPriority.id)
-                        }
+                isEmpty -> {
+                    HomeFirstRunCard(Modifier.padding(top = 18.dp)) { nav.showAddAudition() }
+                    Column(Modifier.padding(top = 26.dp)) {
+                        SectionLabel("Pick up where you left off")
+                        ScheduleRow(
+                            eyebrow = "PRACTICE",
+                            value = "Any time",
+                            title = "Practise a scene",
+                            detail = "No deadline · nothing is ever sent",
+                            onClick = { nav.push(Route.PracticeSetup) },
+                        )
                     }
-                )
-            } else {
-                FirstRunCard(onAdd = onAddAudition)
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Schedule Section
-            SectionLabel(text = "Upcoming Schedule")
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = OneTakeTheme.colors.surfaceCard,
-                shadowElevation = 1.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    SampleData.schedule.forEachIndexed { index, item ->
-                        ScheduleRow(item = item)
-                        if (index < SampleData.schedule.size - 1) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(1.dp)
-                                    .padding(vertical = 8.dp)
-                                    .background(OneTakeTheme.colors.separator)
-                            )
-                        }
+                    Column(Modifier.padding(top = 22.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SectionLabel("Your schedule")
+                        Text(
+                            "Callbacks, shoots and due dates show here once you add an audition.",
+                            style = OT.type.footnote,
+                            color = c.labelTertiary,
+                        )
                     }
                 }
+                else -> {
+                    val lastSent = store.sent.maxByOrNull { it.sentDate ?: it.due }
+                    HomeAllClearCard(lastSent, Modifier.padding(top = 18.dp)) { nav.push(Route.PracticeSetup) }
+                    HomePickUp(Modifier.padding(top = 26.dp))
+                    HomeSchedule(Modifier.padding(top = 22.dp))
+                }
             }
-
-            Spacer(modifier = Modifier.height(100.dp)) // padding for bottom bar
         }
     }
 }
 
+// MARK: - Header
+
+private val homeDateFmt = DateTimeFormatter.ofPattern("EEEE · MMM d", Locale.US)
+
+private fun homeGreeting(): String {
+    val h = LocalDateTime.now().hour
+    return when {
+        h < 12 -> "Good morning"
+        h < 17 -> "Good afternoon"
+        else -> "Good evening"
+    }
+}
+
 @Composable
-fun PriorityAuditionHeroCard(
-    audition: Audition,
-    onClick: () -> Unit,
-    onActionClick: () -> Unit
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(24.dp),
-        shadowElevation = 6.dp,
-        modifier = Modifier.fillMaxWidth()
+private fun HomeHeader(greetingPrefix: String, firstName: String, onAdd: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 8.dp),
+        verticalAlignment = Alignment.Bottom,
     ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SectionLabel(LocalDateTime.now().format(homeDateFmt))
+            Text(
+                if (firstName.isEmpty()) greetingPrefix else "$greetingPrefix, $firstName",
+                fontSize = 30.sp,
+                lineHeight = 36.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.4).sp,
+                color = OT.colors.labelPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.semantics { heading() },
+            )
+        }
+        CircleIconButton(
+            icon = Icons.Filled.Add,
+            contentDescription = "Add an audition",
+            onClick = onAdd,
+            filled = true,
+        )
+    }
+}
+
+// MARK: - Sections
+
+@Composable
+private fun HomePickUp(modifier: Modifier = Modifier) {
+    val store = LocalAppStore.current
+    val nav = LocalNavigator.current
+    val target = store.auditions.firstOrNull { it.project == "The Last Summer" }
+    val resume = {
+        if (target != null) nav.push(Route.Prepare(target.id, 0)) else nav.select(AppTab.Practice)
+    }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        SectionLabel("Pick up where you left off")
+        ScheduleRow(
+            eyebrow = "LINES",
+            value = "3 of 5",
+            title = "The Last Summer · Scene 1",
+            detail = "Practice · stopped at line 14 of 18",
+            onClick = resume,
+            trailing = { PillButton(text = "Resume", onClick = resume) },
+        )
+    }
+}
+
+@Composable
+private fun HomeSchedule(modifier: Modifier = Modifier) {
+    val store = LocalAppStore.current
+    val nav = LocalNavigator.current
+    val items = SampleData.schedule
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        SectionLabel("Your schedule")
+        items.forEachIndexed { i, item ->
+            ScheduleRow(
+                eyebrow = item.whenLabel,
+                value = item.time,
+                title = item.title,
+                detail = item.detail,
+                onClick = {
+                    store.auditions.firstOrNull { it.project == item.title }?.let { nav.push(Route.AuditionDetail(it.id)) }
+                },
+            )
+            if (i != items.lastIndex) OTDivider()
+        }
+    }
+}
+
+// MARK: - Routing — the card opens whatever the next piece needs
+
+private fun homeOpen(audition: Audition, nav: Navigator, haptics: Haptics) {
+    haptics.impact()
+    val next = audition.nextPiece
+    if (next == null) {
+        nav.push(Route.Package(audition.id))
+        return
+    }
+    when (next.kind) {
+        PieceKind.Headshot -> nav.push(Route.Headshots)
+        PieceKind.Slate, PieceKind.FullLength -> nav.push(Route.ShootSetup(audition.id))
+        PieceKind.Scene ->
+            if (next.title == "Watch it once") nav.push(Route.Package(audition.id))
+            else nav.push(Route.Prepare(audition.id, 0))
+    }
+}
+
+// MARK: - Next priority card
+
+/** Amber reads well on the dark photo scrim (dark-mode `due` token). Amber = time only. */
+private val HomeDueOnPhoto = Color(0xFFE2BE7A)
+
+private fun homeDueText(a: Audition): String {
+    val h = a.hoursLeft
+    return when {
+        h < 24 -> "Due in $h h · ${a.due.otTime}"
+        h < 48 -> "Due tomorrow, ${a.due.otTime}"
+        else -> "Due ${a.due.otDue}"
+    }
+}
+
+@Composable
+private fun homePressScale(src: MutableInteractionSource): Float {
+    val pressed by src.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, label = "homeCardPress")
+    return scale
+}
+
+@Composable
+private fun HomeNextPriorityCard(audition: Audition, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val scale = homePressScale(src)
+    val shape = RoundedCornerShape(OT.dims.cardRadius)
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(360.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(shape)
+            .background(Color(0xFF1F1F1F))
+            .clickable(interactionSource = src, indication = null, role = Role.Button, onClick = onClick),
+    ) {
+        HeadshotImage(Modifier.fillMaxSize(), name = audition.headshotAsset)
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
+            Modifier
+                .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(
-                            OneTakeTheme.colors.accent,
-                            OneTakeTheme.colors.accent.copy(alpha = 0.85f)
-                        )
-                    )
-                )
-                .padding(22.dp)
-        ) {
-            Column {
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.85f)),
+                    ),
+                ),
+        )
+        Column(Modifier.fillMaxSize().padding(20.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                 Row(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    val hours = audition.hoursLeft
-                    val dueText = if (hours < 24) "Due in $hours h" else "Due in ${hours / 24} d"
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White.copy(alpha = 0.2f))
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = dueText,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-
-                    ReadinessDial(
-                        done = audition.readyCount,
-                        total = audition.totalCount,
-                        size = 44.dp,
-                        strokeWidth = 4.dp
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Text(
-                    text = audition.project,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-
-                Text(
-                    text = "${audition.projectType} · ${audition.role}",
-                    fontSize = 15.sp,
-                    color = Color.White.copy(alpha = 0.85f)
-                )
-
-                Spacer(modifier = Modifier.height(18.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(Color.White.copy(alpha = 0.25f))
-                )
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onActionClick() }
-                        .padding(vertical = 4.dp)
-                ) {
+                    Icon(Icons.Filled.Schedule, contentDescription = null, tint = HomeDueOnPhoto, modifier = Modifier.size(14.dp))
                     Text(
-                        text = "Next: ${audition.nextAction}",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
+                        homeDueText(audition),
+                        style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
                         color = Color.White,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
+                        maxLines = 1,
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.35f))
+                        .padding(6.dp),
+                ) {
+                    ReadinessDial(done = audition.readyCount, total = audition.totalCount, onDark = true)
+                }
             }
-        }
-    }
-}
-
-@Composable
-fun ScheduleRow(item: ScheduleItem) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp)
-    ) {
-        Column(modifier = Modifier.width(90.dp)) {
+            Spacer(Modifier.weight(1f))
+            Text("NEXT PRIORITY", style = OT.type.eyebrow, color = Color.White.copy(alpha = 0.8f))
             Text(
-                text = item.whenDay,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = OneTakeTheme.colors.accent
+                audition.project,
+                style = OT.type.hero,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
             )
             Text(
-                text = item.time,
-                fontSize = 13.sp,
-                color = OneTakeTheme.colors.labelSecondary
+                "${audition.projectType} · ${audition.role}",
+                style = OT.type.callout,
+                color = Color.White.copy(alpha = 0.85f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = item.title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = OneTakeTheme.colors.labelPrimary
-            )
-            Text(
-                text = item.detail,
-                fontSize = 13.sp,
-                color = OneTakeTheme.colors.labelTertiary
-            )
-        }
-    }
-}
-
-@Composable
-fun FirstRunCard(onAdd: () -> Unit) {
-    Surface(
-        onClick = onAdd,
-        shape = RoundedCornerShape(24.dp),
-        color = OneTakeTheme.colors.surfaceCard,
-        shadowElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
             Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(OneTakeTheme.colors.accent),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = null,
-                    tint = OneTakeTheme.colors.labelOnAccent
+                Modifier
+                    .padding(vertical = 12.dp)
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Color.White.copy(alpha = 0.25f)),
+            )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Next: ${audition.nextAction}",
+                    style = OT.type.headline,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "Add your first audition",
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold,
-                color = OneTakeTheme.colors.labelPrimary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "Paste a casting notice or add sides. OneTake works out what they want.",
-                fontSize = 14.sp,
-                color = OneTakeTheme.colors.labelSecondary
-            )
         }
     }
+}
+
+// MARK: - First run (H0a) and all clear (H0b)
+
+@Composable
+private fun HomeInfoCard(
+    modifier: Modifier,
+    onClick: () -> Unit,
+    badge: @Composable () -> Unit,
+    title: String,
+    body: String,
+    nextLine: String,
+) {
+    val c = OT.colors
+    val src = remember { MutableInteractionSource() }
+    val scale = homePressScale(src)
+    Column(
+        modifier
+            .fillMaxWidth()
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .otCard(OT.dims.cardRadius, c.surfaceCard)
+            .clickable(interactionSource = src, indication = null, role = Role.Button, onClick = onClick)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        badge()
+        Text(title, fontSize = 24.sp, lineHeight = 30.sp, fontWeight = FontWeight.Bold, color = c.labelPrimary)
+        Text(body, style = OT.type.callout, color = c.labelSecondary)
+        OTDivider(Modifier.padding(vertical = 4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(nextLine, style = OT.type.headline, color = c.labelPrimary, modifier = Modifier.weight(1f))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = c.labelTertiary, modifier = Modifier.size(22.dp))
+        }
+    }
+}
+
+@Composable
+private fun HomeFirstRunCard(modifier: Modifier = Modifier, onAdd: () -> Unit) {
+    val c = OT.colors
+    HomeInfoCard(
+        modifier = modifier,
+        onClick = onAdd,
+        badge = {
+            Box(Modifier.size(44.dp).clip(CircleShape).background(c.accent), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.Add, contentDescription = null, tint = c.labelOnAccent, modifier = Modifier.size(24.dp))
+            }
+        },
+        title = "Add your first audition",
+        body = "Paste a casting notice, scan the sides or forward the email. OneTake works out what they want.",
+        nextLine = "Next: Paste a casting notice",
+    )
+}
+
+@Composable
+private fun HomeAllClearCard(lastSent: Audition?, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val c = OT.colors
+    val sentDate = lastSent?.sentDate
+    HomeInfoCard(
+        modifier = modifier,
+        onClick = onClick,
+        badge = {
+            Box(Modifier.size(44.dp).clip(CircleShape).background(c.success), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+        },
+        title = "Nothing due this week",
+        body = if (lastSent != null && sentDate != null) {
+            "${lastSent.project} was sent ${sentDate.otDayMonth} · link active 22 days"
+        } else {
+            "Every audition is sent. Add a new one from +."
+        },
+        nextLine = "Next: Run a scene to stay sharp",
+    )
 }

@@ -9,14 +9,14 @@ import com.onetake.app.ui.theme.OneTakeTheme
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: AppViewModel by viewModels()
+    private val store: AppStore by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             OneTakeTheme {
-                OneTakeApp(viewModel = viewModel)
+                OneTakeApp(store = store)
             }
         }
     }

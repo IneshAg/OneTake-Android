@@ -158,6 +158,16 @@ fun ProfileScreen() {
         )
 
         Spacer(Modifier.height(20.dp))
+        SectionLabel("Appearance")
+        ToggleRow(
+            title = "Liquid Glass",
+            detail = if (com.onetake.app.ui.components.isGlassSupported()) "Real-time backdrop refraction on floating nav bar" else "Requires Android 12+",
+            checked = store.liquidGlass && com.onetake.app.ui.components.isGlassSupported(),
+            onCheckedChange = { store.liquidGlass = it },
+            showDivider = false,
+        )
+
+        Spacer(Modifier.height(20.dp))
         SectionLabel("More")
         ListRow(title = "Multi-Device", onClick = {
             store.auditions.firstOrNull()?.let { nav.push(Route.MultiDevice(it.id)) }

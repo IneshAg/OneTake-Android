@@ -21,7 +21,6 @@ import java.time.LocalDateTime
  * so any screen reading a property recomposes when it changes. No StateFlow plumbing needed.
  */
 class AppStore : ViewModel() {
-    // Session
     var isOnboarded by mutableStateOf(false)
     var slate by mutableStateOf(SlateInfo())
 
@@ -42,6 +41,7 @@ class AppStore : ViewModel() {
     var notifyMessages by mutableStateOf(true)
     var notifyDelivery by mutableStateOf(true)
     var notifyPractice by mutableStateOf(false)
+    var liquidGlass by mutableStateOf(true)
 
     // MARK: Lookup
 

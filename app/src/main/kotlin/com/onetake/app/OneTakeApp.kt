@@ -2,6 +2,8 @@ package com.onetake.app
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -42,7 +44,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.vector.ImageVector
+import com.onetake.app.ui.components.LocalAppBackdrop
+import com.onetake.app.ui.components.LocalLiquidGlassEnabled
+import com.onetake.app.ui.components.backdrop.backdrops.layerBackdrop
+import com.onetake.app.ui.components.backdrop.backdrops.rememberLayerBackdrop
+import com.onetake.app.ui.components.isGlassSupported
+import com.onetake.app.ui.components.navbar.LiquidGlassNavBar
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -100,6 +107,7 @@ fun OneTakeApp(store: AppStore) {
 
 @Composable
 private fun RootTabs() {
+    val store = LocalAppStore.current
     val nav = rememberNavController()
     val navigator = remember(nav) { Navigator(nav) }
     val entry by nav.currentBackStackEntryAsState()
@@ -107,12 +115,28 @@ private fun RootTabs() {
     LaunchedEffect(route) { navigator.syncTab(route) }
     val showBar = AppTab.entries.any { it.route == route }
 
-    CompositionLocalProvider(LocalNavigator provides navigator) {
+    val windowBackground = OT.colors.bgCanvas
+    val paintBackdrop: androidx.compose.ui.graphics.drawscope.ContentDrawScope.() -> Unit = remember(windowBackground) {
+        {
+            drawRect(windowBackground)
+            drawContent()
+        }
+    }
+    val appBackdrop = rememberLayerBackdrop(onDraw = paintBackdrop)
+    val glassActive = store.liquidGlass && isGlassSupported()
+
+    CompositionLocalProvider(
+        LocalNavigator provides navigator,
+        LocalAppBackdrop provides appBackdrop,
+        LocalLiquidGlassEnabled provides glassActive,
+    ) {
         Box(Modifier.fillMaxSize().background(OT.colors.bgCanvas)) {
             NavHost(
                 navController = nav,
                 startDestination = AppTab.Home.route,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(if (glassActive) Modifier.layerBackdrop(appBackdrop) else Modifier),
                 // iOS-style push: new screen slides in from the right, old one shifts a little.
                 enterTransition = { slideInHorizontally(tween(300)) { it } },
                 exitTransition = { slideOutHorizontally(tween(300)) { -it / 4 } + fadeOut(tween(300)) },
@@ -154,7 +178,10 @@ private fun RootTabs() {
                 exit = fadeOut() + slideOutVertically { it },
                 modifier = Modifier.align(Alignment.BottomCenter),
             ) {
-                FloatingTabBar(selected = navigator.tab, onSelect = navigator::select)
+                com.onetake.app.ui.components.navbar.LiquidGlassNavBar(
+                    selected = navigator.tab,
+                    onSelect = navigator::select,
+                )
             }
 
             if (navigator.isAddAuditionVisible) {
@@ -169,10 +196,10 @@ private fun RootTabs() {
 private fun NavGraphBuilder.tabRoot(tab: AppTab, content: @Composable () -> Unit) {
     composable(
         tab.route,
-        enterTransition = { fadeIn(tween(150)) },
-        exitTransition = { fadeOut(tween(150)) },
-        popEnterTransition = { fadeIn(tween(150)) },
-        popExitTransition = { fadeOut(tween(150)) },
+        enterTransition = { EnterTransition.None },
+        exitTransition = { ExitTransition.None },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition = { ExitTransition.None },
     ) { content() }
 }
 
@@ -209,83 +236,6 @@ private fun NavGraphBuilder.cameraRoute(
     ) { content(it) }
 }
 
-// MARK: - Floating tab bar (matches the Figma tab bar: pill with 4 tabs + separate round search)
-
-private data class TabSpec(val tab: AppTab, val icon: ImageVector)
-
-private val tabSpecs = listOf(
-    TabSpec(AppTab.Home, Icons.Filled.Home),
-    TabSpec(AppTab.Auditions, Icons.Filled.Movie),
-    TabSpec(AppTab.Practice, Icons.Filled.TheaterComedy),
-    TabSpec(AppTab.Profile, Icons.Filled.AccountCircle),
-)
-
-@Composable
-private fun FloatingTabBar(selected: AppTab, onSelect: (AppTab) -> Unit) {
-    val c = OT.colors
-    val barBg = if (c.isDark) c.surfaceRaised else c.surfaceCard
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .height(62.dp)
-                .shadow(16.dp, CircleShape, ambientColor = c.labelPrimary.copy(alpha = 0.10f), spotColor = c.labelPrimary.copy(alpha = 0.14f))
-                .clip(CircleShape)
-                .background(barBg)
-                .border(0.5.dp, c.separator, CircleShape)
-                .padding(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            tabSpecs.forEach { spec ->
-                val isSel = spec.tab == selected
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxSize()
-                        .clip(CircleShape)
-                        .background(if (isSel) c.fillField else barBg)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            role = Role.Tab,
-                        ) { onSelect(spec.tab) }
-                        .semantics { this.selected = isSel },
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Icon(spec.icon, contentDescription = null, tint = if (isSel) c.accent else c.labelPrimary, modifier = Modifier.size(24.dp))
-                    Text(
-                        spec.tab.label,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (isSel) c.accent else c.labelPrimary,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-        Box(
-            modifier = Modifier
-                .size(62.dp)
-                .shadow(16.dp, CircleShape, ambientColor = c.labelPrimary.copy(alpha = 0.10f), spotColor = c.labelPrimary.copy(alpha = 0.14f))
-                .clip(CircleShape)
-                .background(if (selected == AppTab.Search) c.fillField else barBg)
-                .border(0.5.dp, c.separator, CircleShape)
-                .clickable(role = Role.Tab) { onSelect(AppTab.Search) }
-                .semantics { contentDescription = "Search"; this.selected = selected == AppTab.Search },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.Search, contentDescription = null, tint = if (selected == AppTab.Search) c.accent else c.labelPrimary, modifier = Modifier.size(26.dp))
-        }
-    }
-}
 
 /** Bottom space each tab-root screen leaves so content can scroll above the floating bar. */
 val TabBarClearance = 96.dp

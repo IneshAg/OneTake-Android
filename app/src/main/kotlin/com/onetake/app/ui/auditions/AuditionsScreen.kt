@@ -552,12 +552,14 @@ private fun AuditionsEmptyState(onAdd: () -> Unit) {
     ) {
         AuditionsEmptyIllustration()
         Text("No auditions yet", style = OT.type.title, color = c.labelPrimary, modifier = Modifier.semantics { heading() })
+        /**
         Text(
             "Share the notice to OneTake from Mail, Safari or WhatsApp, or add it here. OneTake builds your slate, headshot and scene checklist from it.",
             style = OT.type.callout,
             color = c.labelSecondary,
         )
         PrimaryButton(text = "Add your first audition", onClick = onAdd, icon = Icons.Filled.Add, iconTrailing = true)
+        **/
     }
 }
 

@@ -113,7 +113,7 @@ fun PracticeScreen() {
             }
             LargeTitle("Practice", subtitle = "Nothing due? Run a scene anyway.")
             Spacer(Modifier.height(16.dp))
-
+/**
             // Weekly minutes
             OTCard(modifier = Modifier.fillMaxWidth(), radius = 20.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -125,7 +125,7 @@ fun PracticeScreen() {
                 }
             }
             Spacer(Modifier.height(22.dp))
-
+**/
             // Pick up where you left off
             val piece = store.practice.first()
             OTCard(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(18.dp)) {

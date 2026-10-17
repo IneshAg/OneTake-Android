@@ -69,7 +69,7 @@ import androidx.navigation.navArgument
 import com.onetake.app.ui.auditions.AddAuditionSheet
 import com.onetake.app.ui.auditions.AuditionDetailScreen
 import com.onetake.app.ui.auditions.AuditionsScreen
-import com.onetake.app.ui.auditions.SearchScreen
+import com.onetake.app.ui.search.SearchScreen
 import com.onetake.app.ui.home.HomeScreen
 import com.onetake.app.ui.onboarding.OnboardingFlow
 import com.onetake.app.ui.packageview.PackageScreen

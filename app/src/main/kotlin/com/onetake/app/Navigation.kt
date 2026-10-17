@@ -8,12 +8,10 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 
-/** Bottom-bar tabs. Search is the separate round button, like the iOS 26 tab bar in the designs. */
+/** Bottom-bar tabs: Auditions, Practice, and Search. */
 enum class AppTab(val route: String, val label: String) {
-    Home("home", "Home"),
     Auditions("auditions", "Auditions"),
     Practice("practice", "Practice"),
-    Profile("profile", "Profile"),
     Search("search", "Search"),
 }
 
@@ -70,7 +68,7 @@ sealed class CameraFlow(val path: String) {
  */
 @Stable
 class Navigator(private val nav: NavHostController) {
-    var tab by mutableStateOf(AppTab.Home)
+    var tab by mutableStateOf(AppTab.Auditions)
         private set
     var isAddAuditionVisible by mutableStateOf(false)
 

@@ -89,13 +89,11 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private data class NavTabItem(val tab: AppTab, val icon: ImageVector)
+internal data class NavTabItem(val tab: AppTab, val icon: ImageVector)
 
-private val primaryTabs = listOf(
-    NavTabItem(AppTab.Home, Icons.Filled.Home),
+internal val primaryTabs = listOf(
     NavTabItem(AppTab.Auditions, Icons.Filled.Movie),
     NavTabItem(AppTab.Practice, Icons.Filled.TheaterComedy),
-    NavTabItem(AppTab.Profile, Icons.Filled.AccountCircle),
 )
 
 private fun Modifier.pillPlacement(center: () -> Offset, size: () -> Size): Modifier =

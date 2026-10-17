@@ -133,7 +133,7 @@ private fun RootTabs() {
         Box(Modifier.fillMaxSize().background(OT.colors.bgCanvas)) {
             NavHost(
                 navController = nav,
-                startDestination = AppTab.Home.route,
+                startDestination = AppTab.Auditions.route,
                 modifier = Modifier
                     .fillMaxSize()
                     .then(if (glassActive) Modifier.layerBackdrop(appBackdrop) else Modifier),
@@ -143,11 +143,11 @@ private fun RootTabs() {
                 popEnterTransition = { slideInHorizontally(tween(300)) { -it / 4 } + fadeIn(tween(300)) },
                 popExitTransition = { slideOutHorizontally(tween(300)) { it } },
             ) {
-                tabRoot(AppTab.Home) { HomeScreen() }
                 tabRoot(AppTab.Auditions) { AuditionsScreen() }
                 tabRoot(AppTab.Practice) { PracticeScreen() }
-                tabRoot(AppTab.Profile) { ProfileScreen() }
                 tabRoot(AppTab.Search) { SearchScreen() }
+                composable("home") { HomeScreen() }
+                composable("profile") { ProfileScreen() }
 
                 withId(Route.Pattern.AUDITION) { AuditionDetailScreen(it) }
                 withIdScene(Route.Pattern.PREPARE) { id, s -> PrepareScreen(id, s) }

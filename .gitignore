@@ -15,3 +15,6 @@ build/
 local.properties
 /BitChord-main
 .idea/
+
+.superpowers/
+docs/

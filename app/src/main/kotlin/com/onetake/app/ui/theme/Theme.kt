@@ -103,6 +103,34 @@ val DarkOT = OTColors(
     isDark = true,
 )
 
+/** Studio appearance finishes for dark OLED mode. */
+enum class StudioFinish {
+    VELVET,
+    OBSIDIAN,
+}
+
+val OledVelvetOT = DarkOT.copy(
+    bgCanvas = Color(0xFF000000),
+    surfaceCard = Color(0xFF0D0B10),
+    surfaceSunken = Color(0xFF141118),
+    surfaceRaised = Color(0xFF17131B),
+    accent = Color(0xFFC8A8E0),
+    accentSoft = Color(0x33C8A8E0),
+    isDark = true,
+)
+
+val OledObsidianOT = DarkOT.copy(
+    bgCanvas = Color(0xFF000000),
+    surfaceCard = Color(0xFF0D0D10),
+    surfaceSunken = Color(0xFF141416),
+    surfaceRaised = Color(0xFF1A1A1E),
+    accent = Color(0xFFFFFFFF),
+    accentSoft = Color(0x33FFFFFF),
+    labelSecondary = Color(0xFF86868B),
+    due = Color(0xFFFFFFFF),
+    isDark = true,
+)
+
 /** Camera screens are always dark, whatever the system theme. */
 object CameraColors {
     val bg = hex(0x0C0B0D)
@@ -122,11 +150,14 @@ object OTDims {
 }
 
 val LocalOT = staticCompositionLocalOf { LightOT }
+val LocalStudioFinish = staticCompositionLocalOf { StudioFinish.VELVET }
 
 /** Access tokens anywhere: `OT.colors.accent`, `OT.type.headline`. */
 object OT {
     val colors: OTColors
         @Composable get() = LocalOT.current
+    val finish: StudioFinish
+        @Composable get() = LocalStudioFinish.current
     val type = OTType
     val dims = OTDims
     val camera = CameraColors
@@ -135,9 +166,17 @@ object OT {
 @Composable
 fun OneTakeTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    studioFinish: StudioFinish = LocalStudioFinish.current,
     content: @Composable () -> Unit,
 ) {
-    val c = if (darkTheme) DarkOT else LightOT
+    val c = if (darkTheme) {
+        when (studioFinish) {
+            StudioFinish.VELVET -> OledVelvetOT
+            StudioFinish.OBSIDIAN -> OledObsidianOT
+        }
+    } else {
+        LightOT
+    }
     val scheme = if (darkTheme) {
         darkColorScheme(
             primary = c.accent, onPrimary = c.labelOnAccent,
@@ -180,7 +219,10 @@ fun OneTakeTheme(
         }
     }
 
-    CompositionLocalProvider(LocalOT provides c) {
+    CompositionLocalProvider(
+        LocalOT provides c,
+        LocalStudioFinish provides studioFinish,
+    ) {
         MaterialTheme(colorScheme = scheme, typography = MaterialTypography, content = content)
     }
 }

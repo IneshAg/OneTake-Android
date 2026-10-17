@@ -85,18 +85,27 @@ import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.rememberHaptics
+import com.onetake.app.ui.practice.components.PracticeTopBar
+import com.onetake.app.ui.practice.components.PracticeHeroCard
+import com.onetake.app.ui.practice.components.LineLearningGym
+import com.onetake.app.ui.practice.components.PracticeRepertoireList
 import com.onetake.app.ui.theme.OT
 
-// MARK: - 24 Practice (tab root) / 24a empty
+// MARK: - 24 Practice (tab root) - System 2 Monolithic Studio
 
 @Composable
-fun PracticeScreen() {
+fun PracticeScreen(
+    onOpenProfile: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val c = OT.colors
 
+    val activePiece = store.practice.firstOrNull()
+
     Column(
-        Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(c.bgCanvas)
             .verticalScroll(rememberScrollState())
@@ -104,127 +113,72 @@ fun PracticeScreen() {
             .padding(horizontal = OT.dims.gutter)
             .padding(bottom = TabBarClearance),
     ) {
-        if (store.practice.isEmpty()) {
-            PracticeEmptyState()
-        } else {
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Spacer(Modifier.weight(1f))
-                CircleIconButton(Icons.Filled.Add, "Practise a new scene", onClick = { nav.push(Route.PracticeSetup) }, filled = true)
-            }
-            LargeTitle("Practice", subtitle = "Nothing due? Run a scene anyway.")
-            Spacer(Modifier.height(16.dp))
-/**
-            // Weekly minutes
-            OTCard(modifier = Modifier.fillMaxWidth(), radius = 20.dp) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    ProgressRing(value = 42f / 60f, modifier = Modifier.size(60.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("42 of 60 min this week", style = OT.type.headline, color = c.labelPrimary)
-                        Text("4 sessions · 2 takes kept · on track", style = OT.type.footnote, color = c.labelTertiary)
-                    }
-                }
-            }
-            Spacer(Modifier.height(22.dp))
-**/
-            // Pick up where you left off
-            val piece = store.practice.first()
-            OTCard(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(18.dp)) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionLabel("Pick up where you left off")
-                    Text(piece.title, style = OT.type.title, color = c.labelPrimary)
-                    Text("${piece.detail} · 3 takes so far", style = OT.type.footnote, color = c.labelTertiary)
-                    ReadinessDashes(done = piece.linesLearned, total = piece.linesTotal)
-                    Text(
-                        "Off-book · ${piece.linesLearned} of ${piece.linesTotal} lines",
-                        style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                        color = c.labelPrimary,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        PrimaryButton(
-                            text = "Run lines",
-                            onClick = { store.auditions.firstOrNull()?.let { nav.push(Route.RunLines(it.id, 0)) } },
-                            modifier = Modifier.weight(1f),
-                            icon = Icons.Filled.PlayArrow,
-                            iconTrailing = true,
-                        )
-                        SecondaryButton(
-                            text = "Record a take",
-                            onClick = { nav.openCamera(CameraFlow.PracticeTake) },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(22.dp))
-
-            SectionLabel("Warm-ups · 2 to 5 min")
-            Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                PracticeWarmup(Icons.Filled.Visibility, "Cold read", "One look, then lines hide", Modifier.weight(1f))
-                PracticeWarmup(Icons.Filled.CheckCircle, "Off-book check", "Say it all, lines hidden", Modifier.weight(1f))
-                PracticeWarmup(Icons.Filled.Badge, "Slate run", "Until it’s smooth", Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(22.dp))
-
-            SectionLabel("Your pieces")
-            store.practice.forEach { p ->
-                ListRow(title = p.title, detail = p.detail, onClick = { nav.push(Route.PracticeSetup) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun PracticeWarmup(icon: ImageVector, title: String, detail: String, modifier: Modifier = Modifier) {
-    val c = OT.colors
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Icon(icon, null, tint = c.accent, modifier = Modifier.size(22.dp))
-        Text(title, style = OT.type.headline, color = c.labelPrimary)
-        Text(detail, style = OT.type.footnote, color = c.labelTertiary)
-    }
-}
-
-@Composable
-private fun PracticeEmptyState() {
-    val nav = LocalNavigator.current
-    val c = OT.colors
-    Spacer(Modifier.height(48.dp))
-    LargeTitle("Practice")
-    Spacer(Modifier.height(16.dp))
-
-    // Illustration: stacked script pages with the masks badge.
-    Box(Modifier.size(width = 170.dp, height = 140.dp)) {
-        Box(
-            Modifier.offset(x = 14.dp, y = 6.dp).size(120.dp, 120.dp).rotate(-6f)
-                .clip(RoundedCornerShape(14.dp)).background(c.surfaceSunken),
+        // 1. Top Action Bar: Heavy "Practice" title + [ + Import ] + [ Avatar ]
+        PracticeTopBar(
+            onAddClick = { nav.push(Route.PracticeSetup) },
+            onAvatarClick = { onOpenProfile?.invoke() },
         )
-        Column(
-            Modifier.offset(x = 30.dp, y = 10.dp).size(100.dp, 110.dp)
-                .clip(RoundedCornerShape(12.dp)).background(c.surfaceCard).padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            listOf(0.6f, 0.9f, 0.8f, 0.7f).forEach { w ->
-                Box(Modifier.fillMaxWidth(w).height(5.dp).clip(CircleShape).background(c.fillQuiet))
-            }
-        }
-        Box(
-            Modifier.offset(x = 110.dp, y = 84.dp).size(40.dp).clip(CircleShape).background(c.accent),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Filled.TheaterComedy, null, tint = c.labelOnAccent, modifier = Modifier.size(22.dp)) }
+
+        Spacer(Modifier.height(16.dp))
+
+        // 2. Monolithic Hero Stage Card: Interactive Scene Partner (ActOnCue "On Cue" Perform Mode)
+        PracticeHeroCard(
+            title = activePiece?.title ?: "Hamlet",
+            subtitle = if (activePiece != null) {
+                "${activePiece.detail} · Interactive Reader Active"
+            } else {
+                "Act III, Scene 1 · Interactive Reader Active"
+            },
+            eyebrow = "SCENE PARTNER · ON CUE",
+            onClick = {
+                val auditionId = store.auditions.firstOrNull()?.id
+                if (auditionId != null) {
+                    nav.push(Route.RunLines(auditionId, 0))
+                } else {
+                    nav.push(Route.PracticeSetup)
+                }
+            },
+        )
+
+        Spacer(Modifier.height(28.dp))
+
+        // 3. Inset Gym Roster: ActOnCue-inspired Line Learning Modes
+        LineLearningGym(
+            onSelectMode = { mode ->
+                when (mode) {
+                    LineLearningMode.FIRST_LETTER,
+                    LineLearningMode.MASK_AND_REVEAL,
+                    LineLearningMode.AUDIO_GAP -> {
+                        val auditionId = store.auditions.firstOrNull()?.id
+                        if (auditionId != null) {
+                            nav.push(Route.RunLines(auditionId, 0))
+                        } else {
+                            nav.push(Route.PracticeSetup)
+                        }
+                    }
+                    LineLearningMode.HANDS_FREE_WALK -> {
+                        nav.openCamera(CameraFlow.PracticeTake)
+                    }
+                }
+            },
+        )
+
+        Spacer(Modifier.height(28.dp))
+
+        // 4. Inset Roster: Saved Scripts & Assigned Voice Partners
+        PracticeRepertoireList(
+            pieces = store.practice,
+            onPieceClick = { piece ->
+                val auditionId = store.auditions.firstOrNull()?.id
+                if (auditionId != null) {
+                    nav.push(Route.RunLines(auditionId, 0))
+                } else {
+                    nav.push(Route.PracticeSetup)
+                }
+            },
+            onAddScriptClick = { nav.push(Route.PracticeSetup) },
+        )
     }
-    Spacer(Modifier.height(12.dp))
-    Text("Practise anything, no deadline needed", style = OT.type.title.copy(fontSize = 24.sp, lineHeight = 29.sp), color = c.labelPrimary)
-    Spacer(Modifier.height(8.dp))
-    Text("A monologue you love, a scene from class, sides from an old audition.", style = OT.type.callout, color = c.labelSecondary)
-    Spacer(Modifier.height(12.dp))
-    // Reader is the actor's own recorded voice only.
-    ListRow(title = "Record the other part in your own voice", showChevron = false)
-    ListRow(title = "Record takes and watch yourself back", showChevron = false)
-    ListRow(title = "Nothing is ever sent anywhere", showChevron = false, showDivider = false)
-    Spacer(Modifier.height(16.dp))
-    PrimaryButton("Practise a scene", onClick = { nav.push(Route.PracticeSetup) })
-    Spacer(Modifier.height(10.dp))
-    SecondaryButton("Try a 2-minute cold read", onClick = { nav.openCamera(CameraFlow.PracticeTake) })
 }
 
 // MARK: - 24b / 24c Practise a scene

@@ -161,7 +161,9 @@ private fun RootTabs(
                 tabRoot(AppTab.Auditions) {
                     AuditionsScreen(onOpenProfile = { isProfileSheetVisible = true })
                 }
-                tabRoot(AppTab.Practice) { PracticeScreen() }
+                tabRoot(AppTab.Practice) {
+                    PracticeScreen(onOpenProfile = { isProfileSheetVisible = true })
+                }
                 tabRoot(AppTab.Search) { SearchScreen() }
                 composable("home") { HomeScreen() }
                 composable("profile") { ProfileScreen() }

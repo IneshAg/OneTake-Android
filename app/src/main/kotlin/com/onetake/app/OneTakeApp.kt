@@ -39,7 +39,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -92,21 +94,33 @@ import com.onetake.app.ui.shoot.ShootModeScreen
 import com.onetake.app.ui.shoot.ShootSetupScreen
 import com.onetake.app.ui.takes.TakesScreen
 import com.onetake.app.ui.takes.TapeCheckScreen
+import com.onetake.app.ui.profile.ProfileSheet
 import com.onetake.app.ui.theme.OT
+import com.onetake.app.ui.theme.StudioFinish
 
 @Composable
-fun OneTakeApp(store: AppStore) {
+fun OneTakeApp(
+    store: AppStore,
+    currentFinish: StudioFinish = StudioFinish.VELVET,
+    onSelectFinish: (StudioFinish) -> Unit = {},
+) {
     CompositionLocalProvider(LocalAppStore provides store) {
         if (!store.isOnboarded) {
             OnboardingFlow()
         } else {
-            RootTabs()
+            RootTabs(
+                currentFinish = currentFinish,
+                onSelectFinish = onSelectFinish,
+            )
         }
     }
 }
 
 @Composable
-private fun RootTabs() {
+private fun RootTabs(
+    currentFinish: StudioFinish,
+    onSelectFinish: (StudioFinish) -> Unit,
+) {
     val store = LocalAppStore.current
     val nav = rememberNavController()
     val navigator = remember(nav) { Navigator(nav) }
@@ -114,6 +128,7 @@ private fun RootTabs() {
     val route = entry?.destination?.route
     LaunchedEffect(route) { navigator.syncTab(route) }
     val showBar = AppTab.entries.any { it.route == route }
+    var isProfileSheetVisible by remember { mutableStateOf(false) }
 
     val windowBackground = OT.colors.bgCanvas
     val paintBackdrop: androidx.compose.ui.graphics.drawscope.ContentDrawScope.() -> Unit = remember(windowBackground) {
@@ -143,7 +158,9 @@ private fun RootTabs() {
                 popEnterTransition = { slideInHorizontally(tween(300)) { -it / 4 } + fadeIn(tween(300)) },
                 popExitTransition = { slideOutHorizontally(tween(300)) { it } },
             ) {
-                tabRoot(AppTab.Auditions) { AuditionsScreen() }
+                tabRoot(AppTab.Auditions) {
+                    AuditionsScreen(onOpenProfile = { isProfileSheetVisible = true })
+                }
                 tabRoot(AppTab.Practice) { PracticeScreen() }
                 tabRoot(AppTab.Search) { SearchScreen() }
                 composable("home") { HomeScreen() }
@@ -186,6 +203,14 @@ private fun RootTabs() {
 
             if (navigator.isAddAuditionVisible) {
                 AddAuditionSheet(onDismiss = { navigator.isAddAuditionVisible = false })
+            }
+
+            if (isProfileSheetVisible) {
+                ProfileSheet(
+                    currentFinish = currentFinish,
+                    onSelectFinish = onSelectFinish,
+                    onDismiss = { isProfileSheetVisible = false },
+                )
             }
         }
     }

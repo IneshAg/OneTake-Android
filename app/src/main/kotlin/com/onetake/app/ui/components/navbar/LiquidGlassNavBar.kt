@@ -77,6 +77,7 @@ import com.onetake.app.ui.components.PILL_INSET
 import com.onetake.app.ui.components.SQUASH
 import com.onetake.app.ui.components.STRETCH
 import com.onetake.app.ui.components.TAB_ICON_LABEL_GAP
+import com.onetake.app.ui.components.SFSymbols
 import com.onetake.app.ui.components.floatingBarInsets
 import com.onetake.app.ui.components.glassContentColor
 import com.onetake.app.ui.components.glassIndicatorColor
@@ -92,8 +93,8 @@ import kotlin.math.roundToInt
 internal data class NavTabItem(val tab: AppTab, val icon: ImageVector)
 
 internal val primaryTabs = listOf(
-    NavTabItem(AppTab.Auditions, Icons.Filled.Movie),
-    NavTabItem(AppTab.Practice, Icons.Filled.TheaterComedy),
+    NavTabItem(AppTab.Auditions, SFSymbols.MovieClapperFill),
+    NavTabItem(AppTab.Practice, SFSymbols.TheaterMasksFill),
 )
 
 private fun Modifier.pillPlacement(center: () -> Offset, size: () -> Size): Modifier =

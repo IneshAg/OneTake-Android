@@ -15,4 +15,17 @@ class NavigationTest {
     fun testPrimaryTabsContainsExactlyAuditionsAndPractice() {
         assertEquals(listOf(AppTab.Auditions, AppTab.Practice), primaryTabs.map { it.tab })
     }
+
+    @Test
+    fun testPrimaryTabsUseExpectedSFSymbols() {
+        assertEquals("movieclapper.fill", primaryTabs[0].icon.name)
+        assertEquals("theatermasks.fill", primaryTabs[1].icon.name)
+    }
+
+    @Test
+    fun testSFSymbolsDefinitions() {
+        assertEquals("movieclapper.fill", com.onetake.app.ui.components.SFSymbols.MovieClapperFill.name)
+        assertEquals("theatermasks.fill", com.onetake.app.ui.components.SFSymbols.TheaterMasksFill.name)
+        assertEquals("film", com.onetake.app.ui.components.SFSymbols.Film.name)
+    }
 }

@@ -60,12 +60,12 @@ fun AuditionsTopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Screen Title: Pure, breathing editorial typography
+        // Screen Title: Apple Bold
         Text(
             text = "Auditions",
             fontSize = 34.sp,
-            fontWeight = FontWeight.Light,
-            letterSpacing = (-0.04).sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.03).sp,
             color = Color.White,
         )
 

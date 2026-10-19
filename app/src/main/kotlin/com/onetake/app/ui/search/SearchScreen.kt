@@ -99,12 +99,12 @@ fun SearchScreen(
                 .padding(horizontal = 18.dp)
                 .padding(bottom = TabBarClearance + 16.dp),
         ) {
-            // Header Title
+            // Header Title: Apple Bold
             Text(
                 text = "Search",
                 fontSize = 34.sp,
-                fontWeight = FontWeight.Light,
-                letterSpacing = (-0.04).sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.03).sp,
                 color = Color.White,
                 modifier = Modifier.padding(top = 8.dp, bottom = 18.dp),
             )

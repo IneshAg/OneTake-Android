@@ -50,12 +50,12 @@ fun PracticeTopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Screen Title: Increased font weight to Heavy (FontWeight.ExtraBold / 800)
+        // Screen Title: Apple Bold
         Text(
             text = "Practice",
             fontSize = 34.sp,
-            fontWeight = FontWeight.ExtraBold,
-            letterSpacing = (-0.035).sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.03).sp,
             color = Color.White,
         )
 

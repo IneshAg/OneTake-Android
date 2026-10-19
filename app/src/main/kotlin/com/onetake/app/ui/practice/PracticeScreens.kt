@@ -86,8 +86,7 @@ import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.practice.components.PracticeTopBar
-import com.onetake.app.ui.practice.components.PracticeHeroCard
-import com.onetake.app.ui.practice.components.LineLearningGym
+import com.onetake.app.ui.practice.components.CompactDrillGrid
 import com.onetake.app.ui.practice.components.PracticeRepertoireList
 import com.onetake.app.ui.theme.OT
 
@@ -102,8 +101,6 @@ fun PracticeScreen(
     val nav = LocalNavigator.current
     val c = OT.colors
 
-    val activePiece = store.practice.firstOrNull()
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -113,37 +110,16 @@ fun PracticeScreen(
             .padding(horizontal = OT.dims.gutter)
             .padding(bottom = TabBarClearance),
     ) {
-        // 1. Top Action Bar: Heavy "Practice" title + [ + Import ] + [ Avatar ]
+        // 1. Top Action Bar: Bold "Practice" title + [ + Import ] + [ Avatar ]
         PracticeTopBar(
             onAddClick = { nav.push(Route.PracticeSetup) },
             onAvatarClick = { onOpenProfile?.invoke() },
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(18.dp))
 
-        // 2. Monolithic Hero Stage Card: Interactive Scene Partner (ActOnCue "On Cue" Perform Mode)
-        PracticeHeroCard(
-            title = activePiece?.title ?: "Hamlet",
-            subtitle = if (activePiece != null) {
-                "${activePiece.detail} · Interactive Reader Active"
-            } else {
-                "Act III, Scene 1 · Interactive Reader Active"
-            },
-            eyebrow = "SCENE PARTNER · ON CUE",
-            onClick = {
-                val auditionId = store.auditions.firstOrNull()?.id
-                if (auditionId != null) {
-                    nav.push(Route.RunLines(auditionId, 0))
-                } else {
-                    nav.push(Route.PracticeSetup)
-                }
-            },
-        )
-
-        Spacer(Modifier.height(28.dp))
-
-        // 3. Inset Gym Roster: ActOnCue-inspired Line Learning Modes
-        LineLearningGym(
+        // 2. Compact 2x2 Drill Suite (Option 1)
+        CompactDrillGrid(
             onSelectMode = { mode ->
                 when (mode) {
                     LineLearningMode.FIRST_LETTER,
@@ -163,7 +139,7 @@ fun PracticeScreen(
             },
         )
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(24.dp))
 
         // 4. Inset Roster: Saved Scripts & Assigned Voice Partners
         PracticeRepertoireList(

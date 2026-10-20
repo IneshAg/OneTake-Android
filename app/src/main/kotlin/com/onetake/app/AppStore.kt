@@ -27,7 +27,7 @@ class AppStore : ViewModel() {
     // Data
     var auditions by mutableStateOf(SampleData.auditions)
     var takes by mutableStateOf(SampleData.takes)
-    var practice by mutableStateOf(SampleData.practice)
+    var practice by mutableStateOf(emptyList<PracticePiece>())
 
     // Settings (iOS @AppStorage equivalents)
     var slateAtStart by mutableStateOf(true)

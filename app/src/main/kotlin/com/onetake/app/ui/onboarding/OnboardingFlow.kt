@@ -128,8 +128,9 @@ fun OnboardingFlow() {
     var slateBack by rememberSaveable { mutableIntStateOf(StepSignIn) }
 
     fun finish() {
-        // First run: Home shows "Add your first audition".
+        // First run: Home shows "Add your first audition", Practice shows "No Practice".
         store.auditions = emptyList()
+        store.practice = emptyList()
         store.isOnboarded = true
     }
 

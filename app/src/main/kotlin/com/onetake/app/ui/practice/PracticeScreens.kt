@@ -85,6 +85,7 @@ import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.rememberHaptics
+import com.onetake.app.ui.components.SFSymbols
 import com.onetake.app.ui.practice.components.PracticeTopBar
 import com.onetake.app.ui.practice.components.CompactDrillGrid
 import com.onetake.app.ui.practice.components.PracticeRepertoireList
@@ -100,12 +101,14 @@ fun PracticeScreen(
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val c = OT.colors
+    val isRepertoireEmpty = store.practice.isEmpty()
+    val scrollState = rememberScrollState()
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(c.bgCanvas)
-            .verticalScroll(rememberScrollState())
+            .then(if (!isRepertoireEmpty) Modifier.verticalScroll(scrollState) else Modifier)
             .statusBarsPadding()
             .padding(horizontal = OT.dims.gutter)
             .padding(bottom = TabBarClearance),
@@ -118,7 +121,7 @@ fun PracticeScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        // 2. Compact 2x2 Drill Suite (Option 1)
+        // 2. Compact 2x2 Drill Suite (Option 1) - ALWAYS visible on practice tab
         CompactDrillGrid(
             onSelectMode = { mode ->
                 when (mode) {
@@ -141,19 +144,45 @@ fun PracticeScreen(
 
         Spacer(Modifier.height(24.dp))
 
-        // 4. Inset Roster: Saved Scripts & Assigned Voice Partners
-        PracticeRepertoireList(
-            pieces = store.practice,
-            onPieceClick = { piece ->
-                val auditionId = store.auditions.firstOrNull()?.id
-                if (auditionId != null) {
-                    nav.push(Route.RunLines(auditionId, 0))
-                } else {
-                    nav.push(Route.PracticeSetup)
+        if (isRepertoireEmpty) {
+            // Centered empty state below Quick Drills with theater masks symbol
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = SFSymbols.TheaterMasksFill,
+                        contentDescription = null,
+                        tint = Color(0xFF86868B),
+                        modifier = Modifier.size(44.dp),
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "No Practice",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF86868B),
+                    )
                 }
-            },
-            onAddScriptClick = { nav.push(Route.PracticeSetup) },
-        )
+            }
+        } else {
+            // 3. Inset Roster: Saved Scripts & Assigned Voice Partners
+            PracticeRepertoireList(
+                pieces = store.practice,
+                onPieceClick = { piece ->
+                    val auditionId = store.auditions.firstOrNull()?.id
+                    if (auditionId != null) {
+                        nav.push(Route.RunLines(auditionId, 0))
+                    } else {
+                        nav.push(Route.PracticeSetup)
+                    }
+                },
+                onAddScriptClick = { nav.push(Route.PracticeSetup) },
+            )
+        }
     }
 }
 

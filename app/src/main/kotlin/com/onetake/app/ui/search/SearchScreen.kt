@@ -86,6 +86,11 @@ fun SearchScreen(
     val containerShape = remember { RoundedCornerShape(24.dp) }
     val inputShape = remember { RoundedCornerShape(16.dp) }
 
+    val hasDialogueMatches = selectedScope in listOf(SearchScope.ALL, SearchScope.DIALOGUE) && dialogueMatches.isNotEmpty()
+    val hasSlateMatches = selectedScope in listOf(SearchScope.ALL, SearchScope.CHARACTERS) && slateMatches.isNotEmpty()
+    val hasResults = query.isNotBlank() && (hasDialogueMatches || hasSlateMatches)
+    val scrollState = rememberScrollState()
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -95,7 +100,7 @@ fun SearchScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .verticalScroll(rememberScrollState())
+                .then(if (hasResults) Modifier.verticalScroll(scrollState) else Modifier)
                 .padding(horizontal = 18.dp)
                 .padding(bottom = TabBarClearance + 16.dp),
         ) {
@@ -203,27 +208,58 @@ fun SearchScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 80.dp),
+                        .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = Color(0xFF55555A),
+                            modifier = Modifier.size(44.dp),
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
                         Text(
                             text = "Global Script Search",
-                            fontSize = 18.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
+                            color = Color(0xFF86868B),
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Search lines across all sides, character cues, and slates",
                             fontSize = 13.sp,
+                            color = Color(0xFF55555A),
+                        )
+                    }
+                }
+            } else if (!hasResults) {
+                // Empty search result state
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = Color(0xFF86868B),
+                            modifier = Modifier.size(44.dp),
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = "No Results",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.SemiBold,
                             color = Color(0xFF86868B),
                         )
                     }
                 }
             } else {
                 // Dialogue matches in PDF sides
-                if (selectedScope in listOf(SearchScope.ALL, SearchScope.DIALOGUE) && dialogueMatches.isNotEmpty()) {
+                if (hasDialogueMatches) {
                     Text(
                         text = "DIALOGUE MATCHES IN SIDES",
                         fontSize = 11.sp,
@@ -278,7 +314,7 @@ fun SearchScreen(
                 }
 
                 // Roles and slates matches
-                if (selectedScope in listOf(SearchScope.ALL, SearchScope.CHARACTERS) && slateMatches.isNotEmpty()) {
+                if (hasSlateMatches) {
                     Text(
                         text = "AUDITION SLATES",
                         fontSize = 11.sp,

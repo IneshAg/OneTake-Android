@@ -76,11 +76,12 @@ fun AuditionsScreen(
             .fillMaxSize()
             .background(OT.colors.bgCanvas)
     ) {
+        val scrollState = rememberScrollState()
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .verticalScroll(rememberScrollState())
+                .then(if (heroSlate != null) Modifier.verticalScroll(scrollState) else Modifier)
                 .padding(horizontal = 18.dp)
                 .padding(bottom = TabBarClearance + 16.dp),
         ) {
@@ -92,9 +93,9 @@ fun AuditionsScreen(
                 onAvatarClick = { onOpenProfile?.invoke() ?: nav.push(Route.Headshots) },
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
-
             if (heroSlate != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+
                 // Exactly ONE Monolithic Hero Stage Card
                 HeroStageCard(
                     slate = heroSlate,
@@ -110,16 +111,16 @@ fun AuditionsScreen(
                     )
                 }
             } else {
-                // Quiet typographic empty slate with SF Symbol film
+                // Centered empty state with clapperboard symbol
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 80.dp),
+                        .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            imageVector = SFSymbols.Film,
+                            imageVector = SFSymbols.MovieClapperFill,
                             contentDescription = null,
                             tint = Color(0xFF86868B),
                             modifier = Modifier.size(44.dp),

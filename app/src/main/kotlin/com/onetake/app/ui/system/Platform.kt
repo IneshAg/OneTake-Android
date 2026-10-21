@@ -72,7 +72,7 @@ object ReaderFiles {
     fun file(context: Context, lineIndex: Int) = File(context.filesDir, "reader-line-$lineIndex.m4a")
 }
 
-/** Plays the reader lines the actor recorded in "Record Maya". Silent if a line isn't recorded yet. */
+/** Plays the reader lines the actor recorded in "Record Maya". Falls back to TTS if provided and unrecorded. */
 class ReaderTrackPlayer(private val context: Context) {
     private var player: MediaPlayer? = null
 
@@ -88,6 +88,42 @@ class ReaderTrackPlayer(private val context: Context) {
             mp.start()
             player = mp
         }.onFailure { mp.release() } // empty/corrupt recording → stay silent instead of crashing
+    }
+
+    fun playOrSynthesize(
+        lineIndex: Int,
+        text: String = "",
+        ttsEngine: RehearsalSpeechEngine? = null,
+        onDone: () -> Unit = {},
+    ) {
+        val f = ReaderFiles.file(context, lineIndex)
+        if (f.exists()) {
+            stop()
+            val mp = MediaPlayer()
+            runCatching {
+                mp.setDataSource(f.absolutePath)
+                mp.setOnCompletionListener {
+                    it.release()
+                    if (player === it) player = null
+                    onDone()
+                }
+                mp.prepare()
+                mp.start()
+                player = mp
+            }.onFailure {
+                mp.release()
+                if (text.isNotBlank() && ttsEngine != null) {
+                    ttsEngine.speak(text, onDone)
+                } else {
+                    onDone()
+                }
+            }
+        } else if (text.isNotBlank() && ttsEngine != null) {
+            stop()
+            ttsEngine.speak(text, onDone)
+        } else {
+            onDone()
+        }
     }
 
     fun stop() {

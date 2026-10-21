@@ -95,6 +95,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.onetake.app.CameraFlow
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
@@ -269,8 +270,8 @@ private fun prepReaderLineIndex(scene: ScriptScene, line: ScriptLine): Int {
     return if (pos < 0) 0 else scene.lines.take(pos).count { !it.isMine }
 }
 
-private fun prepSceneTitle(a: Audition, scene: ScriptScene): String {
-    val detail = a.pieces.firstOrNull { it.kind == PieceKind.Scene && it.title == scene.title }?.detail
+private fun prepSceneTitle(a: Audition?, scene: ScriptScene): String {
+    val detail = a?.pieces?.firstOrNull { it.kind == PieceKind.Scene && it.title == scene.title }?.detail
     return if (detail != null && detail.contains(" · ")) detail.substringBefore(" · ") else scene.title
 }
 
@@ -311,8 +312,9 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
     val haptics = rememberHaptics()
     val c = OT.colors
     val a = store.audition(auditionId)
-    val scene = a?.scenes?.getOrNull(sceneIndex)
-    if (a == null || scene == null) {
+    val practicePiece = if (a == null) store.practice.firstOrNull { it.id == auditionId } else null
+    val scene = a?.scenes?.getOrNull(sceneIndex) ?: practicePiece?.scene
+    if ((a == null && practicePiece == null) || scene == null) {
         PrepMissing("This scene isn’t available any more.")
         return
     }
@@ -337,7 +339,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
     ) {
         Column(Modifier.fillMaxSize()) {
             PrepNavHeader(
-                title = "Scene ${scene.number} of ${a.scenes.size}",
+                title = if (a != null) "Scene ${scene.number} of ${a.scenes.size}" else "Scene ${scene.number}",
                 subtitle = prepSceneSubtitle(scene),
                 leadingIcon = Icons.AutoMirrored.Filled.ArrowBack,
                 leadingDescription = "Back",
@@ -381,7 +383,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
                         Modifier
                             .heightIn(min = 48.dp)
                             .clip(CircleShape)
-                            .clickable(role = Role.Button) { nav.push(Route.Reader(a.id)) }
+                            .clickable(role = Role.Button) { if (a != null) nav.push(Route.Reader(a.id)) }
                             .padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -483,8 +485,10 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
                     )
                 }
             }
-            PrepCapsule("Run lines", Icons.Filled.PlayArrow, onClick = { nav.push(Route.RunLines(a.id, sceneIndex)) })
-            PrepCapsule("Record", Icons.Filled.RadioButtonChecked, filled = true, onClick = { nav.push(Route.ShootMode(a.id)) })
+            PrepCapsule("Run lines", Icons.Filled.PlayArrow, onClick = { nav.push(Route.RunLines(auditionId, sceneIndex)) })
+            PrepCapsule("Record", Icons.Filled.RadioButtonChecked, filled = true, onClick = {
+                if (a != null) nav.push(Route.ShootMode(a.id)) else nav.openCamera(CameraFlow.PracticeTake)
+            })
         }
     }
 
@@ -833,9 +837,10 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     val player = rememberReaderPlayer()
     val c = OT.colors
     val a = store.audition(auditionId)
-    val scene = a?.scenes?.getOrNull(sceneIndex)
+    val practicePiece = if (a == null) store.practice.firstOrNull { it.id == auditionId } else null
+    val scene = a?.scenes?.getOrNull(sceneIndex) ?: practicePiece?.scene
     val lines = if (scene != null) prepRehearsalLines(scene) else emptyList()
-    if (a == null || scene == null || lines.isEmpty()) {
+    if ((a == null && practicePiece == null) || scene == null || lines.isEmpty()) {
         PrepMissing("There are no lines to run in this scene.")
         return
     }

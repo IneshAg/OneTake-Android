@@ -43,6 +43,12 @@ import androidx.compose.material.icons.filled.TheaterComedy
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import com.onetake.app.models.formatDuration
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
+import com.onetake.app.data.ScriptParser
+import com.onetake.app.models.PracticePiece
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -124,20 +130,11 @@ fun PracticeScreen(
         // 2. Compact 2x2 Drill Suite (Option 1) - ALWAYS visible on practice tab
         CompactDrillGrid(
             onSelectMode = { mode ->
-                when (mode) {
-                    LineLearningMode.FIRST_LETTER,
-                    LineLearningMode.MASK_AND_REVEAL,
-                    LineLearningMode.AUDIO_GAP -> {
-                        val auditionId = store.auditions.firstOrNull()?.id
-                        if (auditionId != null) {
-                            nav.push(Route.RunLines(auditionId, 0))
-                        } else {
-                            nav.push(Route.PracticeSetup)
-                        }
-                    }
-                    LineLearningMode.HANDS_FREE_WALK -> {
-                        nav.openCamera(CameraFlow.PracticeTake)
-                    }
+                val targetId = store.practice.firstOrNull()?.id ?: store.auditions.firstOrNull()?.id
+                if (targetId != null) {
+                    nav.push(Route.RunLines(targetId, 0))
+                } else {
+                    nav.push(Route.PracticeSetup)
                 }
             },
         )
@@ -173,12 +170,7 @@ fun PracticeScreen(
             PracticeRepertoireList(
                 pieces = store.practice,
                 onPieceClick = { piece ->
-                    val auditionId = store.auditions.firstOrNull()?.id
-                    if (auditionId != null) {
-                        nav.push(Route.RunLines(auditionId, 0))
-                    } else {
-                        nav.push(Route.PracticeSetup)
-                    }
+                    nav.push(Route.RunLines(piece.id, 0))
                 },
                 onAddScriptClick = { nav.push(Route.PracticeSetup) },
             )
@@ -188,17 +180,49 @@ fun PracticeScreen(
 
 // MARK: - 24b / 24c Practise a scene
 
+private const val DEFAULT_PRACTICE_SAMPLE = """SAM: You said you’d be home by eight.
+NINA: I said I’d try. There’s a difference.
+SAM: That wasn't the deal, Nina.
+NINA: Deals change when work runs late.
+SAM: Then call me. It's not hard.
+NINA: I didn't want another argument."""
+
 @Composable
 fun PracticeSetupScreen() {
     var step by rememberSaveable { mutableStateOf(0) }
+    var scriptText by rememberSaveable { mutableStateOf(DEFAULT_PRACTICE_SAMPLE) }
+    var sceneTitle by rememberSaveable { mutableStateOf("Kitchen Argument") }
+
     BackHandler(enabled = step == 1) { step = 0 }
-    if (step == 0) PracticeSourceStep(onPicked = { step = 1 }) else PracticeSceneStep(onBack = { step = 0 })
+    if (step == 0) {
+        PracticeSourceStep(
+            initialText = scriptText,
+            onPicked = { text, title ->
+                scriptText = text.ifBlank { DEFAULT_PRACTICE_SAMPLE }
+                sceneTitle = title
+                step = 1
+            }
+        )
+    } else {
+        PracticeSceneStep(
+            scriptText = scriptText,
+            sceneTitle = sceneTitle,
+            onBack = { step = 0 }
+        )
+    }
 }
 
 @Composable
-private fun PracticeSourceStep(onPicked: () -> Unit) {
+private fun PracticeSourceStep(
+    initialText: String,
+    onPicked: (String, String) -> Unit,
+) {
     val nav = LocalNavigator.current
+    val clipboard = LocalClipboardManager.current
     val c = OT.colors
+    var textInput by rememberSaveable { mutableStateOf(initialText) }
+    var titleInput by rememberSaveable { mutableStateOf("Kitchen Argument") }
+
     Column(Modifier.fillMaxSize().background(c.bgCanvas)) {
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = OT.dims.gutter).heightIn(min = 56.dp),
@@ -223,25 +247,78 @@ private fun PracticeSourceStep(onPicked: () -> Unit) {
                 "Practise a scene",
                 subtitle = "Any monologue or scene. OneTake finds the characters and you pick yours.",
             )
-            Spacer(Modifier.height(12.dp))
-            val sources = listOf(
-                Triple(Icons.Filled.ContentPaste, "Paste", "A scene or monologue you copied"),
-                Triple(Icons.Filled.DocumentScanner, "Scan pages", "A script from class or a book you own"),
-                Triple(Icons.Filled.Folder, "PDF or file", "From your files or Google Drive"),
-                Triple(Icons.Filled.Keyboard, "Type it in", "Write it out, or dictate it"),
-                Triple(Icons.Filled.Movie, "From an audition", "Rework sides you already taped"),
-            )
-            sources.forEachIndexed { i, (icon, title, detail) ->
-                IconRow(icon = icon, title = title, detail = detail, onClick = onPicked)
-                if (i < sources.lastIndex) OTDivider(startIndent = 54.dp)
-            }
             Spacer(Modifier.height(16.dp))
+
+            // Script Input Box (Obsidian Studio Surface)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(c.surfaceCard)
+                    .border(0.5.dp, c.separator, RoundedCornerShape(20.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("SCRIPT TEXT", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp), color = c.labelSecondary)
+                BasicTextField(
+                    value = textInput,
+                    onValueChange = { textInput = it },
+                    textStyle = OT.type.body.copy(color = c.labelPrimary, lineHeight = 22.sp),
+                    cursorBrush = SolidColor(c.accent),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 240.dp),
+                    decorationBox = { innerTextField ->
+                        if (textInput.isBlank()) {
+                            Text("Paste dialogue or type lines here...\nExample: SAM: Hello\nNINA: Hi", style = OT.type.body, color = c.labelTertiary)
+                        }
+                        innerTextField()
+                    }
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(
+                        Modifier
+                            .clip(CircleShape)
+                            .background(c.fillQuiet)
+                            .clickable {
+                                val clipText = clipboard.getText()?.text
+                                if (!clipText.isNullOrBlank()) {
+                                    textInput = clipText
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text("Paste from clipboard", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                    }
+                    Box(
+                        Modifier
+                            .clip(CircleShape)
+                            .background(c.fillQuiet)
+                            .clickable { textInput = DEFAULT_PRACTICE_SAMPLE }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text("Sample scene", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            PrimaryButton(
+                text = "Continue to character setup",
+                onClick = { onPicked(textInput, titleInput) },
+            )
+
+            Spacer(Modifier.height(20.dp))
             SectionLabel("Recent sides")
             Spacer(Modifier.height(8.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("The Last Summer · Sc 1", "Winter Play").forEach { name ->
                     Box(
-                        Modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = onPicked),
+                        Modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = {
+                            titleInput = name
+                            onPicked(textInput, name)
+                        }),
                         contentAlignment = Alignment.Center,
                     ) {
                         Box(
@@ -252,7 +329,7 @@ private fun PracticeSourceStep(onPicked: () -> Unit) {
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
             PracticeLockNote()
         }
     }
@@ -272,50 +349,91 @@ private fun PracticeLockNote() {
 }
 
 @Composable
-private fun PracticeSceneStep(onBack: () -> Unit) {
+private fun PracticeSceneStep(
+    scriptText: String,
+    sceneTitle: String,
+    onBack: () -> Unit,
+) {
     val nav = LocalNavigator.current
+    val store = LocalAppStore.current
     val c = OT.colors
-    var playing by rememberSaveable { mutableStateOf("Sam") }
-    var reader by rememberSaveable { mutableStateOf("Your recording") }
-    val other = if (playing == "Sam") "Nina" else "Sam"
-    val samLine = "You said you’d be home by eight."
-    val ninaLine = "I said I’d try. There’s a difference."
+    val detectedCharacters = remember(scriptText) { ScriptParser.extractCharacters(scriptText) }
+    val characters = if (detectedCharacters.isNotEmpty()) detectedCharacters else listOf("Me")
+    var playing by rememberSaveable(detectedCharacters) { mutableStateOf(characters.first()) }
+    var reader by rememberSaveable { mutableStateOf("Automated Partner (TTS)") }
+
+    val parsedScene = remember(scriptText, playing, sceneTitle) {
+        ScriptParser.parse(scriptText, myCharacter = playing, sceneTitle = sceneTitle)
+    }
 
     PushedScreen(
         onBack = onBack,
         bottomBar = {
-            PrimaryButton("Start practising", onClick = { nav.openCamera(CameraFlow.PracticeTake) })
+            PrimaryButton(
+                "Start practising",
+                onClick = {
+                    val piece = PracticePiece(
+                        title = sceneTitle.ifBlank { "Practice Scene" },
+                        detail = "$playing · ${parsedScene.lines.size} lines",
+                        linesLearned = 0,
+                        linesTotal = parsedScene.lines.count { it.isMine },
+                        character = playing,
+                        scene = parsedScene,
+                    )
+                    store.addPractice(piece)
+                    nav.push(Route.RunLines(piece.id, 0))
+                }
+            )
         },
     ) {
-        LargeTitle("Kitchen Argument")
-        Text("2 characters · 12 lines · about 1:40", style = OT.type.footnote, color = c.labelSecondary)
+        LargeTitle(sceneTitle)
+        Text("${characters.size} characters · ${parsedScene.lines.size} lines · about ${formatDuration(parsedScene.estimatedSeconds)}", style = OT.type.footnote, color = c.labelSecondary)
         Spacer(Modifier.height(16.dp))
 
         SectionLabel("Who are you playing?")
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            PracticeCharacterCard("Sam", if (playing == "Sam") "You play Sam · 6 lines" else "6 lines", playing == "Sam", Modifier.weight(1f)) { playing = "Sam" }
-            PracticeCharacterCard("Nina", if (playing == "Nina") "You play Nina · 6 lines" else "6 lines", playing == "Nina", Modifier.weight(1f)) { playing = "Nina" }
-        }
-        Spacer(Modifier.height(12.dp))
-
-        // First exchange, so the actor sees whose lines are theirs.
-        Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.surfaceSunken).padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            val samMine = playing == "Sam"
-            Text(if (samMine) "SAM · YOU" else "SAM", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = if (samMine) c.accent else c.reader)
-            Text(samLine, style = if (samMine) OT.type.headline else OT.type.callout, color = if (samMine) c.labelPrimary else c.labelSecondary)
-            Spacer(Modifier.height(4.dp))
-            Text(if (!samMine) "NINA · YOU" else "NINA", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = if (!samMine) c.accent else c.reader)
-            Text(ninaLine, style = if (!samMine) OT.type.headline else OT.type.callout, color = if (!samMine) c.labelPrimary else c.labelSecondary)
+            characters.take(3).forEach { char ->
+                val isSelected = playing.equals(char, ignoreCase = true)
+                val lineCount = parsedScene.lines.count { it.character.equals(char, ignoreCase = true) }
+                PracticeCharacterCard(
+                    name = char,
+                    detail = if (isSelected) "You play $char · $lineCount lines" else "$lineCount lines",
+                    selected = isSelected,
+                    modifier = Modifier.weight(1f),
+                    onClick = { playing = char }
+                )
+            }
         }
         Spacer(Modifier.height(16.dp))
 
-        // Reader is the actor's own recorded voice only.
-        SectionLabel("Who reads $other?")
-        PracticeReaderOption("Your recording", "Record $other’s lines first · plays on cue", reader == "Your recording", showDivider = true) { reader = "Your recording" }
+        // Dialogue Preview: Displays the actual parsed scene lines
+        SectionLabel("First lines")
+        Spacer(Modifier.height(8.dp))
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.surfaceSunken).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            parsedScene.lines.take(4).forEach { line ->
+                val isMine = line.isMine
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        if (isMine) "${line.character} · YOU" else line.character,
+                        style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (isMine) c.accent else c.reader,
+                    )
+                    Text(
+                        line.text,
+                        style = if (isMine) OT.type.headline else OT.type.callout,
+                        color = if (isMine) c.labelPrimary else c.labelSecondary,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+
+        SectionLabel("Partner cue reader")
+        PracticeReaderOption("Automated Partner (TTS)", "Speech synthesizer speaks partner lines on cue", reader == "Automated Partner (TTS)", showDivider = true) { reader = "Automated Partner (TTS)" }
         PracticeReaderOption("Nobody", "I’ll hear the cues in my head", reader == "Nobody", showDivider = false) { reader = "Nobody" }
         Spacer(Modifier.height(12.dp))
         PracticeLockNote()

@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import com.onetake.app.data.ScriptParser
 import com.onetake.app.models.PracticePiece
+import com.onetake.app.ui.prepare.PrepLineMode
+import com.onetake.app.ui.prepare.PrepPrefs
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -132,7 +134,23 @@ fun PracticeScreen(
             onSelectMode = { mode ->
                 val targetId = store.practice.firstOrNull()?.id ?: store.auditions.firstOrNull()?.id
                 if (targetId != null) {
-                    nav.push(Route.RunLines(targetId, 0))
+                    when (mode) {
+                        LineLearningMode.FIRST_LETTER -> {
+                            PrepPrefs.mode = PrepLineMode.FirstLetters
+                            nav.push(Route.RunLines(targetId, 0))
+                        }
+                        LineLearningMode.MASK_AND_REVEAL -> {
+                            PrepPrefs.mode = PrepLineMode.MaskAndReveal
+                            nav.push(Route.RunLines(targetId, 0))
+                        }
+                        LineLearningMode.AUDIO_GAP -> {
+                            PrepPrefs.mode = PrepLineMode.AudioGap
+                            nav.push(Route.RunLines(targetId, 0))
+                        }
+                        LineLearningMode.HANDS_FREE_WALK -> {
+                            nav.push(Route.AudioWalk(targetId, 0))
+                        }
+                    }
                 } else {
                     nav.push(Route.PracticeSetup)
                 }

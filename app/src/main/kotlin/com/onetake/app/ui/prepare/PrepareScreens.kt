@@ -116,6 +116,8 @@ import com.onetake.app.ui.system.ReaderFiles
 import com.onetake.app.ui.system.ReaderTrackPlayer
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.system.rememberReaderPlayer
+import com.onetake.app.ui.system.rememberTtsEngine
+import com.onetake.app.ui.practice.LineLearningMode
 import com.onetake.app.ui.theme.OT
 import java.io.File
 import kotlinx.coroutines.delay
@@ -125,13 +127,15 @@ import kotlinx.coroutines.delay
 
 // MARK: - Shared prepare state (iOS @AppStorage / @State equivalents that outlive one screen)
 
-private enum class PrepLineMode(val label: String) {
+enum class PrepLineMode(val label: String) {
     Full("Full lines"),
     FirstLetters("First letters"),
+    MaskAndReveal("Mask & reveal"),
+    AudioGap("Audio gap"),
     Hide("Hide mine"),
 }
 
-private object PrepPrefs {
+object PrepPrefs {
     var mode by mutableStateOf(PrepLineMode.Full)
     var textSize by mutableIntStateOf(1)
     var followVoice by mutableStateOf(true)
@@ -821,6 +825,11 @@ private fun prepRunText(
             withStyle(SpanStyle(color = rest)) { append(w + sep) }
         } else if (effective == PrepLineMode.FirstLetters) {
             withStyle(SpanStyle(color = rest)) { append(prepFirstLetterWord(w) + sep) }
+        } else if (effective == PrepLineMode.MaskAndReveal) {
+            val masked = if (i % 2 == 0) "—" else w
+            withStyle(SpanStyle(color = rest)) { append(masked + sep) }
+        } else if (effective == PrepLineMode.AudioGap) {
+            withStyle(SpanStyle(color = rest)) { append(w + sep) }
         } else if (!hiddenAppended) {
             hiddenAppended = true
             withStyle(SpanStyle(color = rest)) { append(if (i == 0) "· · ·" else "…") }
@@ -835,6 +844,7 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val player = rememberReaderPlayer()
+    val tts = rememberTtsEngine()
     val c = OT.colors
     val a = store.audition(auditionId)
     val practicePiece = if (a == null) store.practice.firstOrNull { it.id == auditionId } else null
@@ -886,6 +896,7 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
 
     fun restart(from: Int) {
         player.stop()
+        tts.stop()
         index = from
         level = 0
         finished = false
@@ -894,19 +905,26 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         runNumber = PrepPrefs.nextRun(runKey)
     }
 
-    // Reader lines play your own recording, then move on. Your lines wait for your voice (or a tap).
+    // Reader lines play your own recording or TTS, then move on. Your lines wait for your voice, audio gap, or a tap.
     LaunchedEffect(safeIndex, finished, runNumber, speechOn) {
         if (finished) {
             follower.stop()
+            tts.stop()
             return@LaunchedEffect
         }
         val current = lines[safeIndex]
         if (!current.isMine) {
             follower.stop()
             val ri = prepReaderLineIndex(scene, current)
-            prepPlay(player, ri)
+            player.playOrSynthesize(ri, current.text, tts)
             val fileMs = prepAudioMillis(ReaderFiles.file(context, ri)) ?: 0L
-            delay(maxOf(current.text.length * 60L + 800L, fileMs + 400L))
+            val spokenMs = maxOf(fileMs, LineLearningMode.calculateSpokenPacingMillis(prepWords(current.text).size))
+            delay(spokenMs)
+            advance()
+        } else if (mode == PrepLineMode.AudioGap) {
+            val words = prepWords(current.text).size
+            val gapMs = LineLearningMode.calculateAudioGapMillis(words)
+            delay(gapMs)
             advance()
         } else if (speechOn) {
             follower.start()
@@ -936,7 +954,7 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
             subtitle = if (finished) "${formatDuration(elapsedSec)} · ${mode.label}" else mode.label,
             leadingIcon = Icons.Filled.Close,
             leadingDescription = "Close",
-            onLeading = { player.stop(); nav.back() },
+            onLeading = { player.stop(); tts.stop(); nav.back() },
         ) {
             CircleIconButton(Icons.Filled.TextFields, "Text size", onClick = { showPrompter = true })
         }

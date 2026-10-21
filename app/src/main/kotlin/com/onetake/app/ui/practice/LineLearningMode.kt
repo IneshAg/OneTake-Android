@@ -55,5 +55,16 @@ enum class LineLearningMode(
                 if (index < countToMask) "—" else word
             }.joinToString(" ")
         }
+
+        /**
+         * Computes the pause duration in milliseconds allocated for the actor to deliver their line.
+         * Default: ~350ms per word + 1.5s grace time.
+         */
+        fun calculateAudioGapMillis(wordCount: Int): Long = (wordCount * 350L) + 1500L
+
+        /**
+         * Computes pacing duration in milliseconds for spoken lines during continuous audio walk.
+         */
+        fun calculateSpokenPacingMillis(wordCount: Int): Long = (wordCount * 320L) + 1200L
     }
 }

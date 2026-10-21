@@ -75,6 +75,7 @@ import com.onetake.app.ui.search.SearchScreen
 import com.onetake.app.ui.home.HomeScreen
 import com.onetake.app.ui.onboarding.OnboardingFlow
 import com.onetake.app.ui.packageview.PackageScreen
+import com.onetake.app.ui.practice.AudioWalkScreen
 import com.onetake.app.ui.practice.PracticeScreen
 import com.onetake.app.ui.practice.PracticeSetupScreen
 import com.onetake.app.ui.practice.PracticeTakeScreen
@@ -171,6 +172,7 @@ private fun RootTabs(
                 withId(Route.Pattern.AUDITION) { AuditionDetailScreen(it) }
                 withIdScene(Route.Pattern.PREPARE) { id, s -> PrepareScreen(id, s) }
                 withIdScene(Route.Pattern.RUN_LINES) { id, s -> RunLinesScreen(id, s) }
+                withIdScene(Route.Pattern.AUDIO_WALK) { id, s -> AudioWalkScreen(id, s) }
                 withId(Route.Pattern.READER) { ReaderScreen(it) }
                 withId(Route.Pattern.RECORD_READER) { RecordReaderScreen(it) }
                 withId(Route.Pattern.SHOOT_MODE) { ShootModeScreen(it) }

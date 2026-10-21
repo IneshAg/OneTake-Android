@@ -36,11 +36,13 @@ sealed class Route(val path: String) {
     data object Privacy : Route("privacy")
     data object Notifications : Route("notifications")
     data object PracticeSetup : Route("practiceSetup")
+    data class AudioWalk(val id: String, val sceneIndex: Int = 0) : Route("audioWalk/$id/$sceneIndex")
 
     object Pattern {
         const val AUDITION = "audition/{id}"
         const val PREPARE = "prepare/{id}/{scene}"
         const val RUN_LINES = "runLines/{id}/{scene}"
+        const val AUDIO_WALK = "audioWalk/{id}/{scene}"
         const val READER = "reader/{id}"
         const val RECORD_READER = "recordReader/{id}"
         const val SHOOT_MODE = "shootMode/{id}"

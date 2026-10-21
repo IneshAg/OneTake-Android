@@ -86,6 +86,8 @@ import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.formatDuration
 import com.onetake.app.models.otDayMonth
 import com.onetake.app.models.otDue
+import com.onetake.app.ui.components.GLASS_EDGE_COLOR
+import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.Chevron
 import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.components.HeadshotImage
@@ -139,7 +141,11 @@ fun AuditionDetailScreen(auditionId: String) {
                 DropdownMenu(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
-                    modifier = Modifier.widthIn(min = 250.dp).background(c.surfaceCard),
+                    modifier = Modifier
+                        .widthIn(min = 250.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color(0xF01A1A1E))
+                        .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, RoundedCornerShape(24.dp)),
                 ) {
                     DetailMenuItem("Revised sides", "New pages from casting", Icons.Outlined.Description) { showMenu = false }
                     DetailMenuItem("Edit details", "Due date, role, what they want", Icons.Outlined.Edit) { showMenu = false }
@@ -264,11 +270,15 @@ private fun DetailAskIcon(ask: String, tint: Color, size: Dp) {
 @Composable
 private fun DetailPackageSummary(a: Audition, onClick: () -> Unit) {
     val c = OT.colors
+    val containerShape = RoundedCornerShape(24.dp)
     Column(
         Modifier
             .fillMaxWidth()
+            .clip(containerShape)
+            .background(c.surfaceCard)
+            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, containerShape)
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
+            .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -299,8 +309,16 @@ private fun DetailUpNext(a: Audition, nav: Navigator) {
     val store = LocalAppStore.current
     val c = OT.colors
     val next = a.nextPiece
-    OTCard(Modifier.fillMaxWidth(), padding = PaddingValues(20.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val cardShape = RoundedCornerShape(26.dp)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(cardShape)
+            .background(c.surfaceCard)
+            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, cardShape)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
             when {
                 next?.kind == PieceKind.Headshot -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -342,7 +360,6 @@ private fun DetailUpNext(a: Audition, nav: Navigator) {
                 }
             }
         }
-    }
 }
 
 @Composable

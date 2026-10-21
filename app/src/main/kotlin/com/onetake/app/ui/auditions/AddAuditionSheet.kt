@@ -89,6 +89,7 @@ import com.onetake.app.AppTab
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
+import com.onetake.app.data.ScriptParser
 import com.onetake.app.models.Audition
 import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
@@ -130,7 +131,7 @@ private const val ADD_SAMPLE_NOTICE =
 private val addDueLong = DateTimeFormatter.ofPattern("EEE d MMM, h:mm a", Locale.US)
 private val addDueDay = DateTimeFormatter.ofPattern("EEE d MMM", Locale.US)
 
-/** Rule-based, on-device placeholder for the real notice parser (same rules as iOS NoticeParser). */
+/** Rule-based and ScriptParser-backed casting notice & sides parser. */
 private data class AddDraft(
     val project: String = "",
     val role: String = "",
@@ -139,13 +140,27 @@ private data class AddDraft(
     val scenes: Int = 2,
     val asks: List<String> = emptyList(),
     val destination: Destination = Destination.ActorsAccess,
+    val rawScriptText: String = "",
 ) {
     fun makeAudition(): Audition {
+        val parsedScene = if (rawScriptText.isNotBlank()) {
+            ScriptParser.parse(rawScriptText, myCharacter = role.ifBlank { "Me" }, sceneTitle = "Scene 1")
+        } else null
+
+        val finalScenes = if (parsedScene != null && parsedScene.lines.isNotEmpty()) {
+            listOf(parsedScene)
+        } else {
+            SampleData.lastSummer.scenes.take(scenes)
+        }
+
         val pieces = mutableListOf(
             Piece(kind = PieceKind.Headshot, title = "Headshot", detail = "Front", isDone = false),
             Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false),
         )
-        for (i in 0 until scenes) pieces.add(Piece(kind = PieceKind.Scene, title = "Scene ${i + 1}", detail = "", isDone = false))
+        for (i in finalScenes.indices) {
+            pieces.add(Piece(kind = PieceKind.Scene, title = finalScenes[i].title, detail = "", isDone = false))
+        }
+
         return Audition(
             project = project.ifBlank { "Untitled audition" },
             projectType = projectType,
@@ -155,7 +170,7 @@ private data class AddDraft(
             due = due ?: LocalDateTime.now().plusDays(3),
             asks = asks,
             pieces = pieces,
-            scenes = SampleData.lastSummer.scenes.take(scenes),
+            scenes = finalScenes,
             destination = destination,
             status = AuditionStatus.Due,
         )
@@ -164,10 +179,18 @@ private data class AddDraft(
 
 private fun addParseNotice(text: String): AddDraft {
     val lower = text.lowercase()
-    var d = AddDraft()
+    val characters = ScriptParser.extractCharacters(text)
+    val detectedRole = characters.firstOrNull() ?: if ("arjun" in lower) "Arjun" else "Role"
+    val detectedProject = if ("last summer" in lower) {
+        "The Last Summer"
+    } else {
+        text.lines().firstOrNull { it.isNotBlank() && !it.contains(":") }?.trim() ?: "Untitled Audition"
+    }
+
+    var d = AddDraft(rawScriptText = text)
     val asks = mutableListOf<String>()
-    if ("last summer" in lower) d = d.copy(project = "The Last Summer")
-    if ("arjun" in lower) d = d.copy(role = "Arjun")
+    d = d.copy(project = detectedProject.take(40))
+    d = d.copy(role = detectedRole.take(30))
     if ("fri 9 oct" in lower) d = d.copy(due = SampleData.lastSummer.due)
     if ("slate" in lower) asks += "Slate first"
     if ("landscape" in lower) asks += "Landscape"

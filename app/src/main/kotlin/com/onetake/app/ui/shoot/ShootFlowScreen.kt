@@ -97,6 +97,7 @@ import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.system.rememberReaderPlayer
+import com.onetake.app.ui.system.rememberTtsEngine
 import com.onetake.app.ui.theme.DarkOT
 import com.onetake.app.ui.theme.OT
 import kotlinx.coroutines.delay
@@ -115,6 +116,7 @@ fun ShootFlowScreen(auditionId: String) {
     val haptics = rememberHaptics()
     val camera = rememberCameraController()
     val reader = rememberReaderPlayer()
+    val tts = rememberTtsEngine()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -142,11 +144,16 @@ fun ShootFlowScreen(auditionId: String) {
         pendingTakeId = null
     }
 
-    // Reader: the actor's own recorded voice for the other character's lines, from this phone.
+    // Reader: the actor's own recorded voice or TTS for the other character's lines.
     LaunchedEffect(lineIndex, recording, stage) {
         val line = lines.getOrNull(lineIndex)
         runCatching {
-            if (stage == ShootStage.Scene && recording && line != null && !line.isMine) reader.play(lineIndex) else reader.stop()
+            if (stage == ShootStage.Scene && recording && line != null && !line.isMine) {
+                reader.playOrSynthesize(lineIndex, line.text, tts)
+            } else {
+                reader.stop()
+                tts.stop()
+            }
         }
     }
 

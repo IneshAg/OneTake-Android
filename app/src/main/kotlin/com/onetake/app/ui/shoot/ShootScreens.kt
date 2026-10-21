@@ -75,6 +75,8 @@ import com.onetake.app.CameraFlow
 import com.onetake.app.Route
 import com.onetake.app.ui.components.Chevron
 import com.onetake.app.ui.components.CircleIconButton
+import com.onetake.app.ui.components.GLASS_EDGE_COLOR
+import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.LargeTitle
 import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.PlainButton
@@ -143,14 +145,15 @@ private fun ShootModeOption(
     onClick: () -> Unit,
 ) {
     val c = OT.colors
-    val shape = RoundedCornerShape(20.dp)
+    val shape = RoundedCornerShape(24.dp)
     Column(
         Modifier
             .fillMaxWidth()
-            .otCard(20.dp, c.surfaceCard)
-            .border(1.5.dp, if (selected) c.accent else c.separator.copy(alpha = 0.6f), shape)
+            .clip(shape)
+            .background(c.surfaceCard)
+            .border(if (selected) 1.5.dp else GLASS_EDGE_WIDTH, if (selected) c.accent else GLASS_EDGE_COLOR, shape)
             .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
-            .padding(16.dp),
+            .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -596,40 +599,49 @@ fun ShootSetupScreen(auditionId: String) {
             }
         }
         Spacer(Modifier.height(12.dp))
-        OTDivider()
-        SetupCheckRow("Camera", "Back camera · sharper", "Screen faces away — we talk you through it", ok = true)
-        OTDivider()
-        SetupCheckRow("Hands-free", "Your voice + earbuds click", "“Action”, “Cut”, “Line?” · volume buttons on", ok = true)
-        OTDivider()
-        SetupCheckRow("Microphone", "Kabir’s earbuds", "Good level from your mark", ok = true) {
-            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                repeat(14) { i ->
-                    Box(
-                        Modifier.size(width = 9.dp, height = 4.dp).clip(CircleShape)
-                            .background(if (i < 9) c.success else c.fillQuiet)
-                    )
+        val rosterShape = RoundedCornerShape(24.dp)
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(rosterShape)
+                .background(c.surfaceCard)
+                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+        ) {
+            SetupCheckRow("Camera", "Back camera · sharper", "Screen faces away — we talk you through it", ok = true)
+            OTDivider()
+            SetupCheckRow("Hands-free", "Your voice + earbuds click", "“Action”, “Cut”, “Line?” · volume buttons on", ok = true)
+            OTDivider()
+            SetupCheckRow("Microphone", "Kabir’s earbuds", "Good level from your mark", ok = true) {
+                Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    repeat(14) { i ->
+                        Box(
+                            Modifier.size(width = 9.dp, height = 4.dp).clip(CircleShape)
+                                .background(if (i < 9) c.success else c.fillQuiet)
+                        )
+                    }
                 }
             }
-        }
-        OTDivider()
-        SetupCheckRow("Interruptions", "Calls and alerts can cut in", "A notification mid-scene throws Maya’s timing", ok = silenced) {
-            if (!silenced) {
-                Row(
-                    Modifier
-                        .padding(top = 8.dp)
-                        .heightIn(min = 40.dp)
-                        .clip(CircleShape)
-                        .background(c.fillField)
-                        .clickable(role = Role.Button) {
-                            silenced = true
-                            haptics.success()
-                        }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text("Silence for this shoot", style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
-                    Icon(Icons.Filled.DarkMode, null, tint = c.labelPrimary, modifier = Modifier.size(16.dp))
+            OTDivider()
+            SetupCheckRow("Interruptions", "Calls and alerts can cut in", "A notification mid-scene throws Maya’s timing", ok = silenced) {
+                if (!silenced) {
+                    Row(
+                        Modifier
+                            .padding(top = 8.dp)
+                            .heightIn(min = 40.dp)
+                            .clip(CircleShape)
+                            .background(c.fillField)
+                            .clickable(role = Role.Button) {
+                                silenced = true
+                                haptics.success()
+                            }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Silence for this shoot", style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                        Icon(Icons.Filled.DarkMode, null, tint = c.labelPrimary, modifier = Modifier.size(16.dp))
+                    }
                 }
             }
         }

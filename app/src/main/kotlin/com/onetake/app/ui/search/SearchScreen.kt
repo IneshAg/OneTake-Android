@@ -75,7 +75,37 @@ fun SearchScreen(
     var query by remember { mutableStateOf("") }
     var selectedScope by remember { mutableStateOf(SearchScope.ALL) }
 
-    val dialogueMatches = remember(query) { searchEngine.search(query) }
+    val dynamicLines = remember(store.auditions, store.practice) {
+        val fromAuditions = store.auditions.flatMap { audition ->
+            audition.scenes.flatMap { scene ->
+                scene.lines.map { line ->
+                    ScriptSearchLine(
+                        character = line.character,
+                        project = audition.project,
+                        scene = scene.title.ifBlank { "Scene ${scene.number}" },
+                        text = line.text,
+                        auditionId = audition.id,
+                    )
+                }
+            }
+        }
+        val fromPractice = store.practice.mapNotNull { piece ->
+            piece.scene?.let { s -> piece to s }
+        }.flatMap { (piece, scene) ->
+            scene.lines.map { line ->
+                ScriptSearchLine(
+                    character = line.character,
+                    project = piece.title,
+                    scene = scene.title.ifBlank { "Practice" },
+                    text = line.text,
+                    practicePieceId = piece.id,
+                )
+            }
+        }
+        fromAuditions + fromPractice
+    }
+
+    val dialogueMatches = remember(query, dynamicLines) { searchEngine.search(query, dynamicLines) }
     val slateMatches = remember(query, store.auditions) {
         if (query.isBlank()) emptyList()
         else store.auditions.filter {
@@ -280,7 +310,12 @@ fun SearchScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { /* View in script viewer */ }
+                                    .clickable {
+                                        val targetId = match.auditionId ?: match.practicePieceId
+                                        if (targetId != null) {
+                                            nav.push(Route.Prepare(targetId, 0))
+                                        }
+                                    }
                                     .padding(horizontal = 18.dp, vertical = 14.dp)
                             ) {
                                 Text(
@@ -335,7 +370,7 @@ fun SearchScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { nav.push(Route.Prepare(slate.id, 0)) }
+                                    .clickable { nav.push(Route.AuditionDetail(slate.id)) }
                                     .padding(horizontal = 18.dp, vertical = 14.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,

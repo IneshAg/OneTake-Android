@@ -76,6 +76,8 @@ import com.onetake.app.TabBarClearance
 import com.onetake.app.ui.camera.CameraBackground
 import com.onetake.app.ui.camera.rememberCameraController
 import com.onetake.app.ui.components.CircleIconButton
+import com.onetake.app.ui.components.GLASS_EDGE_COLOR
+import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.HeadshotImage
 import com.onetake.app.ui.components.LargeTitle
 import com.onetake.app.ui.components.ListRow
@@ -282,9 +284,19 @@ fun EditSlateScreen() {
                 style = OT.type.footnote,
                 color = c.labelTertiary,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(8.dp))
             SectionLabel("Preview")
-            Text(draft.spoken, style = OT.type.headline, color = c.labelPrimary)
+            val previewShape = RoundedCornerShape(20.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(previewShape)
+                    .background(OT.colors.surfaceCard)
+                    .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, previewShape)
+                    .padding(18.dp),
+            ) {
+                Text(draft.spoken, style = OT.type.headline, color = c.labelPrimary)
+            }
         }
     }
 }
@@ -298,6 +310,7 @@ private fun SlateField(
     modifier: Modifier = Modifier,
 ) {
     val c = OT.colors
+    val fieldShape = RoundedCornerShape(16.dp)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label, style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
         BasicTextField(
@@ -312,8 +325,9 @@ private fun SlateField(
                     Modifier
                         .fillMaxWidth()
                         .heightIn(min = 52.dp)
-                        .clip(CircleShape)
-                        .background(c.fillField)
+                        .clip(fieldShape)
+                        .background(Color(0xFF111114))
+                        .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, fieldShape)
                         .padding(start = 16.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -428,24 +442,51 @@ fun PrivacyScreen() {
 fun NotificationSettingsScreen() {
     val store = LocalAppStore.current
     val c = OT.colors
+    val rosterShape = RoundedCornerShape(24.dp)
     PushedScreen(title = "Notifications") {
         Text(
             "Only what needs you. Each audition alerts once per change — never the same thing twice.",
             style = OT.type.callout,
             color = c.labelSecondary,
         )
-        Spacer(Modifier.height(16.dp))
-        SectionLabel("Deadlines")
-        ToggleRow("Morning it’s due", store.notifyMorning, { store.notifyMorning = it }, detail = "8:00 AM on the due date")
-        ToggleRow("Two hours before", store.notifyTwoHours, { store.notifyTwoHours = it }, detail = "Only if it isn’t sent yet", showDivider = false)
+        Spacer(Modifier.height(18.dp))
+        SectionLabel("Deadlines", Modifier.padding(start = 4.dp, bottom = 8.dp))
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(rosterShape)
+                .background(OT.colors.surfaceCard)
+                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape),
+        ) {
+            ToggleRow("Morning it’s due", store.notifyMorning, { store.notifyMorning = it }, detail = "8:00 AM on the due date")
+            ToggleRow("Two hours before", store.notifyTwoHours, { store.notifyTwoHours = it }, detail = "Only if it isn’t sent yet", showDivider = false)
+        }
+
         Spacer(Modifier.height(20.dp))
-        SectionLabel("From casting")
-        ToggleRow("Callbacks and new sides", store.notifyCallbacks, { store.notifyCallbacks = it }, detail = "When a notice you added changes")
-        ToggleRow("Messages", store.notifyMessages, { store.notifyMessages = it }, detail = "Replies to your tape", showDivider = false)
+        SectionLabel("From casting", Modifier.padding(start = 4.dp, bottom = 8.dp))
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(rosterShape)
+                .background(OT.colors.surfaceCard)
+                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape),
+        ) {
+            ToggleRow("Callbacks and new sides", store.notifyCallbacks, { store.notifyCallbacks = it }, detail = "When a notice you added changes")
+            ToggleRow("Messages", store.notifyMessages, { store.notifyMessages = it }, detail = "Replies to your tape", showDivider = false)
+        }
+
         Spacer(Modifier.height(20.dp))
-        SectionLabel("Your tapes")
-        ToggleRow("Delivered or failed", store.notifyDelivery, { store.notifyDelivery = it }, detail = "Confirmation from Actors Access, or a retry")
-        ToggleRow("Practice nudges", store.notifyPractice, { store.notifyPractice = it }, detail = "A short run when nothing is due", showDivider = false)
+        SectionLabel("Your tapes", Modifier.padding(start = 4.dp, bottom = 8.dp))
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(rosterShape)
+                .background(OT.colors.surfaceCard)
+                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape),
+        ) {
+            ToggleRow("Delivered or failed", store.notifyDelivery, { store.notifyDelivery = it }, detail = "Confirmation from Actors Access, or a retry")
+            ToggleRow("Practice nudges", store.notifyPractice, { store.notifyPractice = it }, detail = "A short run when nothing is due", showDivider = false)
+        }
     }
 }
 
@@ -538,8 +579,13 @@ private fun HeadshotSlot(
     onAction: () -> Unit = {},
 ) {
     val c = OT.colors
-    val shape = RoundedCornerShape(20.dp)
-    Box(modifier.clip(shape)) {
+    val shape = RoundedCornerShape(24.dp)
+    Box(
+        modifier
+            .clip(shape)
+            .background(Color(0xFF111114))
+            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
+    ) {
         if (done) {
             HeadshotImage(Modifier.fillMaxSize(), name = asset, contentDescription = "$title headshot")
             Box(
@@ -581,7 +627,7 @@ private fun HeadshotSlot(
                     color = dash,
                     topLeft = androidx.compose.ui.geometry.Offset(w / 2, w / 2),
                     size = androidx.compose.ui.geometry.Size(size.width - w, size.height - w),
-                    cornerRadius = CornerRadius(20.dp.toPx(), 20.dp.toPx()),
+                    cornerRadius = CornerRadius(24.dp.toPx(), 24.dp.toPx()),
                     style = Stroke(width = w, pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 5.dp.toPx()), 0f)),
                 )
             }
@@ -602,7 +648,15 @@ private fun HeadshotSlot(
 @Composable
 private fun HeadshotTip(icon: ImageVector, title: String, detail: String, modifier: Modifier = Modifier) {
     val c = OT.colors
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    val tipShape = RoundedCornerShape(18.dp)
+    Column(
+        modifier
+            .clip(tipShape)
+            .background(OT.colors.surfaceCard)
+            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, tipShape)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
         Icon(icon, null, tint = c.labelSecondary, modifier = Modifier.size(20.dp))
         Text(title, style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
         Text(detail, style = OT.type.footnote, color = c.labelTertiary)

@@ -77,9 +77,12 @@ import com.onetake.app.models.Destination
 import com.onetake.app.models.otDue
 import com.onetake.app.models.otTime
 import com.onetake.app.models.otWeekdayCaps
+import androidx.compose.material3.HorizontalDivider
 import com.onetake.app.ui.components.CanvasBox
 import com.onetake.app.ui.components.Chevron
 import com.onetake.app.ui.components.CircleIconButton
+import com.onetake.app.ui.components.GLASS_EDGE_COLOR
+import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.HeadshotImage
 import com.onetake.app.ui.components.OTCard
 import com.onetake.app.ui.components.OTDivider
@@ -187,6 +190,14 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
     val context = LocalContext.current
     val c = OT.colors
     var showDestination by remember { mutableStateOf(false) }
+    val cardShape = remember { RoundedCornerShape(24.dp) }
+
+    fun handleSend() {
+        if (a.destination == Destination.EmailOrLink) {
+            share(context, "OneTake self-tape — ${a.project} (${a.role})")
+        }
+        onSend()
+    }
 
     Column(Modifier.fillMaxSize()) {
         PkgTopBar(icon = Icons.AutoMirrored.Filled.ArrowBack, label = "Back", onClick = { nav.back() })
@@ -201,21 +212,50 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
             Text("Ready to send.", style = OT.type.largeTitle, color = c.labelPrimary, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(6.dp))
             Text("Due ${a.due.otDue} · ${a.readyCount} of ${a.totalCount} ready", style = OT.type.callout, color = c.labelSecondary)
-            Spacer(Modifier.height(24.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                SectionLabel("On the tape, in order", Modifier.weight(1f))
-                Text("2:25", style = OT.type.headline, color = c.labelPrimary)
-            }
-            Spacer(Modifier.height(10.dp))
-            PkgTapeStrip()
-            Spacer(Modifier.height(12.dp))
-            OTDivider()
+            Spacer(Modifier.height(20.dp))
 
-            PkgRow(icon = Icons.Outlined.Movie, title = PKG_FILE, detail = "Named the way casting asked · one file", titleWeight = FontWeight.SemiBold, titleSmall = true)
-            PkgRow(icon = Icons.AutoMirrored.Filled.Send, title = a.destination.label, value = "$PKG_MB MB · 1080p", onClick = { showDestination = true })
-            PkgRow(icon = Icons.Filled.CheckCircle, iconTint = c.success, title = "Tape check", value = "Passed", onClick = { nav.push(Route.TapeCheck(a.id)) })
-            PkgRow(icon = Icons.Filled.GraphicEq, iconTint = c.success, title = "Audio", value = "Both voices clear")
-            PkgRow(icon = Icons.Outlined.PlayArrow, title = "Preview the whole tape", detail = "Exactly what casting gets · 2:25")
+            // Monolithic Assembled Tape Summary Card
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(cardShape)
+                    .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, cardShape)
+                    .background(OT.colors.surfaceCard)
+                    .padding(18.dp),
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "DELIVERY PACKAGE",
+                        style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp),
+                        color = OT.colors.accent,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("2:25", style = OT.type.headline, color = c.labelPrimary)
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(a.project, style = OT.type.title, color = Color.White)
+                Text("Role: ${a.role}", style = OT.type.callout, color = c.labelSecondary)
+                Spacer(Modifier.height(14.dp))
+                PkgTapeStrip()
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Package contents & verification", Modifier.padding(start = 4.dp, bottom = 8.dp))
+
+            // Inset Grouped Roster
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(cardShape)
+                    .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, cardShape)
+                    .background(OT.colors.surfaceCard),
+            ) {
+                PkgRow(icon = Icons.Outlined.Movie, title = PKG_FILE, detail = "Named the way casting asked · one file", titleWeight = FontWeight.SemiBold, titleSmall = true, showDivider = true)
+                PkgRow(icon = Icons.AutoMirrored.Filled.Send, title = a.destination.label, value = "$PKG_MB MB · 1080p", onClick = { showDestination = true }, showDivider = true)
+                PkgRow(icon = Icons.Filled.CheckCircle, iconTint = c.success, title = "Tape check", value = "Passed", onClick = { nav.push(Route.TapeCheck(a.id)) }, showDivider = true)
+                PkgRow(icon = Icons.Filled.GraphicEq, iconTint = c.success, title = "Audio", value = "Both voices clear", showDivider = true)
+                PkgRow(icon = Icons.Outlined.PlayArrow, title = "Preview the whole tape", detail = "Exactly what casting gets · 2:25", showDivider = false)
+            }
         }
         Column(
             Modifier
@@ -227,7 +267,7 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
         ) {
             PrimaryButton(
                 "Send to ${a.destination.label}",
-                onClick = onSend,
+                onClick = { handleSend() },
                 icon = Icons.AutoMirrored.Filled.Send,
                 iconTrailing = true,
             )
@@ -280,6 +320,7 @@ private fun PkgRow(
     iconTint: Color = OT.colors.labelSecondary,
     titleWeight: FontWeight = FontWeight.Normal,
     titleSmall: Boolean = false,
+    showDivider: Boolean = true,
     onClick: (() -> Unit)? = null,
 ) {
     val c = OT.colors
@@ -289,7 +330,7 @@ private fun PkgRow(
                 .fillMaxWidth()
                 .heightIn(min = 54.dp)
                 .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
-                .padding(vertical = 8.dp),
+                .padding(horizontal = 18.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -309,7 +350,9 @@ private fun PkgRow(
             if (value != null) Text(value, style = OT.type.footnote, color = c.labelSecondary, maxLines = 1)
             Chevron()
         }
-        OTDivider()
+        if (showDivider) {
+            HorizontalDivider(color = Color(0x14FFFFFF), thickness = 0.5.dp, modifier = Modifier.padding(start = 54.dp))
+        }
     }
 }
 

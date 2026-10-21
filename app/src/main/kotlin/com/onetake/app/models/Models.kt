@@ -123,6 +123,8 @@ data class PracticePiece(
     val detail: String,
     val linesLearned: Int,
     val linesTotal: Int,
+    val character: String = "",
+    val scene: ScriptScene? = null,
 )
 
 data class SlateInfo(

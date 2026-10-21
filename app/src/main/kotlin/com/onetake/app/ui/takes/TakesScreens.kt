@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Edit
@@ -80,6 +81,9 @@ import com.onetake.app.models.SampleData
 import com.onetake.app.models.Take
 import com.onetake.app.models.TapeFinding
 import com.onetake.app.models.formatDuration
+import androidx.compose.ui.viewinterop.AndroidView
+import com.onetake.app.ui.components.GLASS_EDGE_COLOR
+import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.Chevron
 import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.components.HeadshotImage
@@ -109,6 +113,7 @@ fun TakesScreen(auditionId: String) {
     var showOneMore by remember { mutableStateOf(false) }
     var notesOpen by remember { mutableStateOf(false) }
     var comparing by remember { mutableStateOf(false) }
+    var isPlaying by remember(selected) { mutableStateOf(false) }
 
     val takes = store.takes
     val circled = takes.firstOrNull { it.isCircled }
@@ -146,7 +151,12 @@ fun TakesScreen(auditionId: String) {
                 .padding(top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            TkPlayerCard(Modifier.fillMaxWidth().height(210.dp))
+            TkPlayerCard(
+                modifier = Modifier.fillMaxWidth().height(260.dp),
+                fileUri = current?.fileUri,
+                isPlaying = isPlaying,
+                onTogglePlay = { isPlaying = !isPlaying },
+            )
             TkPlaybackBar()
 
             Row(
@@ -351,22 +361,68 @@ private fun TkCompareGlyph(color: Color) {
     }
 }
 
-// MARK: - Player card (headshot frame + play overlay; no real player needed)
+// MARK: - Player card (VideoView when take.fileUri is present, headshot placeholder otherwise)
 
 @Composable
-private fun TkPlayerCard(modifier: Modifier = Modifier, onPlay: () -> Unit = {}) {
-    Box(modifier.clip(RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
-        HeadshotImage(Modifier.fillMaxSize())
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.12f)))
+private fun TkPlayerCard(
+    modifier: Modifier = Modifier,
+    fileUri: String? = null,
+    isPlaying: Boolean = false,
+    onTogglePlay: () -> Unit = {},
+) {
+    val cardShape = RoundedCornerShape(26.dp)
+    val hasVideo = !fileUri.isNullOrBlank()
+
+    Box(
+        modifier
+            .clip(cardShape)
+            .background(Color.Black)
+            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, cardShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (hasVideo) {
+            AndroidView(
+                factory = { context ->
+                    android.widget.VideoView(context).apply {
+                        runCatching {
+                            setVideoPath(fileUri)
+                            setOnPreparedListener { mp -> mp.isLooping = true }
+                        }
+                    }
+                },
+                update = { videoView ->
+                    runCatching {
+                        if (isPlaying) {
+                            if (!videoView.isPlaying) videoView.start()
+                        } else {
+                            if (videoView.isPlaying) videoView.pause()
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            HeadshotImage(Modifier.fillMaxSize())
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)))
+        }
+
         Box(
             Modifier
-                .size(60.dp)
+                .size(64.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.28f))
-                .clickable(role = Role.Button, onClick = onPlay)
-                .semantics { contentDescription = "Play" },
+                .background(Color.Black.copy(alpha = 0.55f))
+                .border(0.5.dp, Color.White.copy(alpha = 0.35f), CircleShape)
+                .clickable(role = Role.Button, onClick = onTogglePlay)
+                .semantics { contentDescription = if (isPlaying) "Pause" else "Play" },
             contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(32.dp)) }
+        ) {
+            Icon(
+                imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(32.dp),
+            )
+        }
     }
 }
 

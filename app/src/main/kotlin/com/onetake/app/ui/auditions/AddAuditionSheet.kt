@@ -67,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -95,8 +96,8 @@ import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
-import com.onetake.app.models.SampleData
 import com.onetake.app.models.otTime
+import com.onetake.app.ocr.OcrManager
 import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.components.IconRow
 import com.onetake.app.ui.components.LargeTitle
@@ -109,6 +110,7 @@ import com.onetake.app.ui.system.clipboardCastingNotice
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.theme.OT
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
@@ -123,11 +125,6 @@ import java.util.Locale
 
 private enum class AddStep { Reading, MissingDate, Review, EditAsks, CouldNotRead }
 
-private const val ADD_SAMPLE_NOTICE =
-    "Hi Kabir, we'd love a self-tape for ARJUN in THE LAST SUMMER (feature). Please send by Fri 9 Oct, 10am. " +
-        "Slate first, landscape, include a full-length shot. Sides attached (2 scenes). Under 3 minutes total. " +
-        "Upload to Actors Access, named Last_First_Role."
-
 private val addDueLong = DateTimeFormatter.ofPattern("EEE d MMM, h:mm a", Locale.US)
 private val addDueDay = DateTimeFormatter.ofPattern("EEE d MMM", Locale.US)
 
@@ -137,7 +134,7 @@ private data class AddDraft(
     val role: String = "",
     val projectType: String = "Feature film",
     val due: LocalDateTime? = null,
-    val scenes: Int = 2,
+    val scenes: Int = 1,
     val asks: List<String> = emptyList(),
     val destination: Destination = Destination.ActorsAccess,
     val rawScriptText: String = "",
@@ -149,16 +146,22 @@ private data class AddDraft(
 
         val finalScenes = if (parsedScene != null && parsedScene.lines.isNotEmpty()) {
             listOf(parsedScene)
+        } else if (rawScriptText.isNotBlank()) {
+            listOf(ScriptParser.parse(rawScriptText, myCharacter = role.ifBlank { "Me" }, sceneTitle = "Scene 1"))
         } else {
-            SampleData.lastSummer.scenes.take(scenes)
+            emptyList()
         }
 
         val pieces = mutableListOf(
             Piece(kind = PieceKind.Headshot, title = "Headshot", detail = "Front", isDone = false),
             Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false),
         )
-        for (i in finalScenes.indices) {
-            pieces.add(Piece(kind = PieceKind.Scene, title = finalScenes[i].title, detail = "", isDone = false))
+        if (finalScenes.isNotEmpty()) {
+            for (scene in finalScenes) {
+                pieces.add(Piece(kind = PieceKind.Scene, title = scene.title, detail = "", isDone = false))
+            }
+        } else {
+            pieces.add(Piece(kind = PieceKind.Scene, title = "Scene 1", detail = "", isDone = false))
         }
 
         return Audition(
@@ -166,7 +169,7 @@ private data class AddDraft(
             projectType = projectType,
             role = role.ifBlank { "Role" },
             roleSize = "Lead",
-            castingOffice = "Northlight Casting",
+            castingOffice = "",
             due = due ?: LocalDateTime.now().plusDays(3),
             asks = asks,
             pieces = pieces,
@@ -178,29 +181,74 @@ private data class AddDraft(
 }
 
 private fun addParseNotice(text: String): AddDraft {
-    val lower = text.lowercase()
-    val characters = ScriptParser.extractCharacters(text)
-    val detectedRole = characters.firstOrNull() ?: if ("arjun" in lower) "Arjun" else "Role"
-    val detectedProject = if ("last summer" in lower) {
-        "The Last Summer"
-    } else {
-        text.lines().firstOrNull { it.isNotBlank() && !it.contains(":") }?.trim() ?: "Untitled Audition"
+    val clean = text.trim()
+    if (clean.isBlank()) return AddDraft()
+
+    val lower = clean.lowercase()
+    val characters = ScriptParser.extractCharacters(clean)
+
+    // Look for role indications like "role: X", "for X in", "seeking X"
+    var detectedRole = ""
+    val roleRegexes = listOf(
+        Regex("""(?i)\brole(?:\s+of)?:\s*([A-Za-z0-9'\s]+)"""),
+        Regex("""(?i)\bfor\s+([A-Z][a-zA-Z0-9'\s]+)\s+in\b"""),
+        Regex("""(?i)\bseeking\s+([A-Z][a-zA-Z0-9'\s]+)\b"""),
+    )
+    for (regex in roleRegexes) {
+        val match = regex.find(clean)
+        if (match != null) {
+            detectedRole = match.groupValues[1].trim().take(30)
+            break
+        }
+    }
+    if (detectedRole.isBlank() && characters.isNotEmpty()) {
+        detectedRole = characters.first().take(30)
     }
 
-    var d = AddDraft(rawScriptText = text)
+    // Look for project indications like "in PROJECT", "project: PROJECT"
+    var detectedProject = ""
+    val projectRegexes = listOf(
+        Regex("""(?i)\bproject:\s*([A-Za-z0-9'\s]+)"""),
+        Regex("""(?i)\bin\s+([A-Z][A-Z0-9'\s]{2,})\b"""),
+        Regex("""(?i)\bfilm:\s*([A-Za-z0-9'\s]+)"""),
+        Regex("""(?i)\bseries:\s*([A-Za-z0-9'\s]+)"""),
+    )
+    for (regex in projectRegexes) {
+        val match = regex.find(clean)
+        if (match != null) {
+            detectedProject = match.groupValues[1].trim().take(40)
+            break
+        }
+    }
+    if (detectedProject.isBlank()) {
+        detectedProject = clean.lines().firstOrNull { line ->
+            val l = line.trim()
+            l.isNotBlank() && !l.contains(":") && l.length < 50
+        }?.trim()?.take(40) ?: "Untitled Audition"
+    }
+
     val asks = mutableListOf<String>()
-    d = d.copy(project = detectedProject.take(40))
-    d = d.copy(role = detectedRole.take(30))
-    if ("fri 9 oct" in lower) d = d.copy(due = SampleData.lastSummer.due)
     if ("slate" in lower) asks += "Slate first"
     if ("landscape" in lower) asks += "Landscape"
     if ("full-length" in lower || "full length" in lower) asks += "Full length"
     if ("under 3" in lower) asks += "Under 3 min"
-    if ("actors access" in lower) {
-        asks += "Actors Access"
-        d = d.copy(destination = Destination.ActorsAccess)
+    if ("actors access" in lower) asks += "Actors Access"
+    if ("casting networks" in lower) asks += "Casting Networks"
+
+    val destination = when {
+        "casting networks" in lower -> Destination.CastingNetworks
+        "spotlight" in lower -> Destination.Spotlight
+        "email" in lower || "link" in lower -> Destination.EmailOrLink
+        else -> Destination.ActorsAccess
     }
-    return d.copy(asks = asks)
+
+    return AddDraft(
+        project = detectedProject,
+        role = detectedRole,
+        asks = asks,
+        destination = destination,
+        rawScriptText = clean,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -209,34 +257,66 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var path by remember { mutableStateOf(listOf<AddStep>()) }
-    var notice by remember { mutableStateOf(ADD_SAMPLE_NOTICE) }
-    var draft by remember { mutableStateOf(addParseNotice(ADD_SAMPLE_NOTICE)) }
-    val clip = remember { runCatching { clipboardCastingNotice(context) }.getOrNull() ?: ADD_SAMPLE_NOTICE }
+    var notice by remember { mutableStateOf("") }
+    var draft by remember { mutableStateOf(AddDraft()) }
+    val clip = remember { runCatching { clipboardCastingNotice(context) }.getOrNull() }
 
     fun startReading(text: String) {
+        if (text.isBlank()) {
+            path = listOf(AddStep.CouldNotRead)
+            return
+        }
         notice = text
+        draft = addParseNotice(text)
         path = listOf(AddStep.Reading)
     }
 
     val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) startReading(ADD_SAMPLE_NOTICE)
+        if (uri != null) {
+            path = listOf(AddStep.Reading)
+            scope.launch {
+                val result = OcrManager.recognizeTextFromUri(context, uri)
+                val text = result.getOrNull().orEmpty().trim()
+                if (text.isBlank()) {
+                    path = listOf(AddStep.CouldNotRead)
+                } else {
+                    notice = text
+                    draft = addParseNotice(text)
+                }
+            }
+        }
     }
     val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
-        if (bitmap != null) startReading(ADD_SAMPLE_NOTICE)
+        if (bitmap != null) {
+            path = listOf(AddStep.Reading)
+            scope.launch {
+                val result = OcrManager.recognizeTextFromBitmap(bitmap)
+                val text = result.getOrNull().orEmpty().trim()
+                if (text.isBlank()) {
+                    path = listOf(AddStep.CouldNotRead)
+                } else {
+                    notice = text
+                    draft = addParseNotice(text)
+                }
+            }
+        }
     }
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            val type = context.contentResolver.getType(uri).orEmpty()
-            if (type.startsWith("text")) {
-                val text = runCatching {
-                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                }.getOrNull()
-                if (text.isNullOrBlank()) path = listOf(AddStep.CouldNotRead) else startReading(text)
-            } else {
-                startReading(ADD_SAMPLE_NOTICE)
+            path = listOf(AddStep.Reading)
+            scope.launch {
+                val result = OcrManager.recognizeTextFromUri(context, uri)
+                val text = result.getOrNull().orEmpty().trim()
+                if (text.isBlank()) {
+                    path = listOf(AddStep.CouldNotRead)
+                } else {
+                    notice = text
+                    draft = addParseNotice(text)
+                }
             }
         }
     }
@@ -274,8 +354,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
                 clip = clip,
                 onClose = onDismiss,
                 onPaste = {
-                    notice = clip
-                    path = path + AddStep.Reading
+                    if (clip != null) startReading(clip)
                 },
                 onPhoto = pickPhoto,
                 onScan = scan,
@@ -339,7 +418,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
 
 @Composable
 private fun AddCaptureStep(
-    clip: String,
+    clip: String?,
     onClose: () -> Unit,
     onPaste: () -> Unit,
     onPhoto: () -> Unit,
@@ -348,7 +427,7 @@ private fun AddCaptureStep(
     onType: () -> Unit,
 ) {
     val c = OT.colors
-    val parsed = remember(clip) { addParseNotice(clip) }
+    val parsed = remember(clip) { clip?.let { addParseNotice(it) } }
     Column(
         Modifier
             .fillMaxWidth()
@@ -367,36 +446,38 @@ private fun AddCaptureStep(
             CircleIconButton(Icons.Filled.Close, "Close", onClick = onClose)
         }
 
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(c.accentSoft)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(
-                    Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(c.accentSoft),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Filled.ContentPaste, null, tint = c.accent, modifier = Modifier.size(20.dp)) }
-                Column {
-                    Text("On your clipboard", style = OT.type.headline, color = c.labelPrimary)
-                    Text(
-                        if (parsed.project.isNotEmpty()) "Northlight Casting · ${parsed.project}" else "Looks like a casting notice",
-                        style = OT.type.footnote,
-                        color = c.labelTertiary,
-                    )
+        if (clip != null && parsed != null) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(c.accentSoft)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(
+                        Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(c.accentSoft),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Filled.ContentPaste, null, tint = c.accent, modifier = Modifier.size(20.dp)) }
+                    Column {
+                        Text("On your clipboard", style = OT.type.headline, color = c.labelPrimary)
+                        Text(
+                            if (parsed.project.isNotEmpty()) parsed.project else "Looks like a casting notice",
+                            style = OT.type.footnote,
+                            color = c.labelTertiary,
+                        )
+                    }
                 }
+                Text(
+                    "“${clip.take(110)}…”",
+                    style = OT.type.callout,
+                    color = c.labelSecondary,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                PrimaryButton("Paste and set up", onClick = onPaste)
             }
-            Text(
-                "“${clip.take(110)}…”",
-                style = OT.type.callout,
-                color = c.labelSecondary,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-            PrimaryButton("Paste and set up", onClick = onPaste)
         }
 
         SectionLabel("Or bring it in")

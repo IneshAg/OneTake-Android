@@ -77,7 +77,6 @@ import com.onetake.app.CameraFlow
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
-import com.onetake.app.models.SampleData
 import com.onetake.app.models.Take
 import com.onetake.app.models.TapeFinding
 import com.onetake.app.models.formatDuration
@@ -668,7 +667,18 @@ fun TapeCheckScreen(auditionId: String) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val c = OT.colors
-    val findings = SampleData.findings
+    val findings = remember(store.takes) {
+        store.takes.flatMap { take ->
+            take.notes.map { note ->
+                TapeFinding(
+                    category = "Take ${take.number}",
+                    title = note,
+                    where = "Take ${take.number} · ${formatDuration(take.durationSeconds)}",
+                    advice = "Review Take ${take.number} playback before sending."
+                )
+            }
+        }
+    }
     var finding by remember { mutableStateOf<TapeFinding?>(null) }
     var passedOpen by remember { mutableStateOf(false) }
     val project = store.audition(auditionId)?.project

@@ -11,7 +11,6 @@ import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
 import com.onetake.app.models.PieceKind
 import com.onetake.app.models.PracticePiece
-import com.onetake.app.models.SampleData
 import com.onetake.app.models.SlateInfo
 import com.onetake.app.models.Take
 import java.time.LocalDateTime
@@ -25,8 +24,8 @@ class AppStore : ViewModel() {
     var slate by mutableStateOf(SlateInfo())
 
     // Data
-    var auditions by mutableStateOf(SampleData.auditions)
-    var takes by mutableStateOf(SampleData.takes)
+    var auditions by mutableStateOf(emptyList<Audition>())
+    var takes by mutableStateOf(emptyList<Take>())
     var practice by mutableStateOf(emptyList<PracticePiece>())
 
     // Settings (iOS @AppStorage equivalents)
@@ -34,7 +33,7 @@ class AppStore : ViewModel() {
     var cleanNoise by mutableStateOf(true)
     var readerVolume by mutableStateOf("Quieter")
     var exportSpec by mutableStateOf("1080p, landscape")
-    var headshotsTaken by mutableIntStateOf(1)
+    var headshotsTaken by mutableIntStateOf(0)
     var notifyMorning by mutableStateOf(true)
     var notifyTwoHours by mutableStateOf(true)
     var notifyCallbacks by mutableStateOf(true)

@@ -20,29 +20,7 @@ data class DialogueMatch(
 )
 
 class ScriptSearchEngine(
-    private val sampleScripts: List<ScriptSearchLine> = listOf(
-        ScriptSearchLine(
-            character = "Arjun",
-            project = "The Last Summer",
-            scene = "Scene 3",
-            text = "I never made that promise to you, Elena. You know the train leaves at dawn.",
-            auditionId = "audition-the-last-summer",
-        ),
-        ScriptSearchLine(
-            character = "Detective Rao",
-            project = "Northbound",
-            scene = "Scene 1",
-            text = "A detective doesn't give promises, councilman. We collect facts.",
-            auditionId = "audition-northbound",
-        ),
-        ScriptSearchLine(
-            character = "Marcus Vance",
-            project = "Neon Horizon",
-            scene = "Scene 4",
-            text = "If the mainframe locks us out, we burn the credentials.",
-            auditionId = "audition-neon-horizon",
-        )
-    ),
+    private val sampleScripts: List<ScriptSearchLine> = emptyList(),
 ) {
     fun search(query: String, dynamicLines: List<ScriptSearchLine> = emptyList()): List<DialogueMatch> {
         val trimmed = query.trim()

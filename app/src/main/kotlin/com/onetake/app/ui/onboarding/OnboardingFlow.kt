@@ -1032,7 +1032,7 @@ private fun OnbNotificationsStep(onBack: () -> Unit, onDone: () -> Unit) {
                     )
                     Text("8:00 AM", style = OT.type.footnote, color = c.labelTertiary)
                 }
-                Text("The Last Summer is due today at 10:00 AM. 2 of 4 ready.", style = OT.type.callout, color = c.labelPrimary)
+                Text("Your audition tape is due today at 10:00 AM. 2 of 4 ready.", style = OT.type.callout, color = c.labelPrimary)
             }
         }
     }

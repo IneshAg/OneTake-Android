@@ -50,11 +50,12 @@ import com.onetake.app.Navigator
 import com.onetake.app.Route
 import com.onetake.app.TabBarClearance
 import com.onetake.app.models.Audition
+import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.PieceKind
-import com.onetake.app.models.SampleData
 import com.onetake.app.models.otDayMonth
 import com.onetake.app.models.otDue
 import com.onetake.app.models.otTime
+import com.onetake.app.models.otWeekdayCaps
 import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.components.HeadshotImage
 import com.onetake.app.ui.components.OTDivider
@@ -185,17 +186,24 @@ private fun HomeHeader(greetingPrefix: String, firstName: String, onAdd: () -> U
 private fun HomePickUp(modifier: Modifier = Modifier) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
-    val target = store.auditions.firstOrNull { it.project == "The Last Summer" }
+    val practiceTarget = store.practice.firstOrNull()
+    val auditionTarget = store.auditions.firstOrNull { it.status != AuditionStatus.Sent }
+
+    if (practiceTarget == null && auditionTarget == null) return
+
+    val title = practiceTarget?.title ?: "${auditionTarget?.project} · Scene 1"
+    val detail = practiceTarget?.detail ?: "Audition · Ready to rehearse"
     val resume = {
-        if (target != null) nav.push(Route.Prepare(target.id, 0)) else nav.select(AppTab.Practice)
+        if (practiceTarget != null) nav.push(Route.RunLines(practiceTarget.id, 0))
+        else if (auditionTarget != null) nav.push(Route.Prepare(auditionTarget.id, 0))
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         SectionLabel("Pick up where you left off")
         ScheduleRow(
             eyebrow = "LINES",
-            value = "3 of 5",
-            title = "The Last Summer · Scene 1",
-            detail = "Practice · stopped at line 14 of 18",
+            value = practiceTarget?.let { "${it.linesLearned} of ${it.linesTotal}" } ?: "Active",
+            title = title,
+            detail = detail,
             onClick = resume,
             trailing = { PillButton(text = "Resume", onClick = resume) },
         )
@@ -206,18 +214,18 @@ private fun HomePickUp(modifier: Modifier = Modifier) {
 private fun HomeSchedule(modifier: Modifier = Modifier) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
-    val items = SampleData.schedule
+    val items = store.active
+    if (items.isEmpty()) return
+
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         SectionLabel("Your schedule")
-        items.forEachIndexed { i, item ->
+        items.forEachIndexed { i, audition ->
             ScheduleRow(
-                eyebrow = item.whenLabel,
-                value = item.time,
-                title = item.title,
-                detail = item.detail,
-                onClick = {
-                    store.auditions.firstOrNull { it.project == item.title }?.let { nav.push(Route.AuditionDetail(it.id)) }
-                },
+                eyebrow = audition.due.otWeekdayCaps,
+                value = audition.due.otTime,
+                title = audition.project,
+                detail = "Due ${audition.due.otDue} · ${audition.role}",
+                onClick = { nav.push(Route.AuditionDetail(audition.id)) },
             )
             if (i != items.lastIndex) OTDivider()
         }

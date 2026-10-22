@@ -81,7 +81,6 @@ import com.onetake.app.Route
 import com.onetake.app.models.Audition
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
-import com.onetake.app.models.SampleData
 import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.formatDuration
 import com.onetake.app.models.otDayMonth
@@ -389,15 +388,11 @@ private fun detailSceneIndex(a: Audition, piece: Piece): Int {
     return n.coerceIn(0, a.scenes.size - 1)
 }
 
-/** "Apartment Confrontation" — from the piece detail when it has one, else the known sample scene names. */
+/** Scene name from the piece detail when it has one, else scene title or number. */
 private fun detailSceneName(scene: ScriptScene, piece: Piece? = null): String {
     val fromPiece = piece?.detail?.substringBefore(" · ")?.trim().orEmpty()
     if (fromPiece.isNotEmpty() && !fromPiece.startsWith("not ") && !fromPiece.startsWith("any ")) return fromPiece
-    return when (scene.heading) {
-        SampleData.apartment.heading -> "Apartment Confrontation"
-        SampleData.goodbye.heading -> "Goodbye"
-        else -> scene.title
-    }
+    return scene.title.ifBlank { "Scene ${scene.number}" }
 }
 
 private fun detailThenLine(a: Audition): String? {

@@ -199,9 +199,9 @@ private enum class MdStage { Pick, Connecting, Connected, Code }
 private data class MdDevice(val icon: ImageVector, val name: String, val status: String, val ready: Boolean)
 
 private val mdDevices = listOf(
-    MdDevice(Icons.Filled.Tablet, "Kabir’s tablet", "Ready · same Wi-Fi", ready = true),
-    MdDevice(Icons.Filled.Laptop, "Kabir’s laptop", "Open OneTake on the laptop to use it", ready = false),
-    MdDevice(Icons.Filled.Smartphone, "Kabir’s spare phone", "Asleep — wake it to connect", ready = false),
+    MdDevice(Icons.Filled.Tablet, "Studio Tablet", "Ready · same Wi-Fi", ready = true),
+    MdDevice(Icons.Filled.Laptop, "Prompter Laptop", "Open OneTake on the laptop to use it", ready = false),
+    MdDevice(Icons.Filled.Smartphone, "Remote Monitor Phone", "Asleep — wake it to connect", ready = false),
 )
 
 @Composable
@@ -612,7 +612,7 @@ fun ShootSetupScreen(auditionId: String) {
             OTDivider()
             SetupCheckRow("Hands-free", "Your voice + earbuds click", "“Action”, “Cut”, “Line?” · volume buttons on", ok = true)
             OTDivider()
-            SetupCheckRow("Microphone", "Kabir’s earbuds", "Good level from your mark", ok = true) {
+            SetupCheckRow("Microphone", "Studio Wireless Mic", "Good level from your mark", ok = true) {
                 Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     repeat(14) { i ->
                         Box(

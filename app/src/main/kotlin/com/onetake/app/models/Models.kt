@@ -128,12 +128,13 @@ data class PracticePiece(
 )
 
 data class SlateInfo(
-    val name: String = "Kabir Sharma",
-    val height: String = "5′ 11″",
-    val basedIn: String = "Mumbai",
+    val name: String = "",
+    val height: String = "",
+    val basedIn: String = "",
     val representation: String = "",
 ) {
-    val spoken: String get() = "$name. $height. $basedIn."
+    val spoken: String
+        get() = listOf(name, height, basedIn).filter { it.isNotBlank() }.joinToString(". ").let { if (it.isNotBlank()) "$it." else "" }
 }
 
 // MARK: - Date formatting helpers (same output as iOS `Date.otDue` / `otDayMonth`)

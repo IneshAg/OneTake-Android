@@ -104,7 +104,13 @@ import kotlinx.coroutines.launch
 
 private enum class PkgPhase { Review, Sending, Failed, Sent }
 
-private const val PKG_FILE = "SHARMA_KABIR_ARJUN_THELASTSUMMER.mp4"
+private fun buildPackageFileName(audition: Audition, slateName: String): String {
+    val cleanSlate = slateName.ifBlank { "ACTOR" }.replace(Regex("[^a-zA-Z0-9]"), "_").uppercase()
+    val cleanRole = audition.role.ifBlank { "ROLE" }.replace(Regex("[^a-zA-Z0-9]"), "_").uppercase()
+    val cleanProject = audition.project.ifBlank { "PROJECT" }.replace(Regex("[^a-zA-Z0-9]"), "_").uppercase()
+    return "${cleanSlate}_${cleanRole}_${cleanProject}.mp4"
+}
+
 private const val PKG_MB = 184
 
 @Composable
@@ -191,6 +197,7 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
     val c = OT.colors
     var showDestination by remember { mutableStateOf(false) }
     val cardShape = remember { RoundedCornerShape(24.dp) }
+    val pkgFileName = remember(a, store.slate.name) { buildPackageFileName(a, store.slate.name) }
 
     fun handleSend() {
         if (a.destination == Destination.EmailOrLink) {
@@ -250,7 +257,7 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
                     .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, cardShape)
                     .background(OT.colors.surfaceCard),
             ) {
-                PkgRow(icon = Icons.Outlined.Movie, title = PKG_FILE, detail = "Named the way casting asked · one file", titleWeight = FontWeight.SemiBold, titleSmall = true, showDivider = true)
+                PkgRow(icon = Icons.Outlined.Movie, title = pkgFileName, detail = "Named the way casting asked · one file", titleWeight = FontWeight.SemiBold, titleSmall = true, showDivider = true)
                 PkgRow(icon = Icons.AutoMirrored.Filled.Send, title = a.destination.label, value = "$PKG_MB MB · 1080p", onClick = { showDestination = true }, showDivider = true)
                 PkgRow(icon = Icons.Filled.CheckCircle, iconTint = c.success, title = "Tape check", value = "Passed", onClick = { nav.push(Route.TapeCheck(a.id)) }, showDivider = true)
                 PkgRow(icon = Icons.Filled.GraphicEq, iconTint = c.success, title = "Audio", value = "Both voices clear", showDivider = true)
@@ -600,10 +607,12 @@ private fun PkgSendFailed(
                 showChevron = false,
             )
             OTDivider()
+            val store = LocalAppStore.current
+            val fileName = buildPackageFileName(audition, store.slate.name)
             ScheduleRow(
                 eyebrow = "FILE",
                 value = "",
-                title = PKG_FILE,
+                title = fileName,
                 detail = "$PKG_MB MB · waiting for a connection",
                 showChevron = false,
             )
@@ -670,7 +679,9 @@ private fun PkgSent(a: Audition, onDone: () -> Unit) {
                     Icon(Icons.Filled.CheckCircle, "Delivered", tint = c.success, modifier = Modifier.size(18.dp))
                 }
                 Spacer(Modifier.height(6.dp))
-                Text(PKG_FILE, style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                val store = LocalAppStore.current
+                val fileName = buildPackageFileName(a, store.slate.name)
+                Text(fileName, style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
                 Spacer(Modifier.height(6.dp))
                 Text("2:25 · headshot · slate · 2 scenes", style = OT.type.footnote, color = c.labelSecondary)
             }

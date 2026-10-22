@@ -1,6 +1,9 @@
 package com.onetake.app.ui.practice
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,9 +38,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.TheaterComedy
 import androidx.compose.material.icons.filled.Visibility
@@ -47,7 +52,11 @@ import com.onetake.app.models.formatDuration
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
 import com.onetake.app.data.ScriptParser
+import com.onetake.app.ocr.OcrManager
+import kotlinx.coroutines.launch
 import com.onetake.app.models.PracticePiece
 import com.onetake.app.ui.prepare.PrepLineMode
 import com.onetake.app.ui.prepare.PrepPrefs
@@ -198,25 +207,18 @@ fun PracticeScreen(
 
 // MARK: - 24b / 24c Practise a scene
 
-private const val DEFAULT_PRACTICE_SAMPLE = """SAM: You said you’d be home by eight.
-NINA: I said I’d try. There’s a difference.
-SAM: That wasn't the deal, Nina.
-NINA: Deals change when work runs late.
-SAM: Then call me. It's not hard.
-NINA: I didn't want another argument."""
-
 @Composable
 fun PracticeSetupScreen() {
     var step by rememberSaveable { mutableStateOf(0) }
-    var scriptText by rememberSaveable { mutableStateOf(DEFAULT_PRACTICE_SAMPLE) }
-    var sceneTitle by rememberSaveable { mutableStateOf("Kitchen Argument") }
+    var scriptText by rememberSaveable { mutableStateOf("") }
+    var sceneTitle by rememberSaveable { mutableStateOf("Practice Scene") }
 
     BackHandler(enabled = step == 1) { step = 0 }
     if (step == 0) {
         PracticeSourceStep(
             initialText = scriptText,
             onPicked = { text, title ->
-                scriptText = text.ifBlank { DEFAULT_PRACTICE_SAMPLE }
+                scriptText = text
                 sceneTitle = title
                 step = 1
             }
@@ -237,9 +239,70 @@ private fun PracticeSourceStep(
 ) {
     val nav = LocalNavigator.current
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val store = LocalAppStore.current
     val c = OT.colors
+
     var textInput by rememberSaveable { mutableStateOf(initialText) }
-    var titleInput by rememberSaveable { mutableStateOf("Kitchen Argument") }
+    var titleInput by rememberSaveable { mutableStateOf("Practice Scene") }
+    var isOcrProcessing by remember { mutableStateOf(false) }
+
+    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
+        if (bitmap != null) {
+            isOcrProcessing = true
+            scope.launch {
+                val result = OcrManager.recognizeTextFromBitmap(bitmap)
+                val text = result.getOrNull().orEmpty().trim()
+                if (text.isNotBlank()) {
+                    textInput = text
+                }
+                isOcrProcessing = false
+            }
+        }
+    }
+
+    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            isOcrProcessing = true
+            scope.launch {
+                val result = OcrManager.recognizeTextFromUri(context, uri)
+                val text = result.getOrNull().orEmpty().trim()
+                if (text.isNotBlank()) {
+                    textInput = text
+                }
+                isOcrProcessing = false
+            }
+        }
+    }
+
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            isOcrProcessing = true
+            scope.launch {
+                val result = OcrManager.recognizeTextFromUri(context, uri)
+                val text = result.getOrNull().orEmpty().trim()
+                if (text.isNotBlank()) {
+                    textInput = text
+                }
+                isOcrProcessing = false
+            }
+        }
+    }
+
+    val recentSides = remember(store.auditions, store.practice) {
+        val fromAuditions = store.auditions.flatMap { a ->
+            a.scenes.filter { it.lines.isNotEmpty() }.map { s ->
+                "${a.project} · ${s.title}" to (s.lines.joinToString("\n") { "${it.character}: ${it.text}" } to s.title)
+            }
+        }
+        val fromPractice = store.practice.mapNotNull { p ->
+            p.scene?.takeIf { it.lines.isNotEmpty() }?.let { s ->
+                p.title to (s.lines.joinToString("\n") { "${it.character}: ${it.text}" } to s.title)
+            }
+        }
+        fromAuditions + fromPractice
+    }
 
     Column(Modifier.fillMaxSize().background(c.bgCanvas)) {
         Row(
@@ -277,7 +340,17 @@ private fun PracticeSourceStep(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("SCRIPT TEXT", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp), color = c.labelSecondary)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "SCRIPT TEXT",
+                        style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp),
+                        color = c.labelSecondary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (isOcrProcessing) {
+                        Text("Reading script with OCR…", style = OT.type.caption, color = c.accent)
+                    }
+                }
                 BasicTextField(
                     value = textInput,
                     onValueChange = { textInput = it },
@@ -286,13 +359,13 @@ private fun PracticeSourceStep(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 240.dp),
                     decorationBox = { innerTextField ->
                         if (textInput.isBlank()) {
-                            Text("Paste dialogue or type lines here...\nExample: SAM: Hello\nNINA: Hi", style = OT.type.body, color = c.labelTertiary)
+                            Text("Paste dialogue, scan pages, or import sides PDF...\nExample:\nSAM: Hello\nNINA: Hi", style = OT.type.body, color = c.labelTertiary)
                         }
                         innerTextField()
                     }
                 )
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Box(
@@ -307,16 +380,42 @@ private fun PracticeSourceStep(
                             }
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     ) {
-                        Text("Paste from clipboard", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Filled.ContentPaste, null, tint = c.labelPrimary, modifier = Modifier.size(14.dp))
+                            Text("Paste", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                        }
                     }
                     Box(
                         Modifier
                             .clip(CircleShape)
                             .background(c.fillQuiet)
-                            .clickable { textInput = DEFAULT_PRACTICE_SAMPLE }
+                            .clickable {
+                                try {
+                                    scanLauncher.launch(null)
+                                } catch (e: Exception) {
+                                    photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                }
+                            }
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     ) {
-                        Text("Sample scene", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Filled.DocumentScanner, null, tint = c.labelPrimary, modifier = Modifier.size(14.dp))
+                            Text("Scan sides", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                        }
+                    }
+                    Box(
+                        Modifier
+                            .clip(CircleShape)
+                            .background(c.fillQuiet)
+                            .clickable {
+                                fileLauncher.launch(arrayOf("application/pdf", "image/*", "text/plain"))
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Filled.Folder, null, tint = c.labelSecondary, modifier = Modifier.size(14.dp))
+                            Text("PDF / Photo", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
+                        }
                     }
                 }
             }
@@ -324,26 +423,30 @@ private fun PracticeSourceStep(
             Spacer(Modifier.height(16.dp))
             PrimaryButton(
                 text = "Continue to character setup",
-                onClick = { onPicked(textInput, titleInput) },
+                onClick = { if (textInput.isNotBlank()) onPicked(textInput, titleInput) },
+                enabled = textInput.isNotBlank(),
             )
 
-            Spacer(Modifier.height(20.dp))
-            SectionLabel("Recent sides")
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("The Last Summer · Sc 1", "Winter Play").forEach { name ->
-                    Box(
-                        Modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = {
-                            titleInput = name
-                            onPicked(textInput, name)
-                        }),
-                        contentAlignment = Alignment.Center,
-                    ) {
+            if (recentSides.isNotEmpty()) {
+                Spacer(Modifier.height(20.dp))
+                SectionLabel("Recent sides")
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    recentSides.forEach { (label, data) ->
+                        val (text, title) = data
                         Box(
-                            Modifier.heightIn(min = 36.dp).clip(CircleShape).background(c.surfaceCard)
-                                .border(0.5.dp, c.separator, CircleShape).padding(horizontal = 14.dp),
+                            Modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = {
+                                titleInput = title
+                                onPicked(text, title)
+                            }),
                             contentAlignment = Alignment.Center,
-                        ) { Text(name, style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary) }
+                        ) {
+                            Box(
+                                Modifier.heightIn(min = 36.dp).clip(CircleShape).background(c.surfaceCard)
+                                    .border(0.5.dp, c.separator, CircleShape).padding(horizontal = 14.dp),
+                                contentAlignment = Alignment.Center,
+                            ) { Text(label, style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary) }
+                        }
                     }
                 }
             }

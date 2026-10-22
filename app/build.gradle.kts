@@ -67,6 +67,9 @@ dependencies {
     implementation(libs.androidx.camera.video)
     implementation(libs.androidx.camera.view)
 
+    // ML Kit OCR
+    implementation(libs.mlkit.text.recognition)
+
     testImplementation(libs.junit)
 
     debugImplementation(libs.androidx.ui.tooling)

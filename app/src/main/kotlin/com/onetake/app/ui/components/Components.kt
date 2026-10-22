@@ -1,5 +1,7 @@
 package com.onetake.app.ui.components
 
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -45,8 +47,11 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,11 +61,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -72,10 +80,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.R
 import com.onetake.app.models.Piece
 import com.onetake.app.ui.theme.OT
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 
 // Android twins of iOS DesignSystem/Components. Names and parameters match so screens port 1:1.
 
@@ -717,31 +729,64 @@ fun SheetHeader(
 
 // MARK: - Headshot photo
 
-@DrawableRes
-fun headshotRes(name: String): Int = when (name.lowercase()) {
-    "headshot_left", "headshotleft", "left" -> R.drawable.headshot_left
-    "headshot_right", "headshotright", "right" -> R.drawable.headshot_right
-    else -> R.drawable.headshot
-}
-
-/** Fills its bounds (crop), like `HeadshotImage().scaledToFill()` + clip on iOS. Always size/clip it from outside. */
 @Composable
-fun HeadshotImage(modifier: Modifier = Modifier, name: String = "headshot", contentDescription: String? = null) {
-    Image(
-        painter = painterResource(headshotRes(name)),
-        contentDescription = contentDescription,
-        contentScale = ContentScale.Crop,
-        modifier = modifier,
-    )
+fun rememberBitmapFromUri(uriString: String?): ImageBitmap? {
+    val context = LocalContext.current
+    if (uriString.isNullOrBlank()) return null
+    var bitmap by remember(uriString) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(uriString) {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val uri = Uri.parse(uriString)
+                val stream = if (uri.scheme == "file" || uri.scheme == null) {
+                    val file = File(uri.path ?: uriString)
+                    if (file.exists()) file.inputStream() else null
+                } else {
+                    context.contentResolver.openInputStream(uri)
+                }
+                stream?.use {
+                    BitmapFactory.decodeStream(it)?.asImageBitmap()
+                }
+            }.getOrNull()
+        }?.let { bitmap = it }
+    }
+    return bitmap
 }
 
-/** Grey gradient + person glyph, for empty headshot slots. */
+/**
+ * Fills its bounds (crop). Loads the user's real captured headshot photo if available.
+ * If no headshot has been captured, renders a neutral studio silhouette glyph.
+ */
+@Composable
+fun HeadshotImage(
+    modifier: Modifier = Modifier,
+    name: String = "front",
+    uri: String? = null,
+    contentDescription: String? = null,
+) {
+    val store = LocalAppStore.current
+    val photoUri = uri ?: store.headshot(name) ?: store.headshot("front") ?: store.headshots.values.firstOrNull()
+    val bitmap = rememberBitmapFromUri(photoUri)
+
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+    } else {
+        HeadshotPlaceholder(modifier)
+    }
+}
+
+/** Neutral studio silhouette glyph, for empty headshot slots. */
 @Composable
 fun HeadshotPlaceholder(modifier: Modifier = Modifier) {
     Box(
-        modifier.background(Brush.verticalGradient(listOf(Color(0xFF474747), Color(0xFF1F1F1F)))),
+        modifier.background(Brush.verticalGradient(listOf(Color(0xFF2C2C32), Color(0xFF161618)))),
         contentAlignment = Alignment.Center,
-    ) { Icon(Icons.Filled.Person, null, tint = Color.White.copy(alpha = 0.35f), modifier = Modifier.size(40.dp)) }
+    ) { Icon(Icons.Filled.Person, null, tint = Color.White.copy(alpha = 0.35f), modifier = Modifier.size(36.dp)) }
 }
 
 // MARK: - Camera chrome helpers (always dark)

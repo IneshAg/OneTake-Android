@@ -297,7 +297,7 @@ fun ShootFlowScreen(auditionId: String) {
                             modifier = Modifier.align(Alignment.Center),
                             eyebrow = "Take saved",
                             title = "Take $takeNumber, in the can.",
-                            detail = "${formatDuration(lastTakeSeconds)} · Maya under your voice · walk-in trimmed",
+                            detail = "${formatDuration(lastTakeSeconds)} · Reader under your voice · walk-in trimmed",
                             primary = "Watch take $takeNumber" to { finish(Route.Takes(auditionId)) },
                             secondary = "Go again" to {
                                 takeNumber += 1

@@ -34,6 +34,7 @@ class AppStore : ViewModel() {
     var readerVolume by mutableStateOf("Quieter")
     var exportSpec by mutableStateOf("1080p, landscape")
     var headshotsTaken by mutableIntStateOf(0)
+    var headshots by mutableStateOf<Map<String, String>>(emptyMap())
     var notifyMorning by mutableStateOf(true)
     var notifyTwoHours by mutableStateOf(true)
     var notifyCallbacks by mutableStateOf(true)
@@ -95,6 +96,22 @@ class AppStore : ViewModel() {
 
     fun addPractice(piece: PracticePiece) {
         practice = listOf(piece) + practice
+    }
+
+    fun saveHeadshot(angle: String, uri: String) {
+        val updated = headshots.toMutableMap()
+        updated[angle.lowercase()] = uri
+        headshots = updated
+        headshotsTaken = headshots.size
+    }
+
+    fun hasHeadshot(angle: String): Boolean = headshots.containsKey(angle.lowercase())
+
+    fun headshot(angle: String): String? = headshots[angle.lowercase()]
+
+    fun clearHeadshots() {
+        headshots = emptyMap()
+        headshotsTaken = 0
     }
 }
 

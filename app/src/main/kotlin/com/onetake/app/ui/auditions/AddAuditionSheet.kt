@@ -997,7 +997,6 @@ private fun AddEditAsksStep(draft: AddDraft, slateName: String, onCancel: () -> 
     val c = OT.colors
     var working by remember { mutableStateOf(draft) }
     var showAdd by remember { mutableStateOf(false) }
-    val sceneNames = listOf("Apartment", "Goodbye")
 
     Column(Modifier.fillMaxWidth().fillMaxHeight()) {
         SheetHeader(
@@ -1033,7 +1032,7 @@ private fun AddEditAsksStep(draft: AddDraft, slateName: String, onCancel: () -> 
                     Text("Scene clips · ${working.scenes}", style = OT.type.body, color = c.labelPrimary)
                     if (working.scenes > 0) {
                         Text(
-                            (1..working.scenes).joinToString(" · ") { sceneNames.getOrElse(it - 1) { _ -> "Scene $it" } },
+                            (1..working.scenes).joinToString(" · ") { "Scene $it" },
                             style = OT.type.footnote,
                             color = c.labelTertiary,
                             maxLines = 1,

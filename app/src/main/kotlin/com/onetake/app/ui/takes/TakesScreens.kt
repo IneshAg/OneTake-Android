@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
@@ -85,7 +86,6 @@ import com.onetake.app.ui.components.GLASS_EDGE_COLOR
 import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.Chevron
 import com.onetake.app.ui.components.CircleIconButton
-import com.onetake.app.ui.components.HeadshotImage
 import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.PlainButton
 import com.onetake.app.ui.components.PrimaryButton
@@ -401,8 +401,9 @@ private fun TkPlayerCard(
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            HeadshotImage(Modifier.fillMaxSize())
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)))
+            Box(Modifier.fillMaxSize().background(Color(0xFF16161A)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.25f), modifier = Modifier.size(56.dp))
+            }
         }
 
         Box(
@@ -502,7 +503,15 @@ private fun TkTakeThumbnail(take: Take, isSelected: Boolean, onTap: () -> Unit, 
                 .border(2.5.dp, if (isSelected) c.accent else Color.Transparent, RoundedCornerShape(15.dp))
                 .padding(4.dp),
         ) {
-            HeadshotImage(Modifier.size(104.dp, 64.dp).clip(RoundedCornerShape(12.dp)))
+            Box(
+                Modifier
+                    .size(104.dp, 64.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF222228)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(28.dp))
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Take ${take.number}", style = OT.type.headline, color = c.labelPrimary)
@@ -543,9 +552,10 @@ private fun TkCompareView(
     val right = (if (current != null && current.id != left?.id) current else takes.lastOrNull { it.id != left?.id }) ?: left
     var listen by remember { mutableIntStateOf(0) }
     val pair = listOfNotNull(left, right)
+    val compareSubtitle = if (left != null && right != null && left.id != right.id) "Take ${left.number} vs Take ${right.number}" else "Compare takes"
 
     Column(Modifier.fillMaxSize().background(cam.bg)) {
-        TkHeader(title = "Compare", subtitle = "Scene 1 · Apartment Confrontation", onBack = onClose, onDark = true)
+        TkHeader(title = "Compare", subtitle = compareSubtitle, onBack = onClose, onDark = true)
         Column(
             Modifier
                 .weight(1f)
@@ -558,13 +568,17 @@ private fun TkCompareView(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 pair.forEachIndexed { i, t ->
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        HeadshotImage(
+                        Box(
                             Modifier
                                 .fillMaxWidth()
                                 .aspectRatio(0.75f)
                                 .clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xFF222228))
                                 .border(2.5.dp, if (i == listen) c.accent else Color.Transparent, RoundedCornerShape(16.dp)),
-                        )
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.45f), modifier = Modifier.size(48.dp))
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("Take ${t.number}", style = OT.type.headline.copy(fontSize = OT.type.headline.fontSize * 1.1f), color = cam.label)
                             if (t.isCircled) Icon(Icons.Filled.Star, "Circled", tint = c.accent, modifier = Modifier.size(16.dp))
@@ -694,8 +708,16 @@ fun TapeCheckScreen(auditionId: String) {
                 .padding(horizontal = OT.dims.gutter)
                 .padding(top = 8.dp, bottom = 24.dp),
         ) {
+            val audition = store.audition(auditionId)
+            val requiredScenes = audition?.scenes?.size ?: 1
+            val circledTakesCount = audition?.scenes?.count { s -> store.takes.any { it.sceneId == s.id && it.isCircled } } ?: store.takes.count { it.isCircled }
+            val hasHeadshot = if (store.headshotsTaken > 0) 1 else 0
+            val hasSlate = if (store.slate.name.isNotBlank()) 1 else 0
+            val totalChecks = maxOf(1, 2 + requiredScenes)
+            val doneChecks = minOf(totalChecks, hasHeadshot + hasSlate + circledTakesCount)
+
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                ReadinessDial(done = 11, total = 13, size = 84.dp, lineWidth = 8.dp)
+                ReadinessDial(done = doneChecks, total = totalChecks, size = 84.dp, lineWidth = 8.dp)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Ready to send", style = OT.type.title, color = c.labelPrimary)
                     Text(
@@ -716,7 +738,14 @@ fun TapeCheckScreen(auditionId: String) {
                     title = f.title,
                     detail = f.where,
                     onClick = { finding = f },
-                    leading = { HeadshotImage(Modifier.size(64.dp, 40.dp).clip(RoundedCornerShape(8.dp))) },
+                    leading = {
+                        Box(
+                            Modifier.size(64.dp, 40.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF222228)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(20.dp))
+                        }
+                    },
                 )
             }
 

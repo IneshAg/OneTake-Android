@@ -45,6 +45,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -88,6 +90,8 @@ import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.SheetHeader
 import com.onetake.app.ui.components.ToggleRow
 import com.onetake.app.ui.system.rememberHaptics
+import java.io.File
+import java.util.Locale
 import com.onetake.app.ui.theme.OT
 
 // MARK: - 10 Profile (tab root)
@@ -355,12 +359,46 @@ private fun SlateField(
 
 // MARK: - 10b Privacy & data
 
+private fun formatStorageSize(bytes: Long): String = when {
+    bytes <= 0L -> "0 KB"
+    bytes < 1024L * 1024L -> "${maxOf(1L, bytes / 1024L)} KB"
+    else -> String.format(Locale.US, "%.1f MB", bytes.toDouble() / (1024.0 * 1024.0))
+}
+
 @Composable
 fun PrivacyScreen() {
     val store = LocalAppStore.current
+    val context = LocalContext.current
     val c = OT.colors
     val uriHandler = LocalUriHandler.current
     var confirmDelete by remember { mutableStateOf(false) }
+
+    var takesBytes by remember { mutableStateOf(0L) }
+    var headshotsBytes by remember { mutableStateOf(0L) }
+    var scriptsBytes by remember { mutableStateOf(0L) }
+    var readerBytes by remember { mutableStateOf(0L) }
+
+    fun refreshSizes() {
+        val takesFiles = context.cacheDir.listFiles { f -> f.name.startsWith("take-") } ?: emptyArray()
+        takesBytes = takesFiles.sumOf { it.length() }
+
+        val headshotsDir = File(context.filesDir, "headshots")
+        val headshotFiles = headshotsDir.listFiles() ?: emptyArray()
+        headshotsBytes = headshotFiles.sumOf { it.length() }
+
+        val readerDir = File(context.filesDir, "reader")
+        val readerFiles = readerDir.listFiles() ?: emptyArray()
+        readerBytes = readerFiles.sumOf { it.length() }
+
+        scriptsBytes = (store.auditions.sumOf { it.scenes.sumOf { s -> s.lines.sumOf { l -> l.text.length } } } * 2L)
+    }
+
+    LaunchedEffect(store.takes.size, store.headshotsTaken, store.auditions.size) {
+        refreshSizes()
+    }
+
+    val totalBytes = takesBytes + headshotsBytes + scriptsBytes + readerBytes
+    val totalSizeText = formatStorageSize(totalBytes)
 
     PushedScreen {
         LargeTitle(
@@ -370,25 +408,29 @@ fun PrivacyScreen() {
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             SectionLabel("On this phone", Modifier.weight(1f))
-            Text("626 MB", style = OT.type.headline, color = c.labelPrimary)
+            Text(totalSizeText, style = OT.type.headline, color = c.labelPrimary)
         }
         Spacer(Modifier.height(8.dp))
-        // Storage bar: takes dominate; small segments stay visible.
+        // Dynamic Storage bar
         Row(
-            Modifier.fillMaxWidth().height(6.dp).semantics { contentDescription = "626 MB used, mostly takes" },
+            Modifier.fillMaxWidth().height(6.dp).semantics { contentDescription = "$totalSizeText used on device" },
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Box(Modifier.weight(0.90f).fillMaxHeight().clip(CircleShape).background(c.accent))
-            Box(Modifier.weight(0.025f).fillMaxHeight().clip(CircleShape).background(c.reader))
-            Box(Modifier.weight(0.02f).fillMaxHeight().clip(CircleShape).background(c.success))
-            Box(Modifier.weight(0.015f).fillMaxHeight().clip(CircleShape).background(c.labelTertiary))
-            Box(Modifier.weight(0.04f).fillMaxHeight().clip(CircleShape).background(c.fillQuiet))
+            if (totalBytes <= 0L) {
+                Box(Modifier.fillMaxWidth().fillMaxHeight().clip(CircleShape).background(c.fillQuiet))
+            } else {
+                val totalF = totalBytes.toFloat()
+                if (takesBytes > 0) Box(Modifier.weight(takesBytes / totalF).fillMaxHeight().clip(CircleShape).background(c.accent))
+                if (scriptsBytes > 0) Box(Modifier.weight(scriptsBytes / totalF).fillMaxHeight().clip(CircleShape).background(c.reader))
+                if (headshotsBytes > 0) Box(Modifier.weight(headshotsBytes / totalF).fillMaxHeight().clip(CircleShape).background(c.success))
+                if (readerBytes > 0) Box(Modifier.weight(readerBytes / totalF).fillMaxHeight().clip(CircleShape).background(c.labelTertiary))
+            }
         }
         Spacer(Modifier.height(6.dp))
-        ListRow(title = "Takes", detail = "Every audition, all takes", value = "612 MB", showChevron = false)
-        ListRow(title = "Scripts & sides", detail = "PDFs and pasted text", value = "9 MB", showChevron = false)
-        ListRow(title = "Headshots", detail = "${store.headshotsTaken} photos", value = "4.1 MB", showChevron = false)
-        ListRow(title = "Reader recordings", detail = "Your own voice, per line", value = "1.8 MB", showChevron = false, showDivider = false)
+        ListRow(title = "Takes", detail = "${store.takes.size} recorded takes", value = formatStorageSize(takesBytes), showChevron = false)
+        ListRow(title = "Scripts & sides", detail = "${store.auditions.size} audition scripts", value = formatStorageSize(scriptsBytes), showChevron = false)
+        ListRow(title = "Headshots", detail = "${store.headshotsTaken} photos", value = formatStorageSize(headshotsBytes), showChevron = false)
+        ListRow(title = "Reader recordings", detail = "Your own voice, per line", value = formatStorageSize(readerBytes), showChevron = false, showDivider = false)
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("Sent tapes")
@@ -423,8 +465,14 @@ fun PrivacyScreen() {
             text = { Text("Clears headshots, reader tracks and every take. Sent tapes already delivered aren’t affected.", style = OT.type.callout) },
             confirmButton = {
                 TextButton(onClick = {
+                    runCatching {
+                        context.cacheDir.listFiles { f -> f.name.startsWith("take-") }?.forEach { it.delete() }
+                        File(context.filesDir, "headshots").listFiles()?.forEach { it.delete() }
+                        File(context.filesDir, "reader").listFiles()?.forEach { it.delete() }
+                    }
                     store.takes = emptyList()
-                    store.headshotsTaken = 0
+                    store.clearHeadshots()
+                    refreshSizes()
                     confirmDelete = false
                 }) { Text("Delete", color = c.danger) }
             },
@@ -514,18 +562,23 @@ fun HeadshotsScreen() {
     ) {
         LargeTitle("Headshots", subtitle = "Front is what casting sees first. Profiles help on commercial calls.")
         Spacer(Modifier.height(16.dp))
+        val hasFront = store.hasHeadshot("front") || taken >= 1
+        val hasLeft = store.hasHeadshot("left") || taken >= 2
+        val hasRight = store.hasHeadshot("right") || taken >= 3
+
         Row(Modifier.fillMaxWidth().height(264.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             HeadshotSlot(
                 title = "Front",
-                asset = "headshot",
-                done = taken >= 1,
+                asset = "front",
+                photoUri = store.headshot("front"),
+                done = hasFront,
                 modifier = Modifier.weight(1.15f).fillMaxHeight(),
-                action = if (taken >= 1) "Retake" else null,
+                action = if (hasFront) "Retake" else null,
                 onAction = { nav.openCamera(CameraFlow.Headshot) },
             )
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                HeadshotSlot("Left profile", "headshot_left", taken >= 2, Modifier.weight(1f).fillMaxWidth())
-                HeadshotSlot("Right profile", "headshot_right", taken >= 3, Modifier.weight(1f).fillMaxWidth())
+                HeadshotSlot("Left profile", "left", done = hasLeft, photoUri = store.headshot("left"), modifier = Modifier.weight(1f).fillMaxWidth())
+                HeadshotSlot("Right profile", "right", done = hasRight, photoUri = store.headshot("right"), modifier = Modifier.weight(1f).fillMaxWidth())
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -575,6 +628,7 @@ private fun HeadshotSlot(
     asset: String,
     done: Boolean,
     modifier: Modifier = Modifier,
+    photoUri: String? = null,
     action: String? = null,
     onAction: () -> Unit = {},
 ) {
@@ -587,7 +641,7 @@ private fun HeadshotSlot(
             .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
     ) {
         if (done) {
-            HeadshotImage(Modifier.fillMaxSize(), name = asset, contentDescription = "$title headshot")
+            HeadshotImage(Modifier.fillMaxSize(), name = asset, uri = photoUri, contentDescription = "$title headshot")
             Box(
                 Modifier.fillMaxSize().background(
                     Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.6f)),
@@ -678,7 +732,7 @@ fun HeadshotFlowScreen() {
     var capturing by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
-        CameraBackground(camera, Modifier.fillMaxSize(), front = front)
+        CameraBackground(camera, Modifier.fillMaxSize(), front = front, photoOnly = true)
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             // Top bar: close · angle picker · balance. Lives above the oval area, never over it.
             Row(
@@ -730,8 +784,11 @@ fun HeadshotFlowScreen() {
                             .clickable(enabled = !capturing, role = Role.Button) {
                                 capturing = true
                                 haptics.impact()
-                                camera.capturePhoto { _ ->
+                                camera.capturePhoto { uri ->
                                     capturing = false
+                                    if (uri != null) {
+                                        store.saveHeadshot(angle.name.lowercase(), uri.toString())
+                                    }
                                     store.headshotsTaken = maxOf(store.headshotsTaken, angle.ordinal + 1)
                                     val next = HeadshotAngle.entries.getOrNull(angle.ordinal + 1)
                                     if (next != null) {

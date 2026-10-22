@@ -241,7 +241,7 @@ fun ReaderScreen(auditionId: String) {
         LargeTitle(
             title = "Who reads $readerName?",
             subtitle = if (justSaved != null) {
-                "Your new track is in. It plays her lines and waits for yours."
+                "Your new track is in. It plays their lines and waits for yours."
             } else {
                 "Record $readerName’s lines in your own voice. We leave the pauses for yours, and it plays under your takes."
             },

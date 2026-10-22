@@ -117,7 +117,7 @@ fun ShootModeScreen(auditionId: String) {
             selected = !multi,
             icon = Icons.Filled.Smartphone,
             title = "Solo",
-            detail = "Just this phone on a stand. Maya plays from its speaker, lines on its screen.",
+            detail = "Just this phone on a stand. Your reader plays from its speaker, lines on its screen.",
             tags = listOf("Reader track", "“Action” / “Cut”"),
             onClick = { multi = false },
         )
@@ -623,7 +623,7 @@ fun ShootSetupScreen(auditionId: String) {
                 }
             }
             OTDivider()
-            SetupCheckRow("Interruptions", "Calls and alerts can cut in", "A notification mid-scene throws Maya’s timing", ok = silenced) {
+            SetupCheckRow("Interruptions", "Calls and alerts can cut in", "A notification mid-scene throws the reader’s timing", ok = silenced) {
                 if (!silenced) {
                     Row(
                         Modifier

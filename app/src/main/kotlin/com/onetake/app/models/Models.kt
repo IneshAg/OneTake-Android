@@ -99,6 +99,7 @@ data class Take(
     val isCircled: Boolean,
     val notes: List<String>,
     val fileUri: String? = null,
+    val sceneId: String? = null,
 )
 
 data class TapeFinding(

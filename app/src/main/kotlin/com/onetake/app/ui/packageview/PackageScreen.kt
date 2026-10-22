@@ -74,6 +74,9 @@ import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
 import com.onetake.app.models.Audition
 import com.onetake.app.models.Destination
+import com.onetake.app.models.PieceKind
+import com.onetake.app.models.Take
+import com.onetake.app.models.formatDuration
 import com.onetake.app.models.otDue
 import com.onetake.app.models.otTime
 import com.onetake.app.models.otWeekdayCaps
@@ -111,7 +114,23 @@ private fun buildPackageFileName(audition: Audition, slateName: String): String 
     return "${cleanSlate}_${cleanRole}_${cleanProject}.mp4"
 }
 
-private const val PKG_MB = 184
+private fun calculatePackageDuration(audition: Audition, takes: List<Take>): Int {
+    return audition.pieces.sumOf { piece ->
+        when (piece.kind) {
+            PieceKind.Headshot -> 3
+            PieceKind.Slate, PieceKind.FullLength -> 5
+            PieceKind.Scene -> {
+                val take = takes.firstOrNull { it.sceneId == piece.id && it.isCircled } ?: takes.firstOrNull { it.isCircled }
+                take?.durationSeconds ?: 60
+            }
+        }
+    }
+}
+
+private fun calculatePackageMb(audition: Audition, takes: List<Take>): Int {
+    val durationSeconds = calculatePackageDuration(audition, takes)
+    return (durationSeconds * 1.4f).toInt().coerceIn(12, 450)
+}
 
 @Composable
 fun PackageScreen(auditionId: String) {
@@ -221,6 +240,10 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
             Text("Due ${a.due.otDue} · ${a.readyCount} of ${a.totalCount} ready", style = OT.type.callout, color = c.labelSecondary)
             Spacer(Modifier.height(20.dp))
 
+            val durationSecs = calculatePackageDuration(a, store.takes)
+            val durationText = formatDuration(durationSecs)
+            val pkgMb = calculatePackageMb(a, store.takes)
+
             // Monolithic Assembled Tape Summary Card
             Column(
                 modifier = Modifier
@@ -237,13 +260,13 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
                         color = OT.colors.accent,
                         modifier = Modifier.weight(1f),
                     )
-                    Text("2:25", style = OT.type.headline, color = c.labelPrimary)
+                    Text(durationText, style = OT.type.headline, color = c.labelPrimary)
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(a.project, style = OT.type.title, color = Color.White)
                 Text("Role: ${a.role}", style = OT.type.callout, color = c.labelSecondary)
                 Spacer(Modifier.height(14.dp))
-                PkgTapeStrip()
+                PkgTapeStrip(a, store.takes)
             }
 
             Spacer(Modifier.height(20.dp))
@@ -258,10 +281,10 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
                     .background(OT.colors.surfaceCard),
             ) {
                 PkgRow(icon = Icons.Outlined.Movie, title = pkgFileName, detail = "Named the way casting asked · one file", titleWeight = FontWeight.SemiBold, titleSmall = true, showDivider = true)
-                PkgRow(icon = Icons.AutoMirrored.Filled.Send, title = a.destination.label, value = "$PKG_MB MB · 1080p", onClick = { showDestination = true }, showDivider = true)
+                PkgRow(icon = Icons.AutoMirrored.Filled.Send, title = a.destination.label, value = "$pkgMb MB · 1080p", onClick = { showDestination = true }, showDivider = true)
                 PkgRow(icon = Icons.Filled.CheckCircle, iconTint = c.success, title = "Tape check", value = "Passed", onClick = { nav.push(Route.TapeCheck(a.id)) }, showDivider = true)
                 PkgRow(icon = Icons.Filled.GraphicEq, iconTint = c.success, title = "Audio", value = "Both voices clear", showDivider = true)
-                PkgRow(icon = Icons.Outlined.PlayArrow, title = "Preview the whole tape", detail = "Exactly what casting gets · 2:25", showDivider = false)
+                PkgRow(icon = Icons.Outlined.PlayArrow, title = "Preview the whole tape", detail = "Exactly what casting gets · $durationText", showDivider = false)
             }
         }
         Column(
@@ -366,26 +389,52 @@ private fun PkgRow(
 // MARK: - Tape strip
 
 @Composable
-private fun PkgTapeStrip() {
+private fun PkgTapeStrip(a: Audition, takes: List<Take>) {
     val c = OT.colors
     val soft = c.accent.copy(alpha = 0.4f)
+    val duration = calculatePackageDuration(a, takes)
+    val sceneCount = a.scenes.size
+    val scenePart = if (sceneCount == 1) "1 scene" else "$sceneCount scenes"
+    val parts = buildList {
+        if (a.pieces.any { it.kind == PieceKind.Headshot }) add("headshot")
+        if (a.pieces.any { it.kind == PieceKind.Slate }) add("slate")
+        add(scenePart)
+    }
+
     Column(
         Modifier.fillMaxWidth().clearAndSetSemantics {
-            contentDescription = "Tape: headshot, slate, scene 1 take 2, scene 2 take 1. 2 minutes 25."
+            contentDescription = "Tape: ${parts.joinToString(", ")}. ${formatDuration(duration)}."
         },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            Box(Modifier.width(10.dp).fillMaxSize().clip(RoundedCornerShape(6.dp)).background(soft))
-            Box(Modifier.width(10.dp).fillMaxSize().clip(RoundedCornerShape(6.dp)).background(soft))
-            Box(Modifier.weight(0.58f).fillMaxSize().clip(RoundedCornerShape(6.dp)).background(c.accent))
-            Box(Modifier.weight(0.36f).fillMaxSize().clip(RoundedCornerShape(6.dp)).background(c.reader))
+            a.pieces.forEach { piece ->
+                val weight = when (piece.kind) {
+                    PieceKind.Headshot -> 0.1f
+                    PieceKind.Slate, PieceKind.FullLength -> 0.12f
+                    PieceKind.Scene -> 0.45f
+                }
+                val color = when (piece.kind) {
+                    PieceKind.Headshot, PieceKind.Slate, PieceKind.FullLength -> soft
+                    PieceKind.Scene -> c.accent
+                }
+                Box(Modifier.weight(weight).fillMaxSize().clip(RoundedCornerShape(6.dp)).background(color))
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PkgLegend("Headshot", "Front", soft, Modifier.weight(1f))
-            PkgLegend("Slate", "0:05", soft, Modifier.weight(1f))
-            PkgLegend("Scene 1", "Take 2 · 1:28", c.accent, Modifier.weight(1f))
-            PkgLegend("Scene 2", "Take 1 · 0:52", c.reader, Modifier.weight(1f))
+            a.pieces.forEach { piece ->
+                val (title, detail, color) = when (piece.kind) {
+                    PieceKind.Headshot -> Triple("Headshot", "Front", soft)
+                    PieceKind.Slate -> Triple("Slate", "0:05", soft)
+                    PieceKind.FullLength -> Triple("Full length", "0:05", soft)
+                    PieceKind.Scene -> {
+                        val take = takes.firstOrNull { it.sceneId == piece.id && it.isCircled } ?: takes.firstOrNull { it.isCircled }
+                        val d = if (take != null) "Take ${take.number} · ${formatDuration(take.durationSeconds)}" else "Pending"
+                        Triple(piece.title, d, c.accent)
+                    }
+                }
+                PkgLegend(title, detail, color, Modifier.weight(1f))
+            }
         }
     }
 }
@@ -459,10 +508,12 @@ private fun PkgDestinationSheet(selected: Destination, onSelect: (Destination) -
 
 @Composable
 private fun PkgSendProgress(audition: Audition, progress: Float, onCancel: () -> Unit, onDrop: () -> Unit) {
+    val store = LocalAppStore.current
     val c = OT.colors
     val dest = audition.destination.label
     val pct = (progress * 100).toInt()
-    val mb = (progress * PKG_MB).toInt()
+    val totalMb = calculatePackageMb(audition, store.takes)
+    val mb = (progress * totalMb).toInt()
     val secondsLeft = maxOf(1, ((1 - progress) * 90).toInt())
     Column(Modifier.fillMaxSize()) {
         PkgTopBar(icon = Icons.Filled.ExpandMore, label = "Cancel sending", onClick = onCancel)
@@ -486,7 +537,7 @@ private fun PkgSendProgress(audition: Audition, progress: Float, onCancel: () ->
                 )
                 Text("%", style = OT.type.title, color = c.labelPrimary, modifier = Modifier.padding(start = 2.dp, bottom = 10.dp))
             }
-            Text("about $secondsLeft s left · $mb of $PKG_MB MB", style = OT.type.footnote, color = c.labelTertiary)
+            Text("about $secondsLeft s left · $mb of $totalMb MB", style = OT.type.footnote, color = c.labelTertiary)
             Spacer(Modifier.height(8.dp))
             // Progress bar
             Box(
@@ -502,10 +553,17 @@ private fun PkgSendProgress(audition: Audition, progress: Float, onCancel: () ->
             Spacer(Modifier.height(24.dp))
             SectionLabel("Steps")
             Spacer(Modifier.height(4.dp))
-            PkgStep("Joined headshot, slate and 2 scenes", PkgStepState.Done)
-            PkgStep("Exported 1080p · $PKG_MB MB", PkgStepState.Done)
+            val sceneCount = audition.scenes.size
+            val scenePart = if (sceneCount == 1) "1 scene" else "$sceneCount scenes"
+            val parts = buildList {
+                if (audition.pieces.any { it.kind == PieceKind.Headshot }) add("headshot")
+                if (audition.pieces.any { it.kind == PieceKind.Slate }) add("slate")
+                add(scenePart)
+            }
+            PkgStep("Joined ${parts.joinToString(", ")}", PkgStepState.Done)
+            PkgStep("Exported 1080p · $totalMb MB", PkgStepState.Done)
             // Tapping "Uploading" simulates a dropped connection (same dev hook as iOS).
-            PkgStep("Uploading", PkgStepState.Active, detail = "$mb of $PKG_MB MB", onClick = onDrop)
+            PkgStep("Uploading", PkgStepState.Active, detail = "$mb of $totalMb MB", onClick = onDrop)
             PkgStep("Delivered — once $dest confirms", PkgStepState.Todo, divider = false)
             Spacer(Modifier.height(12.dp))
             Text(
@@ -609,17 +667,18 @@ private fun PkgSendFailed(
             OTDivider()
             val store = LocalAppStore.current
             val fileName = buildPackageFileName(audition, store.slate.name)
+            val totalMb = calculatePackageMb(audition, store.takes)
             ScheduleRow(
                 eyebrow = "FILE",
                 value = "",
                 title = fileName,
-                detail = "$PKG_MB MB · waiting for a connection",
+                detail = "$totalMb MB · waiting for a connection",
                 showChevron = false,
             )
             OTDivider()
             ToggleRow(
                 title = "Use mobile data",
-                detail = "About $PKG_MB MB",
+                detail = "About $totalMb MB",
                 checked = useMobileData,
                 onCheckedChange = onMobileData,
                 showDivider = false,
@@ -683,7 +742,16 @@ private fun PkgSent(a: Audition, onDone: () -> Unit) {
                 val fileName = buildPackageFileName(a, store.slate.name)
                 Text(fileName, style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
                 Spacer(Modifier.height(6.dp))
-                Text("2:25 · headshot · slate · 2 scenes", style = OT.type.footnote, color = c.labelSecondary)
+                val durationSecs = calculatePackageDuration(a, store.takes)
+                val durationText = formatDuration(durationSecs)
+                val sceneCount = a.scenes.size
+                val scenePart = if (sceneCount == 1) "1 scene" else "$sceneCount scenes"
+                val parts = buildList {
+                    if (a.pieces.any { it.kind == PieceKind.Headshot }) add("headshot")
+                    if (a.pieces.any { it.kind == PieceKind.Slate }) add("slate")
+                    add(scenePart)
+                }
+                Text("$durationText · ${parts.joinToString(" · ")}", style = OT.type.footnote, color = c.labelSecondary)
             }
 
             Spacer(Modifier.height(40.dp))
@@ -731,9 +799,9 @@ private fun PkgSentNote(icon: ImageVector, text: String) {
 @Composable
 private fun PkgHeadshotFan(modifier: Modifier = Modifier) {
     Box(modifier.clearAndSetSemantics { }, contentAlignment = Alignment.Center) {
-        PkgFanCard(Modifier.offset(x = 70.dp, y = 12.dp).rotate(8f), "headshot_right")
-        PkgFanCard(Modifier.offset(x = 20.dp, y = 0.dp).rotate(3f), "headshot")
-        PkgFanCard(Modifier.offset(x = (-50).dp, y = 8.dp).rotate(-8f), "headshot_left")
+        PkgFanCard(Modifier.offset(x = 70.dp, y = 12.dp).rotate(8f), "right")
+        PkgFanCard(Modifier.offset(x = 20.dp, y = 0.dp).rotate(3f), "front")
+        PkgFanCard(Modifier.offset(x = (-50).dp, y = 8.dp).rotate(-8f), "left")
     }
 }
 

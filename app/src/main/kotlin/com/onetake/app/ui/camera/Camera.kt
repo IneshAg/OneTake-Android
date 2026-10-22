@@ -12,6 +12,7 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
@@ -79,11 +80,18 @@ class CameraController(private val context: Context) {
         internal set
 
     private val imageCapture = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
-    private val videoCapture = VideoCapture.withOutput(
-        Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.FHD)).build()
-    )
+    private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
     private var provider: ProcessCameraProvider? = null
+
+    private fun createVideoCapture(): VideoCapture<Recorder> {
+        val qualitySelector = QualitySelector.fromOrderedList(
+            listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD, Quality.LOWEST),
+            FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD),
+        )
+        val recorder = Recorder.Builder().setQualitySelector(qualitySelector).build()
+        return VideoCapture.withOutput(recorder)
+    }
 
     internal fun bind(owner: LifecycleOwner, previewView: PreviewView, front: Boolean, photoOnly: Boolean = false) {
         val future = ProcessCameraProvider.getInstance(context)
@@ -103,13 +111,32 @@ class CameraController(private val context: Context) {
                 }
                 p.unbindAll()
                 if (photoOnly) {
+                    videoCapture = null
                     p.bindToLifecycle(owner, selector, preview, imageCapture)
                 } else {
-                    runCatching {
-                        p.bindToLifecycle(owner, selector, preview, imageCapture, videoCapture)
-                    }.recoverCatching {
-                        p.bindToLifecycle(owner, selector, preview, videoCapture)
-                    }.getOrThrow()
+                    val vc = runCatching { createVideoCapture() }.getOrNull()
+                    videoCapture = vc
+                    if (vc != null) {
+                        runCatching {
+                            p.bindToLifecycle(owner, selector, preview, imageCapture, vc)
+                        }.recoverCatching {
+                            p.bindToLifecycle(owner, selector, preview, vc)
+                        }.recoverCatching {
+                            // VideoCapture is not supported on this camera/device stream combination.
+                            // Fall back to ImageCapture + Preview so camera remains fully usable.
+                            videoCapture = null
+                            p.bindToLifecycle(owner, selector, preview, imageCapture)
+                        }.recoverCatching {
+                            videoCapture = null
+                            p.bindToLifecycle(owner, selector, preview)
+                        }.getOrThrow()
+                    } else {
+                        runCatching {
+                            p.bindToLifecycle(owner, selector, preview, imageCapture)
+                        }.recoverCatching {
+                            p.bindToLifecycle(owner, selector, preview)
+                        }.getOrThrow()
+                    }
                 }
                 state = State.Ready
             }.onFailure { e ->
@@ -121,14 +148,16 @@ class CameraController(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun startRecording() {
-        if (state != State.Ready) {
-            // No camera (emulator / permission denied): still run the timer so the flow can be tested.
+        val vc = videoCapture
+        if (state != State.Ready || vc == null) {
+            // No camera or video capture not supported on this device/emulator:
+            // still run the timer so the flow can be tested.
             state = State.Recording
             elapsed = 0f
             return
         }
         val file = File(context.cacheDir, "take-${System.currentTimeMillis()}.mp4")
-        val pending = videoCapture.output.prepareRecording(context, FileOutputOptions.Builder(file).build())
+        val pending = vc.output.prepareRecording(context, FileOutputOptions.Builder(file).build())
         val withAudio = if (granted(context, Manifest.permission.RECORD_AUDIO)) pending.withAudioEnabled() else pending
         recording = withAudio.start(ContextCompat.getMainExecutor(context)) { event ->
             if (event is VideoRecordEvent.Finalize) {

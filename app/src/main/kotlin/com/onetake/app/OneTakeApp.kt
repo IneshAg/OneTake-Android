@@ -182,6 +182,7 @@ private fun RootTabs(
                 withId(Route.Pattern.TAPE_CHECK) { TapeCheckScreen(it) }
                 withId(Route.Pattern.PACKAGE) { PackageScreen(it) }
                 composable(Route.Headshots.path) { HeadshotsScreen() }
+                withId(Route.Pattern.HEADSHOTS_AUDITION) { HeadshotsScreen(it) }
                 composable(Route.EditSlate.path) { EditSlateScreen() }
                 composable(Route.Privacy.path) { PrivacyScreen() }
                 composable(Route.Notifications.path) { NotificationSettingsScreen() }

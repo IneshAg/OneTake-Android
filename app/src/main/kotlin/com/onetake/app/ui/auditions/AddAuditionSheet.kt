@@ -96,6 +96,8 @@ import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
+import com.onetake.app.models.ScriptLine
+import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.otTime
 import com.onetake.app.ocr.OcrManager
 import com.onetake.app.ui.components.CircleIconButton
@@ -139,29 +141,40 @@ private data class AddDraft(
     val destination: Destination = Destination.ActorsAccess,
     val rawScriptText: String = "",
 ) {
-    fun makeAudition(): Audition {
+    fun makeAudition(hasHeadshot: Boolean = false): Audition {
         val parsedScene = if (rawScriptText.isNotBlank()) {
             ScriptParser.parse(rawScriptText, myCharacter = role.ifBlank { "Me" }, sceneTitle = "Scene 1")
         } else null
 
+        val sceneCount = maxOf(1, scenes)
         val finalScenes = if (parsedScene != null && parsedScene.lines.isNotEmpty()) {
             listOf(parsedScene)
         } else if (rawScriptText.isNotBlank()) {
             listOf(ScriptParser.parse(rawScriptText, myCharacter = role.ifBlank { "Me" }, sceneTitle = "Scene 1"))
         } else {
-            emptyList()
+            (1..sceneCount).map { i ->
+                ScriptScene(
+                    number = i,
+                    title = "Scene $i",
+                    heading = "INT. AUDITION ROOM - DAY",
+                    lines = listOf(
+                        ScriptLine(
+                            character = role.ifBlank { "ME" }.uppercase(),
+                            text = "Audition scene lines.",
+                            isMine = true,
+                        )
+                    ),
+                    estimatedSeconds = 60,
+                )
+            }
         }
 
         val pieces = mutableListOf(
-            Piece(kind = PieceKind.Headshot, title = "Headshot", detail = "Front", isDone = false),
+            Piece(kind = PieceKind.Headshot, title = "Headshot", detail = "Front", isDone = hasHeadshot),
             Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false),
         )
-        if (finalScenes.isNotEmpty()) {
-            for (scene in finalScenes) {
-                pieces.add(Piece(kind = PieceKind.Scene, title = scene.title, detail = "", isDone = false))
-            }
-        } else {
-            pieces.add(Piece(kind = PieceKind.Scene, title = "Scene 1", detail = "", isDone = false))
+        for (scene in finalScenes) {
+            pieces.add(Piece(kind = PieceKind.Scene, title = scene.title, detail = "", isDone = false))
         }
 
         return Audition(
@@ -334,7 +347,8 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     }
 
     fun save() {
-        val audition = draft.makeAudition()
+        val hasHeadshot = store.hasHeadshot("front") || store.headshotsTaken > 0
+        val audition = draft.makeAudition(hasHeadshot = hasHeadshot)
         store.add(audition)
         onDismiss()
         nav.resetTo(AppTab.Auditions)

@@ -78,4 +78,43 @@ class AuditionDetailTest {
         assertEquals(3, retrieved.scenes[0].lines.size)
         assertTrue(retrieved.scenes[0].lines[1].isMine)
     }
+
+    @Test
+    fun testAuditionHeadshotMarkDoneAdvancesToNextPiece() {
+        val pieces = listOf(
+            Piece(kind = PieceKind.Headshot, title = "Headshot", detail = "Front", isDone = false),
+            Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false),
+            Piece(kind = PieceKind.Scene, title = "Scene 1", detail = "", isDone = false),
+        )
+        val audition = Audition(
+            id = "aud-flow-test",
+            project = "Neon Sun",
+            projectType = "Feature film",
+            role = "Pilot",
+            roleSize = "Lead",
+            castingOffice = "",
+            due = LocalDateTime.now().plusDays(2),
+            asks = emptyList(),
+            pieces = pieces,
+            scenes = emptyList(),
+            destination = Destination.ActorsAccess,
+            status = AuditionStatus.Due,
+        )
+
+        val store = AppStore()
+        store.add(audition)
+
+        assertEquals(PieceKind.Headshot, store.audition("aud-flow-test")?.nextPiece?.kind)
+
+        store.markDone(PieceKind.Headshot, "aud-flow-test")
+
+        val updated = store.audition("aud-flow-test")
+        assertNotNull(updated)
+        assertTrue(updated!!.pieces.first { it.kind == PieceKind.Headshot }.isDone)
+        assertEquals(PieceKind.Slate, updated.nextPiece?.kind)
+
+        store.markDone(PieceKind.Slate, "aud-flow-test")
+        val updated2 = store.audition("aud-flow-test")
+        assertEquals(PieceKind.Scene, updated2?.nextPiece?.kind)
+    }
 }

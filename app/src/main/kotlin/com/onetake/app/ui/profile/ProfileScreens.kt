@@ -75,6 +75,7 @@ import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
 import com.onetake.app.TabBarClearance
+import com.onetake.app.models.PieceKind
 import com.onetake.app.ui.camera.CameraBackground
 import com.onetake.app.ui.camera.rememberCameraController
 import com.onetake.app.ui.components.CircleIconButton
@@ -85,6 +86,7 @@ import com.onetake.app.ui.components.LargeTitle
 import com.onetake.app.ui.components.ListRow
 import com.onetake.app.ui.components.OTCard
 import com.onetake.app.ui.components.PrimaryButton
+import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.components.PushedScreen
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.SheetHeader
@@ -541,30 +543,79 @@ fun NotificationSettingsScreen() {
 // MARK: - 08 Headshots
 
 @Composable
-fun HeadshotsScreen() {
+fun HeadshotsScreen(auditionId: String? = null) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val c = OT.colors
     val taken = store.headshotsTaken
-    val project = store.auditions.firstOrNull()?.project ?: "your audition"
+    val targetAudition = auditionId?.let { store.audition(it) } ?: store.active.firstOrNull() ?: store.auditions.firstOrNull()
+    val project = targetAudition?.project ?: "your audition"
+    val hasFront = store.hasHeadshot("front") || taken >= 1
+    val hasLeft = store.hasHeadshot("left") || taken >= 2
+    val hasRight = store.hasHeadshot("right") || taken >= 3
+
+    fun onProceed() {
+        if (targetAudition != null) {
+            store.markDone(PieceKind.Headshot, targetAudition.id)
+            val updated = store.audition(targetAudition.id)
+            val next = updated?.nextPiece
+            when (next?.kind) {
+                PieceKind.Slate, PieceKind.FullLength -> nav.push(Route.ShootMode(targetAudition.id))
+                PieceKind.Scene -> {
+                    if (updated.scenes.isNotEmpty()) {
+                        nav.push(Route.Prepare(targetAudition.id, 0))
+                    } else {
+                        nav.push(Route.AuditionDetail(targetAudition.id))
+                    }
+                }
+                else -> nav.push(Route.AuditionDetail(targetAudition.id))
+            }
+        } else {
+            nav.back()
+        }
+    }
 
     PushedScreen(
         bottomBar = {
-            PrimaryButton(
-                text = when {
-                    taken == 0 -> "Take your headshot"
-                    taken < 3 -> "Add your profiles"
-                    else -> "Retake"
-                },
-                onClick = { nav.openCamera(CameraFlow.Headshot) },
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (hasFront) {
+                    val nextTitle = targetAudition?.nextPiece?.title
+                    val proceedText = when {
+                        targetAudition != null && nextTitle != null && nextTitle != "Headshot" -> "Proceed to $nextTitle"
+                        targetAudition != null -> "Proceed with audition"
+                        else -> "Done"
+                    }
+                    PrimaryButton(
+                        text = proceedText,
+                        onClick = { onProceed() },
+                    )
+                    if (taken < 3) {
+                        SecondaryButton(
+                            text = "Add profile angles",
+                            onClick = { nav.openCamera(CameraFlow.Headshot) },
+                        )
+                    } else {
+                        SecondaryButton(
+                            text = "Retake all headshots",
+                            onClick = { nav.openCamera(CameraFlow.Headshot) },
+                        )
+                    }
+                } else {
+                    PrimaryButton(
+                        text = "Take your headshot",
+                        onClick = { nav.openCamera(CameraFlow.Headshot) },
+                    )
+                }
+            }
         },
     ) {
         LargeTitle("Headshots", subtitle = "Front is what casting sees first. Profiles help on commercial calls.")
         Spacer(Modifier.height(16.dp))
-        val hasFront = store.hasHeadshot("front") || taken >= 1
-        val hasLeft = store.hasHeadshot("left") || taken >= 2
-        val hasRight = store.hasHeadshot("right") || taken >= 3
 
         Row(Modifier.fillMaxWidth().height(264.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             HeadshotSlot(
@@ -790,6 +841,11 @@ fun HeadshotFlowScreen() {
                                         store.saveHeadshot(angle.name.lowercase(), uri.toString())
                                     }
                                     store.headshotsTaken = maxOf(store.headshotsTaken, angle.ordinal + 1)
+                                    store.auditions.forEach { a ->
+                                        if (a.pieces.any { it.kind == PieceKind.Headshot && !it.isDone }) {
+                                            store.markDone(PieceKind.Headshot, a.id)
+                                        }
+                                    }
                                     val next = HeadshotAngle.entries.getOrNull(angle.ordinal + 1)
                                     if (next != null) {
                                         angle = next

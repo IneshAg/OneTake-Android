@@ -242,8 +242,8 @@ private fun homeOpen(audition: Audition, nav: Navigator, haptics: Haptics) {
         return
     }
     when (next.kind) {
-        PieceKind.Headshot -> nav.push(Route.Headshots)
-        PieceKind.Slate, PieceKind.FullLength -> nav.push(Route.ShootSetup(audition.id))
+        PieceKind.Headshot -> nav.push(Route.Headshots(audition.id))
+        PieceKind.Slate, PieceKind.FullLength -> nav.push(Route.ShootMode(audition.id))
         PieceKind.Scene ->
             if (next.title == "Watch it once") nav.push(Route.Package(audition.id))
             else nav.push(Route.Prepare(audition.id, 0))

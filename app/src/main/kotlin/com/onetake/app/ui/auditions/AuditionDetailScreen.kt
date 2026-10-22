@@ -53,6 +53,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +82,7 @@ import com.onetake.app.Route
 import com.onetake.app.models.Audition
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
+import com.onetake.app.models.ScriptLine
 import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.formatDuration
 import com.onetake.app.models.otDayMonth
@@ -125,6 +127,36 @@ fun AuditionDetailScreen(auditionId: String) {
             }
         }
         return
+    }
+
+    LaunchedEffect(a.id, store.headshotsTaken) {
+        if (store.hasHeadshot("front") || store.headshotsTaken > 0) {
+            val headshotPiece = a.pieces.firstOrNull { it.kind == PieceKind.Headshot }
+            if (headshotPiece != null && !headshotPiece.isDone) {
+                store.markDone(PieceKind.Headshot, a.id)
+            }
+        }
+        if (a.scenes.isEmpty()) {
+            val count = a.pieces.count { it.kind == PieceKind.Scene }.coerceAtLeast(1)
+            val healedScenes = (1..count).map { i ->
+                ScriptScene(
+                    number = i,
+                    title = "Scene $i",
+                    heading = "INT. AUDITION ROOM - DAY",
+                    lines = listOf(
+                        ScriptLine(
+                            character = a.role.ifBlank { "ME" }.uppercase(),
+                            text = "Audition scene lines.",
+                            isMine = true,
+                        )
+                    ),
+                    estimatedSeconds = 60,
+                )
+            }
+            store.update(a.id) { current ->
+                if (current.scenes.isEmpty()) current.copy(scenes = healedScenes) else current
+            }
+        }
     }
 
     var showMenu by remember { mutableStateOf(false) }
@@ -329,7 +361,7 @@ private fun DetailUpNext(a: Audition, nav: Navigator) {
                         Text("FRONT · LEFT · RIGHT", style = OT.type.caption, color = c.labelTertiary)
                     }
                     DetailQuoteLine("Casting sees this first. A window and a plain wall is all you need.")
-                    PrimaryButton("Take your headshot", onClick = { nav.push(Route.Headshots) })
+                    PrimaryButton("Take your headshot", onClick = { nav.push(Route.Headshots(a.id)) })
                 }
                 next?.kind == PieceKind.Slate || next?.kind == PieceKind.FullLength -> {
                     SectionLabel("Up next · ${next?.title.orEmpty()}")
@@ -337,20 +369,23 @@ private fun DetailUpNext(a: Audition, nav: Navigator) {
                     DetailQuoteLine(store.slate.spoken)
                     PrimaryButton("Set up the camera", onClick = { nav.push(Route.ShootMode(a.id)) })
                 }
-                next != null && a.scenes.isNotEmpty() && !next.title.startsWith("Watch") -> {
+                next != null && next.kind == PieceKind.Scene && !next.title.startsWith("Watch") -> {
                     val sceneIndex = detailSceneIndex(a, next)
-                    val scene = a.scenes[sceneIndex]
-                    val mine = scene.lines.count { it.isMine }
+                    val scene = a.scenes.getOrNull(sceneIndex) ?: a.scenes.firstOrNull()
+                    val sceneNum = scene?.number ?: (sceneIndex + 1)
+                    val duration = scene?.estimatedSeconds ?: 60
+                    val mine = scene?.lines?.count { it.isMine } ?: 1
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        SectionLabel("Up next · scene ${scene.number} of ${a.scenes.size}", Modifier.weight(1f))
-                        Text("≈ ${formatDuration(scene.estimatedSeconds)} · $mine lines", style = OT.type.footnote, color = c.labelTertiary)
+                        SectionLabel("Up next · scene $sceneNum of ${maxOf(1, a.scenes.size)}", Modifier.weight(1f))
+                        Text("≈ ${formatDuration(duration)} · $mine lines", style = OT.type.footnote, color = c.labelTertiary)
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        DetailCardTitle(detailSceneName(scene, next))
-                        Text(scene.heading, style = OT.type.caption, color = c.labelTertiary)
+                        DetailCardTitle(scene?.let { detailSceneName(it, next) } ?: next.title)
+                        Text(scene?.heading ?: "INT. AUDITION ROOM - DAY", style = OT.type.caption, color = c.labelTertiary)
                     }
-                    scene.lines.firstOrNull { it.isMine }?.let { DetailQuoteLine(it.text) }
-                    PrimaryButton("Prepare scene ${scene.number}", onClick = { nav.push(Route.Prepare(a.id, sceneIndex)) })
+                    val quote = scene?.lines?.firstOrNull { it.isMine }?.text ?: "Audition scene lines."
+                    DetailQuoteLine(quote)
+                    PrimaryButton("Prepare scene $sceneNum", onClick = { nav.push(Route.Prepare(a.id, sceneIndex)) })
                 }
                 else -> {
                     SectionLabel("Everything's in")
@@ -403,7 +438,7 @@ private fun detailThenLine(a: Audition): String? {
 
 private fun detailOpenPiece(nav: Navigator, a: Audition, piece: Piece) {
     when (piece.kind) {
-        PieceKind.Headshot -> nav.push(Route.Headshots)
+        PieceKind.Headshot -> nav.push(Route.Headshots(a.id))
         PieceKind.Slate, PieceKind.FullLength -> nav.push(Route.ShootMode(a.id))
         PieceKind.Scene -> nav.push(Route.Prepare(a.id, detailSceneIndex(a, piece)))
     }

@@ -317,7 +317,38 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
     val c = OT.colors
     val a = store.audition(auditionId)
     val practicePiece = if (a == null) store.practice.firstOrNull { it.id == auditionId } else null
-    val scene = a?.scenes?.getOrNull(sceneIndex) ?: practicePiece?.scene
+
+    val fallbackScene = remember(a?.id, a?.role, sceneIndex) {
+        if (a != null) {
+            ScriptScene(
+                number = sceneIndex + 1,
+                title = "Scene ${sceneIndex + 1}",
+                heading = "INT. AUDITION ROOM - DAY",
+                lines = listOf(
+                    ScriptLine(
+                        character = a.role.ifBlank { "ME" }.uppercase(),
+                        text = "Audition scene lines.",
+                        isMine = true,
+                    )
+                ),
+                estimatedSeconds = 60,
+            )
+        } else null
+    }
+
+    val scene = a?.scenes?.getOrNull(sceneIndex)
+        ?: a?.scenes?.firstOrNull()
+        ?: practicePiece?.scene
+        ?: fallbackScene
+
+    LaunchedEffect(a?.id) {
+        if (a != null && a.scenes.isEmpty() && fallbackScene != null) {
+            store.update(a.id) { current ->
+                if (current.scenes.isEmpty()) current.copy(scenes = listOf(fallbackScene)) else current
+            }
+        }
+    }
+
     if ((a == null && practicePiece == null) || scene == null) {
         PrepMissing("This scene isn’t available any more.")
         return
@@ -343,7 +374,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
     ) {
         Column(Modifier.fillMaxSize()) {
             PrepNavHeader(
-                title = if (a != null) "Scene ${scene.number} of ${a.scenes.size}" else "Scene ${scene.number}",
+                title = if (a != null) "Scene ${scene.number} of ${maxOf(1, a.scenes.size)}" else "Scene ${scene.number}",
                 subtitle = prepSceneSubtitle(scene),
                 leadingIcon = Icons.AutoMirrored.Filled.ArrowBack,
                 leadingDescription = "Back",
@@ -848,7 +879,24 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     val c = OT.colors
     val a = store.audition(auditionId)
     val practicePiece = if (a == null) store.practice.firstOrNull { it.id == auditionId } else null
-    val scene = a?.scenes?.getOrNull(sceneIndex) ?: practicePiece?.scene
+    val scene = a?.scenes?.getOrNull(sceneIndex)
+        ?: a?.scenes?.firstOrNull()
+        ?: practicePiece?.scene
+        ?: if (a != null) {
+            ScriptScene(
+                number = sceneIndex + 1,
+                title = "Scene ${sceneIndex + 1}",
+                heading = "INT. AUDITION ROOM - DAY",
+                lines = listOf(
+                    ScriptLine(
+                        character = a.role.ifBlank { "ME" }.uppercase(),
+                        text = "Audition scene lines.",
+                        isMine = true,
+                    )
+                ),
+                estimatedSeconds = 60,
+            )
+        } else null
     val lines = if (scene != null) prepRehearsalLines(scene) else emptyList()
     if ((a == null && practicePiece == null) || scene == null || lines.isEmpty()) {
         PrepMissing("There are no lines to run in this scene.")

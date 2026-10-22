@@ -99,7 +99,7 @@ fun AuditionsScreen(
                 // Exactly ONE Monolithic Hero Stage Card
                 HeroStageCard(
                     slate = heroSlate,
-                    onClick = { nav.push(Route.Prepare(heroSlate.id, 0)) },
+                    onClick = { nav.push(Route.AuditionDetail(heroSlate.id)) },
                 )
 
                 if (upcomingSlates.isNotEmpty()) {
@@ -107,7 +107,7 @@ fun AuditionsScreen(
                     // Unified Inset Roster List
                     InsetRosterList(
                         slates = upcomingSlates,
-                        onSlateClick = { slate -> nav.push(Route.Prepare(slate.id, 0)) },
+                        onSlateClick = { slate -> nav.push(Route.AuditionDetail(slate.id)) },
                     )
                 }
             } else {

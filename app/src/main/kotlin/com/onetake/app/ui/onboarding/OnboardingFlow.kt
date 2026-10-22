@@ -100,6 +100,7 @@ import com.onetake.app.LocalAppStore
 import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.components.PlainButton
 import com.onetake.app.ui.components.PrimaryButton
+import com.onetake.app.ui.components.SFSymbols
 import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.otCard
@@ -339,7 +340,7 @@ private fun OnbWelcomeStep(onStart: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.Movie, null, tint = c.accent, modifier = Modifier.size(22.dp))
+            Icon(SFSymbols.MovieClapperFill, null, tint = c.accent, modifier = Modifier.size(24.dp))
             Text("OneTake", style = OT.type.headline, color = c.labelPrimary)
         }
 

@@ -1,8 +1,20 @@
 package com.onetake.app.ui.shoot
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -44,8 +56,13 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -91,6 +108,8 @@ import com.onetake.app.ui.camera.CameraBackground
 import com.onetake.app.ui.camera.CameraController
 import com.onetake.app.ui.camera.rememberCameraController
 import com.onetake.app.ui.components.CircleIconButton
+import com.onetake.app.ui.components.GLASS_EDGE_COLOR
+import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.PlainButton
 import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.components.SecondaryButton
@@ -122,6 +141,9 @@ fun ShootFlowScreen(auditionId: String) {
 
     var stage by remember { mutableStateOf(ShootStage.Check) }
     var countdown by remember { mutableStateOf<Int?>(null) }
+    var timerSeconds by remember { mutableIntStateOf(3) }
+    var showTimerMenu by remember { mutableStateOf(false) }
+    var voiceEnabled by remember { mutableStateOf(true) }
     var lineIndex by remember { mutableIntStateOf(0) }
     var takeNumber by remember { mutableIntStateOf((store.takes.maxOfOrNull { it.number } ?: 0) + 1) }
     var front by remember { mutableStateOf(true) }
@@ -135,6 +157,19 @@ fun ShootFlowScreen(auditionId: String) {
 
     KeepScreenOn()
     ShootLightSystemBars()
+
+    var micPermissionGranted by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+    }
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        micPermissionGranted = it
+    }
+
+    LaunchedEffect(Unit) {
+        if (!micPermissionGranted) {
+            micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     // The take's file lands asynchronously (CameraX Finalize) — attach it to the saved take.
     LaunchedEffect(camera.lastRecording) {
@@ -159,19 +194,29 @@ fun ShootFlowScreen(auditionId: String) {
 
     fun roll() {
         if (countdown != null || recording) return
+        if (timerSeconds == 0) {
+            countdown = null
+            camera.startRecording()
+            haptics.impact()
+            return
+        }
         scope.launch {
-            for (n in 3 downTo 1) {
+            for (n in timerSeconds downTo 1) {
+                if (countdown == null && n < timerSeconds) return@launch // Cancelled
                 countdown = n
                 haptics.tick()
                 delay(1000)
             }
-            countdown = null
-            camera.startRecording()
-            haptics.impact()
+            if (countdown != null) {
+                countdown = null
+                camera.startRecording()
+                haptics.impact()
+            }
         }
     }
 
     fun cut() {
+        countdown = null
         val seconds = camera.elapsed.toInt()
         camera.stopRecording()
         haptics.success()
@@ -196,6 +241,31 @@ fun ShootFlowScreen(auditionId: String) {
             }
             else -> Unit
         }
+    }
+
+    val voiceCommander = rememberShootVoiceCommander(
+        onRecordTrigger = {
+            if (voiceEnabled && !recording && countdown == null && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
+                roll()
+            }
+        },
+        onCutTrigger = {
+            if (voiceEnabled && recording) {
+                cut()
+            }
+        },
+    )
+
+    LaunchedEffect(voiceEnabled, micPermissionGranted, stage) {
+        if (voiceEnabled && micPermissionGranted && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
+            voiceCommander.start()
+        } else {
+            voiceCommander.stop()
+        }
+    }
+
+    LaunchedEffect(recording) {
+        voiceCommander.setRecordingMode(recording)
     }
 
     fun finish(goTo: Route) {
@@ -236,9 +306,109 @@ fun ShootFlowScreen(auditionId: String) {
                 .padding(horizontal = OT.dims.gutter),
         ) {
             // Top bar
-            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 CircleIconButton(Icons.Filled.Close, "Close", onClick = { nav.closeCamera() }, onDark = true)
                 Spacer(Modifier.weight(1f))
+
+                // Voice trigger toggle & indicator
+                if (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene) {
+                    Row(
+                        Modifier
+                            .heightIn(min = 32.dp)
+                            .clip(CircleShape)
+                            .background(OT.camera.glass)
+                            .clickable { voiceEnabled = !voiceEnabled }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            if (voiceEnabled) Icons.Filled.Mic else Icons.Filled.MicOff,
+                            contentDescription = if (voiceEnabled) "Voice commands on" else "Voice commands off",
+                            tint = if (voiceEnabled && voiceCommander.isListening) OT.colors.accent else if (voiceEnabled) Color.White else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text(
+                            if (voiceEnabled) "Voice" else "Muted",
+                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (voiceEnabled) Color.White else Color.White.copy(alpha = 0.5f),
+                        )
+                    }
+                }
+
+                // Countdown Timer selector
+                if (!recording && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
+                    Box {
+                        Row(
+                            Modifier
+                                .heightIn(min = 32.dp)
+                                .clip(CircleShape)
+                                .background(OT.camera.glass)
+                                .clickable { if (countdown == null) showTimerMenu = true }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                Icons.Outlined.Timer,
+                                contentDescription = "Timer",
+                                tint = if (timerSeconds > 0) OT.colors.accent else Color.White,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Text(
+                                if (timerSeconds == 0) "None" else "${timerSeconds}s",
+                                style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                                color = Color.White,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showTimerMenu,
+                            onDismissRequest = { showTimerMenu = false },
+                            modifier = Modifier
+                                .background(Color(0xF01A1A1E))
+                                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, RoundedCornerShape(16.dp)),
+                        ) {
+                            val timerOptions = listOf(
+                                0 to "None (instant)",
+                                3 to "3s (default)",
+                                5 to "5s",
+                                10 to "10s",
+                                15 to "15s",
+                            )
+                            timerOptions.forEach { (sec, label) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                label,
+                                                style = OT.type.body,
+                                                color = if (timerSeconds == sec) OT.colors.accent else Color.White,
+                                            )
+                                            if (timerSeconds == sec) {
+                                                Spacer(Modifier.width(12.dp))
+                                                Icon(Icons.Filled.Check, null, tint = OT.colors.accent, modifier = Modifier.size(18.dp))
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        timerSeconds = sec
+                                        showTimerMenu = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Stage & Duration Pill
                 Row(
                     Modifier.heightIn(min = 32.dp).clip(CircleShape).background(OT.camera.glass).padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -310,21 +480,31 @@ fun ShootFlowScreen(auditionId: String) {
                     }
                 }
                 countdown?.let { n ->
-                    AnimatedContent(
-                        targetState = n,
-                        transitionSpec = { (fadeIn(tween(300)) + scaleIn(tween(300), initialScale = 1.3f)) togetherWith fadeOut(tween(200)) },
-                        modifier = Modifier.align(Alignment.Center),
-                        label = "countdown",
-                    ) { value ->
-                        Text("$value", fontSize = 160.sp, lineHeight = 170.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .clickable { countdown = null },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        AnimatedContent(
+                            targetState = n,
+                            transitionSpec = { (fadeIn(tween(300)) + scaleIn(tween(300), initialScale = 1.3f)) togetherWith fadeOut(tween(200)) },
+                            label = "countdown",
+                        ) { value ->
+                            Text("$value", fontSize = 160.sp, lineHeight = 170.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
                     }
                 }
             }
 
             // Hint above the HUD (Figma 16.2p / 17p)
             val hint: Pair<ImageVector, String>? = when {
+                countdown != null -> Icons.Outlined.Timer to "Tap screen to cancel countdown"
+                recording && voiceEnabled -> Icons.Filled.Mic to "Say \"Cut\" · or tap stop button"
+                !recording && voiceEnabled && (stage == ShootStage.Slate || stage == ShootStage.Scene) ->
+                    Icons.Filled.Mic to "Say \"Record\" or \"Action\" from your mark"
                 stage == ShootStage.Slate && recording -> Icons.Filled.GraphicEq to "Say it, then pause"
-                stage == ShootStage.Scene && !recording && countdown == null ->
+                stage == ShootStage.Scene && !recording ->
                     Icons.Filled.Visibility to "Lines sit right under the lens, so your eyeline stays up"
                 else -> null
             }
@@ -366,13 +546,13 @@ fun ShootFlowScreen(auditionId: String) {
                             modifier = Modifier.widthIn(max = 220.dp),
                         )
                         ShootStage.SlateDone, ShootStage.Saved -> Unit
-                        else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            val hold = stage == ShootStage.Scene || stage == ShootStage.Slate
-                            ShootRecordButton(isRecording = recording, holdToStop = hold) {
-                                if (recording) cut() else roll()
-                            }
-                            if (recording && hold) {
-                                Text("Hold to stop", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = Color.White)
+                        else -> {
+                            ShootRecordButton(isRecording = recording) {
+                                when {
+                                    countdown != null -> countdown = null
+                                    recording -> cut()
+                                    else -> roll()
+                                }
                             }
                         }
                     }
@@ -412,51 +592,171 @@ private tailrec fun Context.findShootActivity(): Activity? = when (this) {
     else -> null
 }
 
-// MARK: - Record button (v2/Record Button · Ready / Rolling-hold)
+// MARK: - Voice Commander (Hands-free STT for "Record" / "Action" & "Cut" / "Stop")
 
-/** Tap to start. While rolling it becomes hold-to-stop (0.8 s) so a stray tap can't end a take. */
+private class ShootVoiceCommander(
+    private val context: Context,
+    private val onRecordTrigger: () -> Unit,
+    private val onCutTrigger: () -> Unit,
+) {
+    val available: Boolean = runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)
+    var isListening by mutableStateOf(false)
+        private set
+    var lastHeard by mutableStateOf<String?>(null)
+        private set
+
+    private var recognizer: SpeechRecognizer? = null
+    private var wanted = false
+    private var isRecordingMode = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val relisten = Runnable { if (wanted) listen() }
+
+    private val recordRegex = Regex("""(?i)\b(record|recording|action|roll|rolling|start|slate)\b""")
+    private val stopRegex = Regex("""(?i)\b(stop|cut|finish|finished|done|end)\b""")
+
+    private val listener = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {
+            isListening = true
+        }
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onError(error: Int) {
+            isListening = false
+            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                wanted = false
+                return
+            }
+            handler.removeCallbacks(relisten)
+            if (wanted) {
+                val delayMs = if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) 150L else 600L
+                handler.postDelayed(relisten, delayMs)
+            }
+        }
+        override fun onResults(results: Bundle?) {
+            isListening = false
+            evaluate(results)
+            handler.removeCallbacks(relisten)
+            if (wanted) handler.postDelayed(relisten, 100)
+        }
+        override fun onPartialResults(partialResults: Bundle?) {
+            evaluate(partialResults)
+        }
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+    }
+
+    private fun evaluate(bundle: Bundle?) {
+        val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+        for (text in matches) {
+            lastHeard = text
+            if (!isRecordingMode && recordRegex.containsMatchIn(text)) {
+                onRecordTrigger()
+                break
+            } else if (isRecordingMode && stopRegex.containsMatchIn(text)) {
+                onCutTrigger()
+                break
+            }
+        }
+    }
+
+    fun setRecordingMode(recording: Boolean) {
+        if (isRecordingMode != recording) {
+            isRecordingMode = recording
+            lastHeard = null
+            if (wanted) {
+                handler.removeCallbacks(relisten)
+                runCatching { recognizer?.cancel() }
+                handler.postDelayed(relisten, 100)
+            }
+        }
+    }
+
+    fun start() {
+        if (!available) return
+        wanted = true
+        handler.removeCallbacks(relisten)
+        runCatching { recognizer?.cancel() }
+        listen()
+    }
+
+    private fun listen() {
+        if (!wanted) return
+        val r = recognizer ?: runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
+            ?.also { it.setRecognitionListener(listener); recognizer = it }
+            ?: return
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+        }
+        runCatching {
+            r.startListening(intent)
+            isListening = true
+        }.onFailure {
+            isListening = false
+            if (wanted) handler.postDelayed(relisten, 800)
+        }
+    }
+
+    fun stop() {
+        wanted = false
+        isListening = false
+        handler.removeCallbacks(relisten)
+        runCatching { recognizer?.stopListening() }
+    }
+
+    fun destroy() {
+        wanted = false
+        isListening = false
+        handler.removeCallbacks(relisten)
+        runCatching {
+            recognizer?.cancel()
+            recognizer?.destroy()
+        }
+        recognizer = null
+    }
+}
+
 @Composable
-private fun ShootRecordButton(isRecording: Boolean, holdToStop: Boolean, onAction: () -> Unit) {
+private fun rememberShootVoiceCommander(
+    onRecordTrigger: () -> Unit,
+    onCutTrigger: () -> Unit,
+): ShootVoiceCommander {
+    val context = LocalContext.current
+    val commander = remember {
+        ShootVoiceCommander(
+            context = context.applicationContext,
+            onRecordTrigger = onRecordTrigger,
+            onCutTrigger = onCutTrigger,
+        )
+    }
+    DisposableEffect(commander) {
+        onDispose { commander.destroy() }
+    }
+    return commander
+}
+
+// MARK: - Record button (v2/Record Button · Ready / Tap to stop)
+
+/** Tap to start recording. Tap again immediately stops recording. */
+@Composable
+private fun ShootRecordButton(isRecording: Boolean, onAction: () -> Unit) {
     val action by rememberUpdatedState(onAction)
-    val holdMode = isRecording && holdToStop
-    val progress = remember { Animatable(0f) }
-    val scope = rememberCoroutineScope()
     val spec = spring<Dp>(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow)
-    val inner by animateDpAsState(if (isRecording) 30.dp else 64.dp, spec, label = "recSize")
+    val inner by animateDpAsState(if (isRecording) 32.dp else 64.dp, spec, label = "recSize")
     val corner by animateDpAsState(if (isRecording) 8.dp else 32.dp, spec, label = "recCorner")
     val red = OT.camera.recRed
-    val label = when {
-        !isRecording -> "Record"
-        holdToStop -> "Stop recording, press and hold"
-        else -> "Stop recording"
-    }
+    val label = if (isRecording) "Stop recording" else "Record"
 
     Box(
         Modifier
             .size(84.dp)
+            .clip(CircleShape)
+            .clickable(onClick = action)
             .semantics {
                 role = Role.Button
                 contentDescription = label
-                onClick(label = label) { action(); true }
-            }
-            .pointerInput(holdMode) {
-                detectTapGestures(
-                    onPress = {
-                        if (holdMode) {
-                            val job = scope.launch {
-                                progress.animateTo(1f, tween(800, easing = LinearEasing))
-                                progress.snapTo(0f)
-                                action()
-                            }
-                            tryAwaitRelease()
-                            if (job.isActive) {
-                                job.cancel()
-                                scope.launch { progress.animateTo(0f, tween(200)) }
-                            }
-                        }
-                    },
-                    onTap = { if (!holdMode) action() },
-                )
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -465,9 +765,6 @@ private fun ShootRecordButton(isRecording: Boolean, holdToStop: Boolean, onActio
             val tl = Offset(stroke / 2, stroke / 2)
             val sz = Size(size.width - stroke, size.height - stroke)
             drawArc(Color.White, 0f, 360f, false, tl, sz, style = Stroke(stroke))
-            if (holdMode && progress.value > 0f) {
-                drawArc(red, -90f, 360f * progress.value, false, tl, sz, style = Stroke(stroke, cap = StrokeCap.Round))
-            }
         }
         Box(Modifier.size(inner).clip(RoundedCornerShape(corner)).background(red))
     }

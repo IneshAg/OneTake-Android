@@ -70,6 +70,12 @@ data class Audition(
     val status: AuditionStatus,
     val sentDate: LocalDateTime? = null,
     val headshotAsset: String = "headshot",
+    /** Real recordings, once this audition has actually been shot — null until then. Persisted as
+     *  file URIs; the files themselves live under permanent app storage (see MediaStore.kt). */
+    val slateVideoUri: String? = null,
+    val fullLengthVideoUri: String? = null,
+    /** The packaged deliverable, once MediaExporter has actually composed one. */
+    val exportedFileUri: String? = null,
 ) {
     val readyCount: Int get() = pieces.count { it.isDone }
     val totalCount: Int get() = pieces.size
@@ -99,7 +105,10 @@ data class Take(
     val isCircled: Boolean,
     val notes: List<String>,
     val fileUri: String? = null,
-    val sceneId: String? = null,
+    /** Which audition/scene this take belongs to. Real takes created by ShootFlow always set
+     *  both; optional only so Take can still be constructed in previews/tests without one. */
+    val auditionId: String? = null,
+    val sceneIndex: Int? = null,
 )
 
 data class TapeFinding(
@@ -126,6 +135,11 @@ data class PracticePiece(
     val linesTotal: Int,
     val character: String = "",
     val scene: ScriptScene? = null,
+    /** Real count of practice takes recorded for this piece — never sent, but genuinely saved to disk. */
+    val takesRecorded: Int = 0,
+    /** Which audition this piece's scene came from, so drills/Run Lines can find real scene content. */
+    val auditionId: String? = null,
+    val sceneIndex: Int? = null,
 )
 
 data class SlateInfo(

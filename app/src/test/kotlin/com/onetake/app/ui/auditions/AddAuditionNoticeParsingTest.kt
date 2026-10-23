@@ -1,5 +1,6 @@
 package com.onetake.app.ui.auditions
 
+import android.app.Application
 import com.onetake.app.AppStore
 import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
@@ -14,7 +15,7 @@ class AddAuditionNoticeParsingTest {
 
     @Test
     fun testAppStoreDefaultsAreCleanAndEmpty() {
-        val store = AppStore()
+        val store = AppStore(Application())
         assertTrue("Auditions should be empty by default so empty state shows", store.auditions.isEmpty())
         assertTrue("Takes should be empty by default", store.takes.isEmpty())
         assertTrue("Practice should be empty by default", store.practice.isEmpty())

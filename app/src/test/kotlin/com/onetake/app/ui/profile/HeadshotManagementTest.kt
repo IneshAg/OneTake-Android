@@ -1,5 +1,6 @@
 package com.onetake.app.ui.profile
 
+import android.app.Application
 import com.onetake.app.AppStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,7 +12,7 @@ class HeadshotManagementTest {
 
     @Test
     fun headshotStateStartsEmptyAndUpdatesDynamically() {
-        val store = AppStore()
+        val store = AppStore(Application())
         assertEquals(0, store.headshotsTaken)
         assertTrue(store.headshots.isEmpty())
         assertFalse(store.hasHeadshot("front"))

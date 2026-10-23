@@ -23,14 +23,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
@@ -42,18 +40,14 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,7 +60,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -74,6 +67,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,12 +77,10 @@ import com.onetake.app.Route
 import com.onetake.app.models.formatDuration
 import com.onetake.app.ui.components.LargeTitle
 import com.onetake.app.ui.components.ListRow
-import com.onetake.app.ui.components.OTCard
 import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.components.PushedScreen
 import com.onetake.app.ui.components.SectionLabel
-import com.onetake.app.ui.components.ToggleRow
 import com.onetake.app.ui.components.otCard
 import com.onetake.app.ui.system.ReaderFiles
 import com.onetake.app.ui.system.rememberHaptics
@@ -103,25 +95,7 @@ import kotlinx.coroutines.launch
 // Android port of iOS ReaderView (12) and RecordReaderView (13).
 // The reader is ALWAYS the actor's own recorded voice — no AI voice, no other people's tracks.
 
-private data class RdrTrack(
-    val name: String,
-    val seconds: Int,
-    val whenLabel: String,
-    val isNew: Boolean = false,
-)
-
-private object RdrTrackStore {
-    val tracks = mutableStateListOf(
-        RdrTrack("Reader Track 01", 48, "yesterday"),
-        RdrTrack("Reader Track 02", 51, "today"),
-    )
-    var inUse by mutableIntStateOf(0)
-    var justSaved by mutableStateOf<String?>(null)
-}
-
 private val rdrVolumes = listOf("Same as me", "Quieter", "Much quieter")
-
-private fun rdrShortName(name: String): String = name.removePrefix("Reader ")
 
 private fun rdrBarHeight(i: Int): Float {
     val v = ((i * 37 + 11) % 17) / 16f
@@ -197,211 +171,123 @@ fun ReaderScreen(auditionId: String) {
     val a = store.audition(auditionId)
     val scene = a?.scenes?.firstOrNull()
     val readerName = scene?.let { prepReaderName(it) } ?: "Reader"
-    val readerLineCount = scene?.lines?.count { !it.isMine } ?: 0
+    val readerLines = scene?.lines?.filter { !it.isMine } ?: emptyList()
 
-    var playing by remember { mutableStateOf<Int?>(null) }
-    var playedSeconds by remember { mutableIntStateOf(0) }
+    var playingLine by remember { mutableStateOf<Int?>(null) }
     var volumeMenu by remember { mutableStateOf(false) }
-    val justSaved = RdrTrackStore.justSaved
 
-    DisposableEffect(Unit) { onDispose { RdrTrackStore.justSaved = null } }
-
-    LaunchedEffect(playing) {
-        player.stop()
-        val idx = playing ?: return@LaunchedEffect
-        val track = RdrTrackStore.tracks.getOrNull(idx) ?: return@LaunchedEffect
-        playedSeconds = 0
-        launch {
-            for (i in 0 until readerLineCount) {
-                prepPlay(player, i)
-                val ms = prepAudioMillis(ReaderFiles.file(context, i)) ?: 0L
-                delay(ms + 2500L)
-            }
-        }
-        while (playedSeconds < track.seconds) {
-            delay(1000L)
-            playedSeconds += 1
-        }
-        player.stop()
-        playing = null
-    }
+    DisposableEffect(Unit) { onDispose { player.stop() } }
 
     PushedScreen(
         bottomBar = {
-            PrimaryButton(
-                text = if (justSaved != null) "Continue with ${rdrShortName(justSaved)}" else "Continue",
-                onClick = {
-                    player.stop()
-                    RdrTrackStore.justSaved = null
-                    nav.back()
-                },
-            )
+            PrimaryButton(text = "Continue", onClick = { player.stop(); nav.back() })
         },
     ) {
         LargeTitle(
             title = "Who reads $readerName?",
-            subtitle = if (justSaved != null) {
-                "Your new track is in. It plays their lines and waits for yours."
-            } else {
-                "Record $readerName’s lines in your own voice. We leave the pauses for yours, and it plays under your takes."
-            },
+            subtitle = "Record $readerName’s lines in your own voice. We leave the pauses for yours, and it plays under your takes.",
         )
         Spacer(Modifier.height(16.dp))
 
-        if (justSaved != null) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(c.accentSoft)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Icon(Icons.Filled.CheckCircle, null, tint = c.accent, modifier = Modifier.size(20.dp))
-                Text(
-                    "${rdrShortName(justSaved)} saved and in use",
-                    style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold),
-                    color = c.accent,
-                )
-            }
-            Spacer(Modifier.height(16.dp))
-        }
-
-        SectionLabel(if (justSaved != null) "Recorded tracks" else "Your reader tracks")
+        SectionLabel("Your reader tracks")
         Spacer(Modifier.height(4.dp))
 
-        val tracks = RdrTrackStore.tracks
-        tracks.forEachIndexed { i, t ->
-            val inUse = RdrTrackStore.inUse == i
-            val detail = if (justSaved != null) {
-                "You · ${t.whenLabel} · ${formatDuration(t.seconds)}"
-            } else {
-                "${formatDuration(t.seconds)} · you, ${t.whenLabel}"
-            }
-            if (playing == i) {
-                OTCard(Modifier.fillMaxWidth().padding(vertical = 6.dp), radius = 20.dp, padding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        RdrPlayCircle(playing = true, description = "Pause ${t.name}", onClick = { playing = null }, size = 40.dp, background = c.accentSoft, tint = c.accent)
-                        Column(Modifier.weight(1f)) {
-                            Text(t.name, style = OT.type.headline, color = c.labelPrimary)
-                            Text("You, ${t.whenLabel}", style = OT.type.footnote, color = c.labelTertiary)
-                        }
-                        Text(
-                            "${formatDuration(playedSeconds)} / ${formatDuration(t.seconds)}",
-                            style = OT.type.footnote,
-                            color = c.labelSecondary,
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    RdrWave(
-                        bars = 44,
-                        progress = if (t.seconds > 0) playedSeconds.toFloat() / t.seconds else 0f,
-                        active = c.reader,
-                        idle = c.fillField,
-                        modifier = Modifier.fillMaxWidth().height(28.dp),
-                    )
-                }
-            } else {
+        // A real per-line listing of what's actually been recorded to this phone, backed by the
+        // same .m4a files RecordReaderScreen writes — not a fabricated list of named "tracks".
+        if (readerLines.isEmpty()) {
+            Text("No reader lines in this scene yet.", style = OT.type.footnote, color = c.labelTertiary)
+        } else {
+            readerLines.forEachIndexed { i, line ->
+                val recorded = ReaderFiles.file(context, i).exists()
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .heightIn(min = 60.dp)
-                        .clickable {
-                            RdrTrackStore.inUse = i
-                            haptics.tick()
-                        }
+                        .then(
+                            if (recorded) Modifier.clickable {
+                                if (playingLine == i) {
+                                    player.stop(); playingLine = null
+                                } else {
+                                    player.play(i); playingLine = i; haptics.tick()
+                                }
+                            } else Modifier
+                        )
                         .padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     RdrPlayCircle(
-                        playing = false,
-                        description = "Play ${t.name}",
-                        onClick = { playing = i },
-                        background = if (inUse) c.reader.copy(alpha = 0.16f) else c.fillField,
-                        tint = if (inUse) c.reader else c.labelPrimary,
+                        playing = playingLine == i,
+                        description = if (recorded) "Play line ${i + 1}" else "Line ${i + 1} not recorded",
+                        onClick = {
+                            if (!recorded) return@RdrPlayCircle
+                            if (playingLine == i) { player.stop(); playingLine = null } else { player.play(i); playingLine = i }
+                        },
+                        background = if (recorded) c.accentSoft else c.fillField,
+                        tint = if (recorded) c.accent else c.labelTertiary,
                     )
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(t.name, style = OT.type.body, color = c.labelPrimary)
-                        Text(detail, style = OT.type.footnote, color = c.labelTertiary)
-                    }
-                    if (t.isNew) {
-                        Box(
-                            Modifier
-                                .clip(CircleShape)
-                                .background(c.fillField)
-                                .padding(horizontal = 10.dp, vertical = 3.dp),
-                        ) {
-                            Text("New", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
-                        }
-                    }
-                    if (justSaved == null) {
-                        RdrWave(
-                            bars = 12,
-                            progress = 1f,
-                            active = if (inUse) c.reader else c.labelTertiary.copy(alpha = 0.6f),
-                            idle = c.fillField,
-                            modifier = Modifier.width(44.dp).height(18.dp),
-                            seed = i * 5,
+                        Text("Line ${i + 1}", style = OT.type.body, color = c.labelPrimary)
+                        Text(
+                            if (recorded) "Recorded · “${line.text.take(40)}”" else "Not recorded yet",
+                            style = OT.type.footnote,
+                            color = c.labelTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-                        if (inUse) Icon(Icons.Filled.Check, "In use", tint = c.accent, modifier = Modifier.size(20.dp))
-                    }
                 }
+                if (i < readerLines.size - 1) OTDivider(startIndent = 56.dp)
             }
-            if (i < tracks.size - 1) OTDivider(startIndent = 56.dp)
         }
 
         Spacer(Modifier.height(16.dp))
 
-        if (justSaved == null) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .clickable { volumeMenu = true }
-                    .padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = c.labelSecondary, modifier = Modifier.size(22.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Her volume on the tape", style = OT.type.body, color = c.labelPrimary)
-                    Text("Casting hears you first", style = OT.type.footnote, color = c.labelTertiary)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .clickable { volumeMenu = true }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = c.labelSecondary, modifier = Modifier.size(22.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("$readerName’s volume on the tape", style = OT.type.body, color = c.labelPrimary)
+                Text("Casting hears you first", style = OT.type.footnote, color = c.labelTertiary)
+            }
+            Box {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(store.readerVolume, style = OT.type.body, color = c.labelSecondary)
+                    Icon(Icons.Filled.UnfoldMore, null, tint = c.labelSecondary, modifier = Modifier.size(18.dp))
                 }
-                Box {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(store.readerVolume, style = OT.type.body, color = c.labelSecondary)
-                        Icon(Icons.Filled.UnfoldMore, null, tint = c.labelSecondary, modifier = Modifier.size(18.dp))
-                    }
-                    DropdownMenu(expanded = volumeMenu, onDismissRequest = { volumeMenu = false }) {
-                        rdrVolumes.forEach { v ->
-                            DropdownMenuItem(
-                                text = { Text(v, style = OT.type.body) },
-                                onClick = {
-                                    store.readerVolume = v
-                                    volumeMenu = false
-                                    haptics.tick()
-                                },
-                                trailingIcon = if (v == store.readerVolume) {
-                                    { Icon(Icons.Filled.Check, null, tint = c.accent) }
-                                } else null,
-                            )
-                        }
+                DropdownMenu(expanded = volumeMenu, onDismissRequest = { volumeMenu = false }) {
+                    rdrVolumes.forEach { v ->
+                        DropdownMenuItem(
+                            text = { Text(v, style = OT.type.body) },
+                            onClick = {
+                                store.readerVolume = v
+                                volumeMenu = false
+                                haptics.tick()
+                            },
+                            trailingIcon = if (v == store.readerVolume) {
+                                { Icon(Icons.Filled.Check, null, tint = c.accent) }
+                            } else null,
+                        )
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
         }
+        Spacer(Modifier.height(16.dp))
 
         ListRow(
-            title = if (justSaved != null) "Record another" else "Record $readerName yourself",
-            detail = "We leave pauses for your lines",
-            icon = if (justSaved != null) null else Icons.Filled.Mic,
+            title = "Record a new track",
+            detail = "Your voice · we leave pauses for your lines",
+            icon = Icons.Filled.Mic,
             onClick = {
-                playing = null
+                player.stop()
+                playingLine = null
                 nav.push(Route.RecordReader(auditionId))
             },
         )
@@ -442,7 +328,6 @@ fun RecordReaderScreen(auditionId: String) {
     var lastSaved by remember { mutableStateOf<Int?>(null) }
     var micDenied by remember { mutableStateOf(false) }
     var pendingStart by remember { mutableStateOf(false) }
-    var showSave by remember { mutableStateOf(false) }
     var playingAll by remember { mutableStateOf(false) }
     var playAllMs by remember { mutableLongStateOf(0L) }
 
@@ -932,39 +817,17 @@ fun RecordReaderScreen(auditionId: String) {
                         .navigationBarsPadding()
                         .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
                 ) {
+                    // Every line is already saved to disk as it's recorded (ReaderLineRecorder
+                    // writes straight to ReaderFiles) — there's no separate named-track object to
+                    // create, so this just confirms and returns to Reader, which now shows the
+                    // real recorded/not-recorded state per line.
                     PrimaryButton("Save track", onClick = {
                         player.stop()
                         playingAll = false
-                        showSave = true
+                        haptics.success()
+                        nav.back()
                     })
                 }
-            }
-
-            if (showSave) {
-                RdrSaveSheet(
-                    readerName = readerName,
-                    project = a.project,
-                    defaultName = String.format(Locale.US, "Reader Track %02d", RdrTrackStore.tracks.size + 1),
-                    volume = store.readerVolume,
-                    onVolume = { store.readerVolume = it },
-                    onDismiss = { showSave = false },
-                    onSave = { name, useIt ->
-                        val existing = RdrTrackStore.tracks.map { it.copy(isNew = false) }
-                        RdrTrackStore.tracks.clear()
-                        RdrTrackStore.tracks.add(RdrTrack(name, total.coerceAtLeast(1), "just now", isNew = true))
-                        RdrTrackStore.tracks.addAll(existing)
-                        if (useIt) {
-                            RdrTrackStore.inUse = 0
-                            RdrTrackStore.justSaved = name
-                        } else {
-                            RdrTrackStore.inUse = RdrTrackStore.inUse + 1
-                            RdrTrackStore.justSaved = null
-                        }
-                        haptics.success()
-                        showSave = false
-                        nav.back()
-                    },
-                )
             }
         }
     }
@@ -1031,79 +894,3 @@ private fun RdrStepperButton(symbol: String, description: String, onClick: () ->
     }
 }
 
-// MARK: - 13.8 Save Maya's track
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun RdrSaveSheet(
-    readerName: String,
-    project: String,
-    defaultName: String,
-    volume: String,
-    onVolume: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onSave: (String, Boolean) -> Unit,
-) {
-    val c = OT.colors
-    var name by remember { mutableStateOf(defaultName) }
-    var useIt by remember { mutableStateOf(true) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.bgCanvas) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = OT.dims.gutter)
-                .padding(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                "Save $readerName’s track",
-                style = OT.type.headline,
-                color = c.labelPrimary,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text("Name", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-                    .clip(CircleShape)
-                    .background(c.fillField)
-                    .padding(start = 18.dp, end = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                BasicTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    singleLine = true,
-                    textStyle = OT.type.body.copy(color = c.labelPrimary),
-                    cursorBrush = SolidColor(c.accent),
-                    modifier = Modifier.weight(1f),
-                )
-                if (name.isNotEmpty()) {
-                    Box(
-                        Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .clickable(role = Role.Button) { name = "" }
-                            .semantics { contentDescription = "Clear name" },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(Icons.Filled.Close, null, tint = c.labelTertiary, modifier = Modifier.size(18.dp))
-                    }
-                }
-            }
-            SectionLabel("Her volume on the tape")
-            PrepSegmentedControl(rdrVolumes, rdrVolumes.indexOf(volume).coerceAtLeast(0)) { onVolume(rdrVolumes[it]) }
-            ToggleRow(
-                title = "Use it for $project",
-                checked = useIt,
-                onCheckedChange = { useIt = it },
-                detail = "You can switch tracks any time",
-                showDivider = false,
-            )
-            PrimaryButton("Save", onClick = { onSave(name.trim().ifBlank { defaultName }, useIt) })
-        }
-    }
-}

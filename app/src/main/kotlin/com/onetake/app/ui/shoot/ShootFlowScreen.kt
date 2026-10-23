@@ -15,6 +15,7 @@ import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import com.onetake.app.data.MediaStore
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -128,6 +129,14 @@ import java.time.LocalDateTime
 
 private enum class ShootStage { Check, Slate, SlateDone, FullLength, Scene, Saved }
 
+/** What a just-stopped recording was for, so the async CameraX Finalize callback knows where to
+ *  persist and attach the file once it lands. */
+private sealed class PendingCapture {
+    object Slate : PendingCapture()
+    object FullLength : PendingCapture()
+    data class Scene(val takeId: String, val number: Int) : PendingCapture()
+}
+
 @Composable
 fun ShootFlowScreen(auditionId: String) {
     val store = LocalAppStore.current
@@ -145,11 +154,14 @@ fun ShootFlowScreen(auditionId: String) {
     var showTimerMenu by remember { mutableStateOf(false) }
     var voiceEnabled by remember { mutableStateOf(true) }
     var lineIndex by remember { mutableIntStateOf(0) }
-    var takeNumber by remember { mutableIntStateOf((store.takes.maxOfOrNull { it.number } ?: 0) + 1) }
+    // Shoot always records the audition's first scene in one sitting — mirrors iOS's ShootFlow,
+    // which hardcodes the same `sceneIndex = 0` (multi-scene selection isn't part of this flow).
+    val sceneIndex = 0
+    var takeNumber by remember { mutableIntStateOf(store.nextTakeNumber(auditionId, sceneIndex)) }
     var front by remember { mutableStateOf(true) }
     var exposureLocked by remember { mutableStateOf(false) }
     var lastTakeSeconds by remember { mutableIntStateOf(0) }
-    var pendingTakeId by remember { mutableStateOf<String?>(null) }
+    var pendingCapture by remember { mutableStateOf<PendingCapture?>(null) }
 
     val recording = camera.state == CameraController.State.Recording
     val audition = store.audition(auditionId)
@@ -171,12 +183,27 @@ fun ShootFlowScreen(auditionId: String) {
         }
     }
 
-    // The take's file lands asynchronously (CameraX Finalize) — attach it to the saved take.
+    // The file lands asynchronously (CameraX Finalize) — move it out of cacheDir into permanent
+    // storage and attach it to whatever this recording was for (slate / full-length / a scene take),
+    // instead of discarding it like the old prototype did for slate and full-length.
     LaunchedEffect(camera.lastRecording) {
         val uri = camera.lastRecording ?: return@LaunchedEffect
-        val id = pendingTakeId ?: return@LaunchedEffect
-        store.takes = store.takes.map { if (it.id == id) it.copy(fileUri = uri.toString()) else it }
-        pendingTakeId = null
+        when (val pending = pendingCapture) {
+            is PendingCapture.Slate -> {
+                MediaStore.persist(context, uri, "slate.mp4", "audition-$auditionId")
+                    ?.let { store.setSlateVideo(auditionId, it.toString()) }
+            }
+            is PendingCapture.FullLength -> {
+                MediaStore.persist(context, uri, "fulllength.mp4", "audition-$auditionId")
+                    ?.let { store.setFullLengthVideo(auditionId, it.toString()) }
+            }
+            is PendingCapture.Scene -> {
+                MediaStore.persist(context, uri, "take-${pending.number}.mp4", "audition-$auditionId/scene-$sceneIndex")
+                    ?.let { dest -> store.updateTake(pending.takeId) { it.copy(fileUri = dest.toString()) } }
+            }
+            null -> Unit
+        }
+        pendingCapture = null
     }
 
     // Reader: the actor's own recorded voice or TTS for the other character's lines.
@@ -221,8 +248,12 @@ fun ShootFlowScreen(auditionId: String) {
         camera.stopRecording()
         haptics.success()
         when (stage) {
-            ShootStage.Slate -> stage = ShootStage.SlateDone
+            ShootStage.Slate -> {
+                pendingCapture = PendingCapture.Slate
+                stage = ShootStage.SlateDone
+            }
             ShootStage.FullLength -> {
+                pendingCapture = PendingCapture.FullLength
                 store.markDone(PieceKind.FullLength, auditionId)
                 stage = ShootStage.Scene
             }
@@ -234,9 +265,11 @@ fun ShootFlowScreen(auditionId: String) {
                     recordedAt = LocalDateTime.now(),
                     isCircled = false,
                     notes = emptyList(),
+                    auditionId = auditionId,
+                    sceneIndex = sceneIndex,
                 )
                 store.addTake(take)
-                pendingTakeId = take.id
+                pendingCapture = PendingCapture.Scene(take.id, takeNumber)
                 stage = ShootStage.Saved
             }
             else -> Unit

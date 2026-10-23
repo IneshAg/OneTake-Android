@@ -61,6 +61,7 @@ import com.onetake.app.models.PracticePiece
 import com.onetake.app.ui.prepare.PrepLineMode
 import com.onetake.app.ui.prepare.PrepPrefs
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -607,12 +608,27 @@ private fun PracticeReaderOption(title: String, detail: String, selected: Boolea
 
 @Composable
 fun PracticeTakeScreen() {
+    val store = LocalAppStore.current
     val nav = LocalNavigator.current
+    val context = LocalContext.current
     val camera = rememberCameraController()
     val haptics = rememberHaptics()
     var front by remember { mutableStateOf(true) }
     val recording = camera.state == CameraController.State.Recording
+    // Real target piece — the one most recently picked up, mirroring iOS's `store.practice.first`
+    // — not a hardcoded "TK 4"/"SAM"/"NINA" scene that had nothing to do with what's on screen.
+    val piece = store.practice.firstOrNull()
     KeepScreenOn()
+
+    // The file lands asynchronously (CameraX Finalize) — move it to permanent storage and count a
+    // real practice take, instead of discarding the recording like the old prototype did.
+    LaunchedEffect(camera.lastRecording) {
+        val uri = camera.lastRecording ?: return@LaunchedEffect
+        val p = piece ?: return@LaunchedEffect
+        val number = p.takesRecorded + 1
+        com.onetake.app.data.MediaStore.persist(context, uri, "take-$number.mp4", "practice-${p.id}")
+            ?.let { store.incrementPracticeTakes(p.id) }
+    }
 
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
         CameraBackground(camera, Modifier.fillMaxSize(), front = front)
@@ -623,19 +639,34 @@ fun PracticeTakeScreen() {
                 CircleIconButton(Icons.Filled.Close, "Close", onClick = { nav.closeCamera() }, onDark = true)
                 Spacer(Modifier.weight(1f))
                 val secs = camera.elapsed.toInt()
-                CameraPill("Practice · TK 4  %02d:%02d:%02d".format(secs / 3600, (secs / 60) % 60, secs % 60))
+                val takeNumber = (piece?.takesRecorded ?: 0) + 1
+                CameraPill("Practice · TK $takeNumber  %02d:%02d:%02d".format(secs / 3600, (secs / 60) % 60, secs % 60))
             }
             Spacer(Modifier.height(8.dp))
-            // Top of the scene, so the actor can glance at their first line.
+            // Top of the scene, so the actor can glance at their first line — the real scene this
+            // piece was practising, or an honest "no scene attached" note, never invented dialogue.
+            val sceneLines = piece?.scene?.lines.orEmpty()
+            val mine = sceneLines.firstOrNull { it.isMine }
+            val partnerLine = mine?.let { m -> sceneLines.getOrNull(sceneLines.indexOf(m) + 1) }
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(OT.camera.glass).padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text("TOP OF THE SCENE", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
-                Text("SAM · YOU", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
-                Text("You said you’d be home by eight.", style = OT.type.headline.copy(fontSize = 20.sp, lineHeight = 25.sp), color = OT.camera.label)
-                Text("NINA", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2.copy(alpha = 0.5f))
-                Text("I said I’d try. There’s a difference.", style = OT.type.footnote, color = OT.camera.label2.copy(alpha = 0.5f))
+                if (mine != null) {
+                    Text("${mine.character.uppercase()} · YOU", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
+                    Text(mine.text, style = OT.type.headline.copy(fontSize = 20.sp, lineHeight = 25.sp), color = OT.camera.label)
+                    if (partnerLine != null) {
+                        Text(partnerLine.character.uppercase(), style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2.copy(alpha = 0.5f))
+                        Text(partnerLine.text, style = OT.type.footnote, color = OT.camera.label2.copy(alpha = 0.5f))
+                    }
+                } else {
+                    Text(
+                        piece?.title ?: "No practice scene attached — add one from Practice",
+                        style = OT.type.headline.copy(fontSize = 18.sp),
+                        color = OT.camera.label,
+                    )
+                }
             }
             Spacer(Modifier.weight(1f))
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {

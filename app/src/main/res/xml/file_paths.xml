@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exposes app-internal storage (exports/, headshots/, audition-*/, reader-line-*.m4a) to the
+     FileProvider declared in AndroidManifest.xml, so the exported tape and other recorded files
+     can be handed to another app via content:// URIs instead of raw file:// paths. -->
+<paths>
+    <files-path name="files" path="." />
+    <cache-path name="cache" path="." />
+</paths>

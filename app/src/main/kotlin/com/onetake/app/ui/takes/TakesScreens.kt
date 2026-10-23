@@ -3,6 +3,7 @@ package com.onetake.app.ui.takes
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -55,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -66,7 +69,10 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -94,9 +100,13 @@ import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.theme.OT
+import android.net.Uri
+import androidx.compose.ui.unit.Dp
 import java.time.Duration
 import java.time.LocalDateTime
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // MARK: - 18 Your takes (+ 18.1 Compare, 18.2 One more?)
 
@@ -114,7 +124,8 @@ fun TakesScreen(auditionId: String) {
     var comparing by remember { mutableStateOf(false) }
     var isPlaying by remember(selected) { mutableStateOf(false) }
 
-    val takes = store.takes
+    // Scoped to this audition — otherwise every audition's takes show up mixed together.
+    val takes = store.takes.filter { it.auditionId == auditionId }
     val circled = takes.firstOrNull { it.isCircled }
     val current = takes.firstOrNull { it.id == (selected ?: circled?.id) } ?: takes.lastOrNull()
     val sceneTitle = store.audition(auditionId)?.scenes?.firstOrNull()?.title ?: "Scene 1"
@@ -479,6 +490,40 @@ private fun TkPlaybackBar(
     }
 }
 
+/** A real video-frame grab (mirrors iOS's `VideoThumbnail`/`AVAssetImageGenerator`) instead of a
+ *  generic movie-reel icon for every take — falls back to the icon while loading or if there's no
+ *  file yet (e.g. a take recorded on a device with no camera hardware). */
+@Composable
+private fun TkVideoThumbnail(fileUri: String?, modifier: Modifier = Modifier, iconSize: Dp = 28.dp) {
+    val context = LocalContext.current
+    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, fileUri) {
+        value = if (fileUri == null) null else withContext(Dispatchers.IO) {
+            runCatching {
+                val retriever = android.media.MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, Uri.parse(fileUri))
+                    retriever.frameAtTime
+                } finally {
+                    retriever.release()
+                }
+            }.getOrNull()
+        }
+    }
+    Box(modifier, contentAlignment = Alignment.Center) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(iconSize))
+        }
+    }
+}
+
 // MARK: - v2/Take Thumbnail · Default / Selected / Chosen
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -510,7 +555,7 @@ private fun TkTakeThumbnail(take: Take, isSelected: Boolean, onTap: () -> Unit, 
                     .background(Color(0xFF222228)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(28.dp))
+                TkVideoThumbnail(fileUri = take.fileUri, modifier = Modifier.matchParentSize())
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -577,7 +622,7 @@ private fun TkCompareView(
                                 .border(2.5.dp, if (i == listen) c.accent else Color.Transparent, RoundedCornerShape(16.dp)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.45f), modifier = Modifier.size(48.dp))
+                            TkVideoThumbnail(fileUri = t.fileUri, modifier = Modifier.matchParentSize(), iconSize = 48.dp)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("Take ${t.number}", style = OT.type.headline.copy(fontSize = OT.type.headline.fontSize * 1.1f), color = cam.label)
@@ -681,8 +726,8 @@ fun TapeCheckScreen(auditionId: String) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val c = OT.colors
-    val findings = remember(store.takes) {
-        store.takes.flatMap { take ->
+    val findings = remember(store.takes, auditionId) {
+        store.takes.filter { it.auditionId == auditionId }.flatMap { take ->
             take.notes.map { note ->
                 TapeFinding(
                     category = "Take ${take.number}",
@@ -710,7 +755,9 @@ fun TapeCheckScreen(auditionId: String) {
         ) {
             val audition = store.audition(auditionId)
             val requiredScenes = audition?.scenes?.size ?: 1
-            val circledTakesCount = audition?.scenes?.count { s -> store.takes.any { it.sceneId == s.id && it.isCircled } } ?: store.takes.count { it.isCircled }
+            val auditionTakes = store.takes.filter { it.auditionId == auditionId }
+            val circledTakesCount = audition?.scenes?.indices?.count { i -> auditionTakes.any { it.sceneIndex == i && it.isCircled } }
+                ?: auditionTakes.count { it.isCircled }
             val hasHeadshot = if (store.headshotsTaken > 0) 1 else 0
             val hasSlate = if (store.slate.name.isNotBlank()) 1 else 0
             val totalChecks = maxOf(1, 2 + requiredScenes)

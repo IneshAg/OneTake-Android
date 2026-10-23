@@ -1,5 +1,6 @@
 package com.onetake.app.ui.practice
 
+import android.app.Application
 import com.onetake.app.AppStore
 import com.onetake.app.data.ScriptParser
 import com.onetake.app.models.PracticePiece
@@ -28,7 +29,7 @@ class PracticeIngestionTest {
             scene = scene,
         )
 
-        val store = AppStore()
+        val store = AppStore(Application())
         store.addPractice(piece)
 
         assertEquals(1, store.practice.size)
@@ -40,7 +41,7 @@ class PracticeIngestionTest {
 
     @Test
     fun testStoreHandlesMultiplePracticePieces() {
-        val store = AppStore()
+        val store = AppStore(Application())
         val p1 = PracticePiece(title = "Scene 1", detail = "Lead", linesLearned = 0, linesTotal = 5, character = "Alex")
         val p2 = PracticePiece(title = "Scene 2", detail = "Supporting", linesLearned = 0, linesTotal = 10, character = "Jordan")
 

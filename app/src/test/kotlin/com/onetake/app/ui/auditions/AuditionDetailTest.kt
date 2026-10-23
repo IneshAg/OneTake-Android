@@ -1,5 +1,6 @@
 package com.onetake.app.ui.auditions
 
+import android.app.Application
 import com.onetake.app.AppStore
 import com.onetake.app.data.ScriptParser
 import com.onetake.app.models.Audition
@@ -69,7 +70,7 @@ class AuditionDetailTest {
             status = AuditionStatus.Due,
         )
 
-        val store = AppStore()
+        val store = AppStore(Application())
         store.add(audition)
 
         val retrieved = store.audition("aud-parsed")
@@ -101,7 +102,7 @@ class AuditionDetailTest {
             status = AuditionStatus.Due,
         )
 
-        val store = AppStore()
+        val store = AppStore(Application())
         store.add(audition)
 
         assertEquals(PieceKind.Headshot, store.audition("aud-flow-test")?.nextPiece?.kind)

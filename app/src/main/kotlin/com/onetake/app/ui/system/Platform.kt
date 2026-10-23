@@ -48,6 +48,35 @@ fun share(context: Context, text: String) {
     context.startActivity(Intent.createChooser(send, null))
 }
 
+/** A real file:// URI exposed through the app's FileProvider — API 24+ refuses to hand raw
+ *  file:// URIs to other apps, so anything handed off to the share sheet or a viewer has to go
+ *  through this. Mirrors iOS's `ShareSheet(items: [url])`. */
+fun fileProviderUri(context: Context, file: File): android.net.Uri =
+    androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+
+/** Hands a real exported file to the Android share sheet — another app, Drive, Bluetooth, mail,
+ *  whatever's installed. There's no casting-site upload API this app can call directly. */
+fun shareFile(context: Context, file: File, subject: String) {
+    val uri = fileProviderUri(context, file)
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "video/mp4"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        putExtra(Intent.EXTRA_SUBJECT, subject)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(send, null))
+}
+
+/** Opens a real exported file in the device's default video player. */
+fun viewFile(context: Context, file: File) {
+    val uri = fileProviderUri(context, file)
+    val view = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "video/mp4")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(view) }
+}
+
 /** "On your clipboard" card in Add audition — returns text only if it looks like a casting notice. */
 fun clipboardCastingNotice(context: Context): String? {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return null

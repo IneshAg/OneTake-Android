@@ -1,5 +1,6 @@
 package com.onetake.app.ui.takes
 
+import android.app.Application
 import com.onetake.app.AppStore
 import com.onetake.app.models.Take
 import org.junit.Assert.assertEquals
@@ -11,7 +12,7 @@ import java.time.LocalDateTime
 class TakesReviewTest {
     @Test
     fun testCircleTakeTogglesCircledStatusExclusively() {
-        val store = AppStore()
+        val store = AppStore(Application())
         val take1 = Take(id = "tk-1", number = 1, durationSeconds = 65, recordedAt = LocalDateTime.now(), isCircled = true, notes = emptyList())
         val take2 = Take(id = "tk-2", number = 2, durationSeconds = 72, recordedAt = LocalDateTime.now(), isCircled = false, notes = emptyList())
         store.takes = listOf(take1, take2)
@@ -31,7 +32,7 @@ class TakesReviewTest {
 
     @Test
     fun testAddTakeAppendsToStore() {
-        val store = AppStore()
+        val store = AppStore(Application())
         val initialCount = store.takes.size
         val newTake = Take(number = 99, durationSeconds = 45, recordedAt = LocalDateTime.now(), isCircled = false, notes = emptyList(), fileUri = "content://media/take-99.mp4")
         store.addTake(newTake)

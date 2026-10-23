@@ -381,15 +381,19 @@ fun PrivacyScreen() {
     var readerBytes by remember { mutableStateOf(0L) }
 
     fun refreshSizes() {
-        val takesFiles = context.cacheDir.listFiles { f -> f.name.startsWith("take-") } ?: emptyArray()
-        takesBytes = takesFiles.sumOf { it.length() }
+        // Real recordings now live under filesDir in audition-*/practice-* subfolders (moved out
+        // of cacheDir once they're kept — see MediaStore.persist), plus the exports folder.
+        val mediaDirs = context.filesDir.listFiles { f ->
+            f.isDirectory && (f.name.startsWith("audition-") || f.name.startsWith("practice-") || f.name == "exports")
+        } ?: emptyArray()
+        takesBytes = mediaDirs.sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
 
         val headshotsDir = File(context.filesDir, "headshots")
         val headshotFiles = headshotsDir.listFiles() ?: emptyArray()
         headshotsBytes = headshotFiles.sumOf { it.length() }
 
-        val readerDir = File(context.filesDir, "reader")
-        val readerFiles = readerDir.listFiles() ?: emptyArray()
+        // Reader lines are flat files directly under filesDir (ReaderFiles.file), not a subfolder.
+        val readerFiles = context.filesDir.listFiles { f -> f.isFile && f.name.startsWith("reader-line-") } ?: emptyArray()
         readerBytes = readerFiles.sumOf { it.length() }
 
         scriptsBytes = (store.auditions.sumOf { it.scenes.sumOf { s -> s.lines.sumOf { l -> l.text.length } } } * 2L)
@@ -468,11 +472,18 @@ fun PrivacyScreen() {
             confirmButton = {
                 TextButton(onClick = {
                     runCatching {
-                        context.cacheDir.listFiles { f -> f.name.startsWith("take-") }?.forEach { it.delete() }
+                        context.filesDir.listFiles { f ->
+                            f.isDirectory && (f.name.startsWith("audition-") || f.name.startsWith("practice-") || f.name == "exports")
+                        }?.forEach { it.deleteRecursively() }
                         File(context.filesDir, "headshots").listFiles()?.forEach { it.delete() }
-                        File(context.filesDir, "reader").listFiles()?.forEach { it.delete() }
+                        context.filesDir.listFiles { f -> f.isFile && f.name.startsWith("reader-line-") }?.forEach { it.delete() }
+                        context.cacheDir.listFiles { f -> f.name.startsWith("take-") }?.forEach { it.delete() }
                     }
                     store.takes = emptyList()
+                    store.practice = store.practice.map { it.copy(takesRecorded = 0) }
+                    store.auditions.forEach { a ->
+                        store.update(a.id) { it.copy(slateVideoUri = null, fullLengthVideoUri = null, exportedFileUri = null) }
+                    }
                     store.clearHeadshots()
                     refreshSizes()
                     confirmDelete = false

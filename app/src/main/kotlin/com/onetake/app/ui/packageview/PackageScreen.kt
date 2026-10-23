@@ -1,5 +1,6 @@
 package com.onetake.app.ui.packageview
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,11 +31,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Upload
-import androidx.compose.material.icons.filled.WifiOff
-import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Smartphone
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -55,14 +55,12 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,13 +70,13 @@ import com.onetake.app.AppTab
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
+import com.onetake.app.data.MediaExporter
 import com.onetake.app.models.Audition
 import com.onetake.app.models.Destination
 import com.onetake.app.models.PieceKind
 import com.onetake.app.models.Take
 import com.onetake.app.models.formatDuration
 import com.onetake.app.models.otDue
-import com.onetake.app.models.otTime
 import com.onetake.app.models.otWeekdayCaps
 import androidx.compose.material3.HorizontalDivider
 import com.onetake.app.ui.components.CanvasBox
@@ -91,45 +89,44 @@ import com.onetake.app.ui.components.OTCard
 import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.PlainButton
 import com.onetake.app.ui.components.PrimaryButton
-import com.onetake.app.ui.components.ScheduleRow
 import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.components.SectionLabel
-import com.onetake.app.ui.components.ToggleRow
 import com.onetake.app.ui.system.rememberHaptics
-import com.onetake.app.ui.system.share
+import com.onetake.app.ui.system.shareFile
+import com.onetake.app.ui.system.viewFile
 import com.onetake.app.ui.theme.OT
+import java.io.File
 import java.time.LocalDateTime
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-// MARK: - 20 Package · Ready to send (+ 20.1 destination, 20.3 sending, 20.4 failed, 21 sent)
+// MARK: - 20 Package · Ready to send (+ 20.1 destination, 20.3 exporting, 20.4 failed, 21 sent)
+//
+// There's no casting-site API this app can submit a tape to directly, so "sending" is real:
+// MediaExporter actually composes the slate, full-length and circled takes into one .mp4 on disk,
+// and handing it off happens through the real Android share sheet (another app, Drive, Bluetooth,
+// mail — whatever's installed) — not a simulated upload that claims a destination confirmed
+// receipt it never saw.
 
 private enum class PkgPhase { Review, Sending, Failed, Sent }
 
-private fun buildPackageFileName(audition: Audition, slateName: String): String {
-    val cleanSlate = slateName.ifBlank { "ACTOR" }.replace(Regex("[^a-zA-Z0-9]"), "_").uppercase()
-    val cleanRole = audition.role.ifBlank { "ROLE" }.replace(Regex("[^a-zA-Z0-9]"), "_").uppercase()
-    val cleanProject = audition.project.ifBlank { "PROJECT" }.replace(Regex("[^a-zA-Z0-9]"), "_").uppercase()
-    return "${cleanSlate}_${cleanRole}_${cleanProject}.mp4"
+private fun fileUriToFile(uriString: String?): File? =
+    uriString?.let { runCatching { File(Uri.parse(it).path ?: return null) }.getOrNull() }
+
+private fun exportedSizeLabel(a: Audition): String {
+    val file = fileUriToFile(a.exportedFileUri)
+    if (file == null || !file.exists()) return "Not exported yet"
+    return "${(file.length() / 1_048_576L).coerceAtLeast(1)} MB"
 }
 
-private fun calculatePackageDuration(audition: Audition, takes: List<Take>): Int {
-    return audition.pieces.sumOf { piece ->
-        when (piece.kind) {
-            PieceKind.Headshot -> 3
-            PieceKind.Slate, PieceKind.FullLength -> 5
-            PieceKind.Scene -> {
-                val take = takes.firstOrNull { it.sceneId == piece.id && it.isCircled } ?: takes.firstOrNull { it.isCircled }
-                take?.durationSeconds ?: 60
-            }
-        }
-    }
-}
-
-private fun calculatePackageMb(audition: Audition, takes: List<Take>): Int {
-    val durationSeconds = calculatePackageDuration(audition, takes)
-    return (durationSeconds * 1.4f).toInt().coerceIn(12, 450)
+/** Sum of the real circled takes' recorded durations — slate/full-length don't carry a stored
+ *  duration of their own, so (mirroring iOS) this only totals what's actually measurable. */
+private fun totalDurationLabel(a: Audition, takes: List<Take>): String {
+    val circled = takes.filter { it.auditionId == a.id && it.isCircled }
+    if (circled.isEmpty()) return "—"
+    return formatDuration(circled.sumOf { it.durationSeconds })
 }
 
 @Composable
@@ -137,12 +134,13 @@ fun PackageScreen(auditionId: String) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val haptics = rememberHaptics()
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var phase by remember { mutableStateOf(PkgPhase.Review) }
     var progress by remember { mutableFloatStateOf(0f) }
-    var useMobileData by remember { mutableStateOf(true) }
-    var sendJob by remember { mutableStateOf<Job?>(null) }
+    var exportError by remember { mutableStateOf<String?>(null) }
+    var exportJob by remember { mutableStateOf<Job?>(null) }
 
     val a = store.audition(auditionId)
     if (a == null) {
@@ -150,26 +148,35 @@ fun PackageScreen(auditionId: String) {
         return
     }
 
-    /** No hold-to-send: one tap sends. "Delivered" only appears once the destination confirms. */
+    /** Real export, not a simulated upload: MediaExporter actually composes the recorded files,
+     *  and only once that succeeds does the share sheet open so the real file can go somewhere. */
     fun send() {
-        sendJob?.cancel()
+        val takesForAudition = store.takes.filter { it.auditionId == a.id }
+        val slate = store.slate
         phase = PkgPhase.Sending
         progress = 0f
-        sendJob = scope.launch {
-            while (progress < 1f) {
-                delay(60)
-                if (phase != PkgPhase.Sending) return@launch
-                progress = minOf(1f, progress + 0.02f)
+        exportError = null
+        exportJob = scope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    MediaExporter.export(context, a, takesForAudition, slate) { p ->
+                        scope.launch { progress = p }
+                    }
+                }
+                store.setExportedFile(a.id, Uri.fromFile(file).toString())
+                haptics.success()
+                shareFile(context, file, "OneTake self-tape — ${a.project} (${a.role})")
+                store.markSent(a.id)
+                phase = PkgPhase.Sent
+            } catch (e: Exception) {
+                exportError = e.message ?: "Something went wrong composing your tape."
+                phase = PkgPhase.Failed
             }
-            // Destination confirmed receipt → only now is it "Delivered".
-            store.markSent(auditionId)
-            haptics.success()
-            phase = PkgPhase.Sent
         }
     }
 
-    fun cancelSend() {
-        sendJob?.cancel()
+    fun cancelExport() {
+        exportJob?.cancel()
         phase = PkgPhase.Review
     }
 
@@ -177,7 +184,7 @@ fun PackageScreen(auditionId: String) {
 
     BackHandler(enabled = phase != PkgPhase.Review) {
         when (phase) {
-            PkgPhase.Sending, PkgPhase.Failed -> cancelSend()
+            PkgPhase.Sending, PkgPhase.Failed -> cancelExport()
             PkgPhase.Sent -> done()
             PkgPhase.Review -> Unit
         }
@@ -186,20 +193,8 @@ fun PackageScreen(auditionId: String) {
     Box(Modifier.fillMaxSize().background(OT.colors.bgCanvas)) {
         when (phase) {
             PkgPhase.Review -> PkgReview(a, onSend = { send() })
-            PkgPhase.Sending -> PkgSendProgress(
-                audition = a,
-                progress = progress,
-                onCancel = { cancelSend() },
-                onDrop = { sendJob?.cancel(); phase = PkgPhase.Failed },
-            )
-            PkgPhase.Failed -> PkgSendFailed(
-                audition = a,
-                progress = progress,
-                useMobileData = useMobileData,
-                onMobileData = { useMobileData = it },
-                onBack = { cancelSend() },
-                onRetry = { send() },
-            )
+            PkgPhase.Sending -> PkgSendProgress(progress = progress, onCancel = { cancelExport() })
+            PkgPhase.Failed -> PkgSendFailed(message = exportError, onBack = { cancelExport() }, onRetry = { send() })
             PkgPhase.Sent -> PkgSent(a, onDone = done)
         }
     }
@@ -216,14 +211,8 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
     val c = OT.colors
     var showDestination by remember { mutableStateOf(false) }
     val cardShape = remember { RoundedCornerShape(24.dp) }
-    val pkgFileName = remember(a, store.slate.name) { buildPackageFileName(a, store.slate.name) }
-
-    fun handleSend() {
-        if (a.destination == Destination.EmailOrLink) {
-            share(context, "OneTake self-tape — ${a.project} (${a.role})")
-        }
-        onSend()
-    }
+    val pkgFileName = remember(a, store.slate.name) { MediaExporter.deliverableFileName(a, store.slate) }
+    val auditionTakes = store.takes.filter { it.auditionId == a.id }
 
     Column(Modifier.fillMaxSize()) {
         PkgTopBar(icon = Icons.AutoMirrored.Filled.ArrowBack, label = "Back", onClick = { nav.back() })
@@ -240,9 +229,8 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
             Text("Due ${a.due.otDue} · ${a.readyCount} of ${a.totalCount} ready", style = OT.type.callout, color = c.labelSecondary)
             Spacer(Modifier.height(20.dp))
 
-            val durationSecs = calculatePackageDuration(a, store.takes)
-            val durationText = formatDuration(durationSecs)
-            val pkgMb = calculatePackageMb(a, store.takes)
+            val durationText = totalDurationLabel(a, auditionTakes)
+            val sizeLabel = exportedSizeLabel(a)
 
             // Monolithic Assembled Tape Summary Card
             Column(
@@ -255,7 +243,7 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "DELIVERY PACKAGE",
+                        "ON THE TAPE, IN ORDER",
                         style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp),
                         color = OT.colors.accent,
                         modifier = Modifier.weight(1f),
@@ -266,7 +254,7 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
                 Text(a.project, style = OT.type.title, color = Color.White)
                 Text("Role: ${a.role}", style = OT.type.callout, color = c.labelSecondary)
                 Spacer(Modifier.height(14.dp))
-                PkgTapeStrip(a, store.takes)
+                PkgTapeStrip(a, auditionTakes)
             }
 
             Spacer(Modifier.height(20.dp))
@@ -281,10 +269,21 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
                     .background(OT.colors.surfaceCard),
             ) {
                 PkgRow(icon = Icons.Outlined.Movie, title = pkgFileName, detail = "Named the way casting asked · one file", titleWeight = FontWeight.SemiBold, titleSmall = true, showDivider = true)
-                PkgRow(icon = Icons.AutoMirrored.Filled.Send, title = a.destination.label, value = "$pkgMb MB · 1080p", onClick = { showDestination = true }, showDivider = true)
-                PkgRow(icon = Icons.Filled.CheckCircle, iconTint = c.success, title = "Tape check", value = "Passed", onClick = { nav.push(Route.TapeCheck(a.id)) }, showDivider = true)
-                PkgRow(icon = Icons.Filled.GraphicEq, iconTint = c.success, title = "Audio", value = "Both voices clear", showDivider = true)
-                PkgRow(icon = Icons.Outlined.PlayArrow, title = "Preview the whole tape", detail = "Exactly what casting gets · $durationText", showDivider = false)
+                PkgRow(icon = Icons.AutoMirrored.Filled.Send, title = a.destination.label, value = sizeLabel, onClick = { showDestination = true }, showDivider = true)
+                PkgRow(icon = Icons.Filled.CheckCircle, iconTint = c.success, title = "Tape check", value = "Review", onClick = { nav.push(Route.TapeCheck(a.id)) }, showDivider = true)
+                PkgRow(icon = Icons.Filled.GraphicEq, iconTint = c.success, title = "Audio", value = "From your takes", showDivider = true)
+                val exportedFile = fileUriToFile(a.exportedFileUri)
+                if (exportedFile != null && exportedFile.exists()) {
+                    PkgRow(
+                        icon = Icons.Outlined.PlayArrow,
+                        title = "Preview the whole tape",
+                        detail = "What's actually in the exported file",
+                        onClick = { viewFile(context, exportedFile) },
+                        showDivider = false,
+                    )
+                } else {
+                    PkgRow(icon = Icons.Outlined.PlayArrow, title = "Preview the whole tape", detail = "Available once you've exported it", showDivider = false)
+                }
             }
         }
         Column(
@@ -297,7 +296,7 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
         ) {
             PrimaryButton(
                 "Send to ${a.destination.label}",
-                onClick = { handleSend() },
+                onClick = onSend,
                 icon = Icons.AutoMirrored.Filled.Send,
                 iconTrailing = true,
             )
@@ -317,10 +316,7 @@ private fun PkgReview(a: Audition, onSend: () -> Unit) {
                 selected = a.destination,
                 onSelect = { d ->
                     store.setDestination(a.id, d)
-                    scope.launch { sheetState.hide() }.invokeOnCompletion {
-                        showDestination = false
-                        if (d == Destination.EmailOrLink) share(context, "OneTake tape — ${a.project}")
-                    }
+                    scope.launch { sheetState.hide() }.invokeOnCompletion { showDestination = false }
                 },
             )
         }
@@ -392,49 +388,40 @@ private fun PkgRow(
 private fun PkgTapeStrip(a: Audition, takes: List<Take>) {
     val c = OT.colors
     val soft = c.accent.copy(alpha = 0.4f)
-    val duration = calculatePackageDuration(a, takes)
-    val sceneCount = a.scenes.size
-    val scenePart = if (sceneCount == 1) "1 scene" else "$sceneCount scenes"
-    val parts = buildList {
-        if (a.pieces.any { it.kind == PieceKind.Headshot }) add("headshot")
-        if (a.pieces.any { it.kind == PieceKind.Slate }) add("slate")
-        add(scenePart)
+
+    data class Segment(val title: String, val detail: String, val color: Color, val weight: Float)
+
+    val segments = buildList {
+        if (a.pieces.any { it.kind == PieceKind.Headshot }) {
+            val done = a.pieces.firstOrNull { it.kind == PieceKind.Headshot }?.isDone == true
+            add(Segment("Headshot", if (done) "Captured" else "Not yet", soft, 0.1f))
+        }
+        if (a.pieces.any { it.kind == PieceKind.Slate }) {
+            add(Segment("Slate", if (a.slateVideoUri != null) "Recorded" else "Not yet", soft, 0.12f))
+        }
+        if (a.pieces.any { it.kind == PieceKind.FullLength }) {
+            add(Segment("Full length", if (a.fullLengthVideoUri != null) "Recorded" else "Not yet", soft, 0.12f))
+        }
+        a.scenes.forEachIndexed { i, scene ->
+            val take = takes.firstOrNull { it.sceneIndex == i && it.isCircled } ?: takes.firstOrNull { it.sceneIndex == i }
+            val detail = take?.let { "Take ${it.number} · ${formatDuration(it.durationSeconds)}" } ?: "Not shot yet"
+            add(Segment(scene.title, detail, c.accent, 0.45f))
+        }
     }
 
     Column(
         Modifier.fillMaxWidth().clearAndSetSemantics {
-            contentDescription = "Tape: ${parts.joinToString(", ")}. ${formatDuration(duration)}."
+            contentDescription = "Tape order: " + segments.joinToString(", ") { "${it.title}, ${it.detail}" }
         },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            a.pieces.forEach { piece ->
-                val weight = when (piece.kind) {
-                    PieceKind.Headshot -> 0.1f
-                    PieceKind.Slate, PieceKind.FullLength -> 0.12f
-                    PieceKind.Scene -> 0.45f
-                }
-                val color = when (piece.kind) {
-                    PieceKind.Headshot, PieceKind.Slate, PieceKind.FullLength -> soft
-                    PieceKind.Scene -> c.accent
-                }
-                Box(Modifier.weight(weight).fillMaxSize().clip(RoundedCornerShape(6.dp)).background(color))
+            segments.forEach { seg ->
+                Box(Modifier.weight(seg.weight).fillMaxSize().clip(RoundedCornerShape(6.dp)).background(seg.color))
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            a.pieces.forEach { piece ->
-                val (title, detail, color) = when (piece.kind) {
-                    PieceKind.Headshot -> Triple("Headshot", "Front", soft)
-                    PieceKind.Slate -> Triple("Slate", "0:05", soft)
-                    PieceKind.FullLength -> Triple("Full length", "0:05", soft)
-                    PieceKind.Scene -> {
-                        val take = takes.firstOrNull { it.sceneId == piece.id && it.isCircled } ?: takes.firstOrNull { it.isCircled }
-                        val d = if (take != null) "Take ${take.number} · ${formatDuration(take.durationSeconds)}" else "Pending"
-                        Triple(piece.title, d, c.accent)
-                    }
-                }
-                PkgLegend(title, detail, color, Modifier.weight(1f))
-            }
+            segments.forEach { seg -> PkgLegend(seg.title, seg.detail, seg.color, Modifier.weight(1f)) }
         }
     }
 }
@@ -471,7 +458,7 @@ private fun PkgDestinationSheet(selected: Destination, onSelect: (Destination) -
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "We match the format, size and file name each site accepts.",
+            "We match the file name each site asks for. Every destination hands off through your share sheet — there's no direct upload API.",
             style = OT.type.callout,
             color = c.labelSecondary,
             textAlign = TextAlign.Center,
@@ -504,19 +491,14 @@ private fun PkgDestinationSheet(selected: Destination, onSelect: (Destination) -
     }
 }
 
-// MARK: - 20.3 Sending
+// MARK: - 20.3 Exporting (real MediaExporter progress — no simulated upload)
 
 @Composable
-private fun PkgSendProgress(audition: Audition, progress: Float, onCancel: () -> Unit, onDrop: () -> Unit) {
-    val store = LocalAppStore.current
+private fun PkgSendProgress(progress: Float, onCancel: () -> Unit) {
     val c = OT.colors
-    val dest = audition.destination.label
     val pct = (progress * 100).toInt()
-    val totalMb = calculatePackageMb(audition, store.takes)
-    val mb = (progress * totalMb).toInt()
-    val secondsLeft = maxOf(1, ((1 - progress) * 90).toInt())
     Column(Modifier.fillMaxSize()) {
-        PkgTopBar(icon = Icons.Filled.ExpandMore, label = "Cancel sending", onClick = onCancel)
+        PkgTopBar(icon = Icons.Filled.ExpandMore, label = "Cancel", onClick = onCancel)
         Column(
             Modifier
                 .weight(1f)
@@ -525,49 +507,35 @@ private fun PkgSendProgress(audition: Audition, progress: Float, onCancel: () ->
                 .padding(horizontal = OT.dims.gutter)
                 .padding(bottom = 24.dp),
         ) {
-            SectionLabel("Sending to $dest", Modifier.padding(top = 4.dp))
+            SectionLabel("Packaging your tape", Modifier.padding(top = 4.dp))
             Row(
                 verticalAlignment = Alignment.Bottom,
                 modifier = Modifier.semantics(mergeDescendants = true) {},
             ) {
-                Text(
-                    "$pct",
-                    style = OT.type.number.copy(fontSize = 72.sp, lineHeight = 80.sp),
-                    color = c.labelPrimary,
-                )
+                Text("$pct", style = OT.type.number.copy(fontSize = 72.sp, lineHeight = 80.sp), color = c.labelPrimary)
                 Text("%", style = OT.type.title, color = c.labelPrimary, modifier = Modifier.padding(start = 2.dp, bottom = 10.dp))
             }
-            Text("about $secondsLeft s left · $mb of $totalMb MB", style = OT.type.footnote, color = c.labelTertiary)
+            Text("Joining your slate, full length and circled takes into one file.", style = OT.type.footnote, color = c.labelTertiary)
             Spacer(Modifier.height(8.dp))
-            // Progress bar
             Box(
                 Modifier
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(CircleShape)
                     .background(c.fillQuiet)
-                    .semantics { contentDescription = "$pct percent sent" },
+                    .semantics { contentDescription = "$pct percent composed" },
             ) {
                 Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(6.dp).clip(CircleShape).background(c.accent))
             }
             Spacer(Modifier.height(24.dp))
             SectionLabel("Steps")
             Spacer(Modifier.height(4.dp))
-            val sceneCount = audition.scenes.size
-            val scenePart = if (sceneCount == 1) "1 scene" else "$sceneCount scenes"
-            val parts = buildList {
-                if (audition.pieces.any { it.kind == PieceKind.Headshot }) add("headshot")
-                if (audition.pieces.any { it.kind == PieceKind.Slate }) add("slate")
-                add(scenePart)
-            }
-            PkgStep("Joined ${parts.joinToString(", ")}", PkgStepState.Done)
-            PkgStep("Exported 1080p · $totalMb MB", PkgStepState.Done)
-            // Tapping "Uploading" simulates a dropped connection (same dev hook as iOS).
-            PkgStep("Uploading", PkgStepState.Active, detail = "$mb of $totalMb MB", onClick = onDrop)
-            PkgStep("Delivered — once $dest confirms", PkgStepState.Todo, divider = false)
+            PkgStep("Found your recorded pieces", PkgStepState.Done)
+            PkgStep("Composing one file", if (progress < 1f) PkgStepState.Active else PkgStepState.Done, detail = "$pct%")
+            PkgStep("Done — opens your share sheet", if (progress >= 1f) PkgStepState.Done else PkgStepState.Todo, divider = false)
             Spacer(Modifier.height(12.dp))
             Text(
-                "You can lock your phone. It only says Delivered once $dest confirms it has the file.",
+                "Exported locally — nothing leaves this phone until you choose where to send it next.",
                 style = OT.type.footnote,
                 color = c.labelTertiary,
             )
@@ -578,7 +546,7 @@ private fun PkgSendProgress(audition: Audition, progress: Float, onCancel: () ->
                 .navigationBarsPadding()
                 .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
         ) {
-            SecondaryButton("Cancel sending", onClick = onCancel)
+            SecondaryButton("Cancel", onClick = onCancel)
         }
     }
 }
@@ -623,17 +591,10 @@ private fun PkgStep(
     }
 }
 
-// MARK: - 20.4 Not sent yet
+// MARK: - 20.4 Couldn't export
 
 @Composable
-private fun PkgSendFailed(
-    audition: Audition,
-    progress: Float,
-    useMobileData: Boolean,
-    onMobileData: (Boolean) -> Unit,
-    onBack: () -> Unit,
-    onRetry: () -> Unit,
-) {
+private fun PkgSendFailed(message: String?, onBack: () -> Unit, onRetry: () -> Unit) {
     val c = OT.colors
     Column(Modifier.fillMaxSize()) {
         PkgTopBar(icon = Icons.AutoMirrored.Filled.ArrowBack, label = "Back", onClick = onBack)
@@ -645,43 +606,14 @@ private fun PkgSendFailed(
                 .padding(horizontal = OT.dims.gutter)
                 .padding(bottom = 24.dp),
         ) {
-            Icon(Icons.Filled.WifiOff, null, tint = c.warning, modifier = Modifier.padding(top = 4.dp).size(36.dp))
+            Icon(Icons.Filled.Warning, null, tint = c.warning, modifier = Modifier.padding(top = 4.dp).size(36.dp))
             Spacer(Modifier.height(12.dp))
-            Text("Not sent yet", style = OT.type.largeTitle, color = c.labelPrimary, modifier = Modifier.semantics { heading() })
+            Text("Couldn't package it", style = OT.type.largeTitle, color = c.labelPrimary, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(8.dp))
             Text(
-                "You lost connection. Your tape is safe on this phone and sends on its own when you're back online.",
+                message ?: "Something went wrong composing your tape. Your takes are untouched on this phone — this only affects the combined file.",
                 style = OT.type.callout,
                 color = c.labelSecondary,
-            )
-            Spacer(Modifier.height(16.dp))
-            ScheduleRow(
-                eyebrow = audition.due.otWeekdayCaps,
-                value = "${audition.hoursLeft}h",
-                title = "Due ${audition.due.otDue}",
-                detail = "Plenty of time — it'll retry automatically",
-                eyebrowColor = c.due,
-                valueColor = c.due,
-                showChevron = false,
-            )
-            OTDivider()
-            val store = LocalAppStore.current
-            val fileName = buildPackageFileName(audition, store.slate.name)
-            val totalMb = calculatePackageMb(audition, store.takes)
-            ScheduleRow(
-                eyebrow = "FILE",
-                value = "",
-                title = fileName,
-                detail = "$totalMb MB · waiting for a connection",
-                showChevron = false,
-            )
-            OTDivider()
-            ToggleRow(
-                title = "Use mobile data",
-                detail = "About $totalMb MB",
-                checked = useMobileData,
-                onCheckedChange = onMobileData,
-                showDivider = false,
             )
         }
         Column(
@@ -690,30 +622,27 @@ private fun PkgSendFailed(
                 .navigationBarsPadding()
                 .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
         ) {
-            PrimaryButton("Try again now", onClick = onRetry)
+            PrimaryButton("Try again", onClick = onRetry)
         }
     }
 }
 
-// MARK: - 21 Sent
+// MARK: - 21 Sent — handed off through the real share sheet, not a fabricated server confirmation
 
 @Composable
 private fun PkgSent(a: Audition, onDone: () -> Unit) {
     val c = OT.colors
     val haptics = rememberHaptics()
-    val clipboard = LocalClipboardManager.current
-    val confirmedAt = remember { LocalDateTime.now() }
-    val link = "OneTake tape — ${a.project}"
-    LaunchedEffect(Unit) {
-        haptics.success()
-        clipboard.setText(AnnotatedString(link))
-    }
+    val sharedAt = remember { LocalDateTime.now() }
+    LaunchedEffect(Unit) { haptics.success() }
     val h = a.hoursLeft
     val earlyText = when {
         h > 1 -> "$h hours early."
         h == 1 -> "1 hour early."
         else -> "Right on time."
     }
+    val sceneCount = a.scenes.size
+    val scenePart = if (sceneCount == 1) "1 scene" else "$sceneCount scenes"
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Column(
@@ -730,33 +659,24 @@ private fun PkgSent(a: Audition, onDone: () -> Unit) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "DELIVERED · CONFIRMED ${confirmedAt.otWeekdayCaps} ${confirmedAt.otTime.uppercase()}",
+                        "SHARED · ${sharedAt.otWeekdayCaps} ${sharedAt.let { "%02d:%02d".format(it.hour, it.minute) }}",
                         style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp),
                         color = c.success,
                         modifier = Modifier.weight(1f),
                     )
-                    Icon(Icons.Filled.CheckCircle, "Delivered", tint = c.success, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Filled.CheckCircle, "Shared", tint = c.success, modifier = Modifier.size(18.dp))
                 }
                 Spacer(Modifier.height(6.dp))
                 val store = LocalAppStore.current
-                val fileName = buildPackageFileName(a, store.slate.name)
+                val fileName = MediaExporter.deliverableFileName(a, store.slate)
                 Text(fileName, style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
                 Spacer(Modifier.height(6.dp))
-                val durationSecs = calculatePackageDuration(a, store.takes)
-                val durationText = formatDuration(durationSecs)
-                val sceneCount = a.scenes.size
-                val scenePart = if (sceneCount == 1) "1 scene" else "$sceneCount scenes"
-                val parts = buildList {
-                    if (a.pieces.any { it.kind == PieceKind.Headshot }) add("headshot")
-                    if (a.pieces.any { it.kind == PieceKind.Slate }) add("slate")
-                    add(scenePart)
-                }
-                Text("$durationText · ${parts.joinToString(" · ")}", style = OT.type.footnote, color = c.labelSecondary)
+                Text("Headshot · slate · $scenePart", style = OT.type.footnote, color = c.labelSecondary)
             }
 
             Spacer(Modifier.height(40.dp))
             Text(
-                "It’s with casting.",
+                "It’s on its way.",
                 style = OT.type.largeTitle.copy(fontSize = 38.sp, lineHeight = 44.sp),
                 color = c.labelPrimary,
                 modifier = Modifier.semantics { heading() },
@@ -767,9 +687,9 @@ private fun PkgSent(a: Audition, onDone: () -> Unit) {
                 Text("Break a leg.", style = OT.type.headline, color = c.labelSecondary, modifier = Modifier.padding(bottom = 2.dp))
             }
             Spacer(Modifier.height(16.dp))
-            PkgSentNote(Icons.Outlined.Link, "Private link copied · works for 30 days")
+            PkgSentNote(Icons.Outlined.Share, "Handed off through your share sheet to ${a.destination.label}")
             Spacer(Modifier.height(6.dp))
-            PkgSentNote(Icons.Outlined.Smartphone, "All your takes stay here if they ask for another")
+            PkgSentNote(Icons.Outlined.Movie, "All your takes stay here if they ask for another")
 
             Spacer(Modifier.height(28.dp))
             PkgHeadshotFan(Modifier.fillMaxWidth().height(170.dp))
@@ -779,10 +699,8 @@ private fun PkgSent(a: Audition, onDone: () -> Unit) {
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             PrimaryButton("Done", onClick = onDone)
-            PlainButton("Copy link again", onClick = { clipboard.setText(AnnotatedString(link)); haptics.tick() })
         }
     }
 }

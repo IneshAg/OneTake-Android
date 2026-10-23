@@ -757,11 +757,15 @@ private fun rememberShootVoiceCommander(
     onCutTrigger: () -> Unit,
 ): ShootVoiceCommander {
     val context = LocalContext.current
+    // The commander outlives recompositions, so route through the latest lambdas — otherwise it
+    // keeps the first composition's closures, where `recording` was captured as false forever.
+    val latestRecord by rememberUpdatedState(onRecordTrigger)
+    val latestCut by rememberUpdatedState(onCutTrigger)
     val commander = remember {
         ShootVoiceCommander(
             context = context.applicationContext,
-            onRecordTrigger = onRecordTrigger,
-            onCutTrigger = onCutTrigger,
+            onRecordTrigger = { latestRecord() },
+            onCutTrigger = { latestCut() },
         )
     }
     DisposableEffect(commander) {

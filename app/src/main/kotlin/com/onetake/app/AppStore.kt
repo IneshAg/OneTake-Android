@@ -44,18 +44,30 @@ class AppStore(application: Application) : AndroidViewModel(application) {
      *  Cancelled in `onCleared()` below. */
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    var isOnboarded by mutableStateOf(false)
-        set(value) { field = value; persist() }
-    var slate by mutableStateOf(SlateInfo())
-        set(value) { field = value; persist() }
+    // Persisted properties keep their Compose state in an explicit MutableState so the setter can
+    // also schedule a save — a `by mutableStateOf` delegate can't have a custom setter.
+    private val isOnboardedState = mutableStateOf(false)
+    var isOnboarded: Boolean
+        get() = isOnboardedState.value
+        set(value) { isOnboardedState.value = value; persist() }
+    private val slateState = mutableStateOf(SlateInfo())
+    var slate: SlateInfo
+        get() = slateState.value
+        set(value) { slateState.value = value; persist() }
 
     // Data
-    var auditions by mutableStateOf(emptyList<Audition>())
-        set(value) { field = value; persist() }
-    var takes by mutableStateOf(emptyList<Take>())
-        set(value) { field = value; persist() }
-    var practice by mutableStateOf(emptyList<PracticePiece>())
-        set(value) { field = value; persist() }
+    private val auditionsState = mutableStateOf(emptyList<Audition>())
+    var auditions: List<Audition>
+        get() = auditionsState.value
+        set(value) { auditionsState.value = value; persist() }
+    private val takesState = mutableStateOf(emptyList<Take>())
+    var takes: List<Take>
+        get() = takesState.value
+        set(value) { takesState.value = value; persist() }
+    private val practiceState = mutableStateOf(emptyList<PracticePiece>())
+    var practice: List<PracticePiece>
+        get() = practiceState.value
+        set(value) { practiceState.value = value; persist() }
 
     // Settings (iOS @AppStorage equivalents) — not yet persisted to the state file; local-session only.
     var slateAtStart by mutableStateOf(true)
@@ -63,8 +75,10 @@ class AppStore(application: Application) : AndroidViewModel(application) {
     var readerVolume by mutableStateOf("Quieter")
     var exportSpec by mutableStateOf("1080p, landscape")
     var headshotsTaken by mutableIntStateOf(0)
-    var headshots by mutableStateOf<Map<String, String>>(emptyMap())
-        set(value) { field = value; persist() }
+    private val headshotsState = mutableStateOf<Map<String, String>>(emptyMap())
+    var headshots: Map<String, String>
+        get() = headshotsState.value
+        set(value) { headshotsState.value = value; persist() }
     var notifyMorning by mutableStateOf(true)
     var notifyTwoHours by mutableStateOf(true)
     var notifyCallbacks by mutableStateOf(true)

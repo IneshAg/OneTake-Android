@@ -39,6 +39,8 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Create GitHub Release
+        # Only main/master publish the release; a manual run on any other branch just builds.
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.0

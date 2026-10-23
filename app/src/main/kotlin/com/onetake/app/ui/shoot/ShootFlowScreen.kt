@@ -644,8 +644,10 @@ private class ShootVoiceCommander(
     private val handler = Handler(Looper.getMainLooper())
     private val relisten = Runnable { if (wanted) listen() }
 
-    private val recordRegex = Regex("""(?i)\b(record|recording|action|roll|rolling|start|slate)\b""")
-    private val stopRegex = Regex("""(?i)\b(stop|cut|finish|finished|done|end)\b""")
+    // A command only counts when it's the whole utterance — a word like "done" or "start" inside a
+    // line of dialogue (or the slate) must not stop or start a take.
+    private val recordRegex = Regex("""(?i)^\s*(record|action|roll|rolling)[\s.!]*$""")
+    private val stopRegex = Regex("""(?i)^\s*(cut|stop)[\s.!]*$""")
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
@@ -673,16 +675,15 @@ private class ShootVoiceCommander(
             handler.removeCallbacks(relisten)
             if (wanted) handler.postDelayed(relisten, 100)
         }
-        override fun onPartialResults(partialResults: Bundle?) {
-            evaluate(partialResults)
-        }
+        // Partial results aren't acted on: "cut" as a partial may just be the start of "cut it out".
+        override fun onPartialResults(partialResults: Bundle?) {}
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
     private fun evaluate(bundle: Bundle?) {
         val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+        lastHeard = matches.firstOrNull()
         for (text in matches) {
-            lastHeard = text
             if (!isRecordingMode && recordRegex.containsMatchIn(text)) {
                 onRecordTrigger()
                 break

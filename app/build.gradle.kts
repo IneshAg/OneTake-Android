@@ -40,6 +40,11 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        // AppStore is an AndroidViewModel; its JVM tests build it with a stub Application, which
+        // throws "Stub!" unless android.jar methods return defaults.
+        unitTests.isReturnDefaultValues = true
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

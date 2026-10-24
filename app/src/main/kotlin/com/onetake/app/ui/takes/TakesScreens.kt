@@ -133,121 +133,162 @@ fun TakesScreen(auditionId: String) {
 
     Column(Modifier.fillMaxSize().background(c.bgCanvas)) {
         TkHeader(title = "Your takes", subtitle = sceneTitle, onBack = { nav.back() }) {
+            val canCompare = takes.size >= 2
             TkToolCapsule {
                 TkToolButton("Trim", onClick = { /* Trim not yet available — same as iOS */ }) {
                     Icon(Icons.Filled.ContentCut, null, tint = c.labelPrimary, modifier = Modifier.size(22.dp))
                 }
-                TkToolButton("Compare", onClick = { comparing = true }) { TkCompareGlyph(c.labelPrimary) }
+                TkToolButton("Compare", onClick = { if (canCompare) comparing = true }, enabled = canCompare) {
+                    TkCompareGlyph(if (canCompare) c.labelPrimary else c.labelTertiary)
+                }
             }
         }
 
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = OT.dims.gutter)
-                .padding(top = 8.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            TkPlayerCard(
-                modifier = Modifier.fillMaxWidth().height(260.dp),
-                fileUri = current?.fileUri,
-                isPlaying = isPlaying,
-                onTogglePlay = { isPlaying = !isPlaying },
-            )
-            TkPlaybackBar()
-
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+        if (takes.isEmpty()) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = OT.dims.gutter)
+                    .padding(top = 48.dp, bottom = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
-                takes.forEach { take ->
-                    TkTakeThumbnail(
-                        take = take,
-                        isSelected = take.id == current?.id,
-                        onTap = { selected = take.id; haptics.tick() },
-                        onLongPress = { store.circle(take); haptics.success() },
-                    )
+                Box(
+                    Modifier
+                        .size(80.dp)
+                        .clip(CircleShape)
+                        .background(c.surfaceCard)
+                        .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.Movie, null, tint = c.labelTertiary, modifier = Modifier.size(36.dp))
                 }
-            }
-
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.height(16.dp))
                 Text(
-                    "Take ${circled?.number ?: 0} is circled — that's your send.",
+                    "No takes yet",
+                    style = OT.type.headline,
+                    color = c.labelPrimary,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Roll your first take to review playback, add notes, and circle your best performance.",
                     style = OT.type.footnote,
                     color = c.labelSecondary,
-                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
                 )
-                if (current != null && !current.isCircled) {
-                    Box(
-                        Modifier
-                            .heightIn(min = 48.dp)
-                            .clip(CircleShape)
-                            .clickable(role = Role.Button) { store.circle(current); haptics.success() }
-                            .padding(horizontal = 4.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("Circle take ${current.number}", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
-                    }
-                }
+                Spacer(Modifier.height(24.dp))
+                PrimaryButton("Record take 1", onClick = { nav.openCamera(CameraFlow.Shoot(auditionId)) })
             }
+        } else {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = OT.dims.gutter)
+                    .padding(top = 8.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                TkPlayerCard(
+                    modifier = Modifier.fillMaxWidth().height(260.dp),
+                    fileUri = current?.fileUri,
+                    isPlaying = isPlaying,
+                    onTogglePlay = { isPlaying = !isPlaying },
+                )
+                TkPlaybackBar()
 
-            OTDivider()
-
-            // Notes to self (disclosure)
-            Column {
                 Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .clickable(role = Role.Button) { notesOpen = !notesOpen },
-                    verticalAlignment = Alignment.CenterVertically,
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Icon(Icons.Outlined.Edit, null, tint = c.labelSecondary, modifier = Modifier.size(20.dp))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Notes to self", style = OT.type.body, color = c.labelPrimary)
-                        Text(
-                            "Never sent · " + (current?.notes?.joinToString(" · ") ?: ""),
-                            style = OT.type.footnote,
-                            color = c.labelTertiary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                    takes.forEach { take ->
+                        TkTakeThumbnail(
+                            take = take,
+                            isSelected = take.id == current?.id,
+                            onTap = { selected = take.id; haptics.tick() },
+                            onLongPress = { store.circle(take); haptics.success() },
                         )
                     }
-                    Icon(
-                        if (notesOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (notesOpen) "Hide notes" else "Show notes",
-                        tint = c.labelSecondary,
-                        modifier = Modifier.size(22.dp),
-                    )
                 }
-                if (notesOpen) {
-                    Column(Modifier.fillMaxWidth().padding(start = 32.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        (current?.notes ?: emptyList()).forEach { note ->
-                            Text("• $note", style = OT.type.callout, color = c.labelPrimary)
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Take ${circled?.number ?: current?.number ?: 1} is circled — that's your send.",
+                        style = OT.type.footnote,
+                        color = c.labelSecondary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (current != null && !current.isCircled) {
+                        Box(
+                            Modifier
+                                .heightIn(min = 48.dp)
+                                .clip(CircleShape)
+                                .clickable(role = Role.Button) { store.circle(current); haptics.success() }
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("Circle take ${current.number}", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
+                        }
+                    }
+                }
+
+                OTDivider()
+
+                // Notes to self (disclosure)
+                Column {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .clickable(role = Role.Button) { notesOpen = !notesOpen },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(Icons.Outlined.Edit, null, tint = c.labelSecondary, modifier = Modifier.size(20.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Notes to self", style = OT.type.body, color = c.labelPrimary)
+                            Text(
+                                "Never sent · " + (current?.notes?.joinToString(" · ") ?: ""),
+                                style = OT.type.footnote,
+                                color = c.labelTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Icon(
+                            if (notesOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = if (notesOpen) "Hide notes" else "Show notes",
+                            tint = c.labelSecondary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                    if (notesOpen) {
+                        Column(Modifier.fillMaxWidth().padding(start = 32.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            (current?.notes ?: emptyList()).forEach { note ->
+                                Text("• $note", style = OT.type.callout, color = c.labelPrimary)
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Pinned actions
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(c.bgCanvas)
-                .navigationBarsPadding()
-                .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            SecondaryButton("Go again", onClick = { showOneMore = true }, modifier = Modifier.width(130.dp))
-            PrimaryButton(
-                "Send take ${circled?.number ?: 0}",
-                onClick = { nav.push(Route.TapeCheck(auditionId)) },
-                modifier = Modifier.weight(1f),
-            )
+            // Pinned actions
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(c.bgCanvas)
+                    .navigationBarsPadding()
+                    .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SecondaryButton("Go again", onClick = { showOneMore = true }, modifier = Modifier.width(130.dp))
+                PrimaryButton(
+                    "Send take ${circled?.number ?: current?.number ?: 1}",
+                    onClick = { nav.push(Route.TapeCheck(auditionId)) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 
@@ -341,12 +382,12 @@ private fun TkToolCapsule(content: @Composable RowScope.() -> Unit) {
 }
 
 @Composable
-private fun TkToolButton(label: String, onClick: () -> Unit, icon: @Composable () -> Unit) {
+private fun TkToolButton(label: String, onClick: () -> Unit, enabled: Boolean = true, icon: @Composable () -> Unit) {
     Box(
         Modifier
             .size(48.dp)
             .clip(CircleShape)
-            .clickable(role = Role.Button, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) { icon() }
@@ -552,6 +593,10 @@ private fun TkCompareView(
     val right = (if (current != null && current.id != left?.id) current else takes.lastOrNull { it.id != left?.id }) ?: left
     var listen by remember { mutableIntStateOf(0) }
     val pair = listOfNotNull(left, right)
+    if (pair.isEmpty()) {
+        androidx.compose.runtime.LaunchedEffect(Unit) { onClose() }
+        return
+    }
     val compareSubtitle = if (left != null && right != null && left.id != right.id) "Take ${left.number} vs Take ${right.number}" else "Compare takes"
 
     Column(Modifier.fillMaxSize().background(cam.bg)) {
@@ -625,7 +670,7 @@ private fun TkCompareView(
 
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Take ${circled?.number ?: 0} is circled. That's your send.",
+                    "Take ${circled?.number ?: left?.number ?: 1} is circled. That's your send.",
                     style = OT.type.footnote,
                     color = cam.label2,
                     modifier = Modifier.weight(1f),
@@ -663,7 +708,7 @@ private fun TkCompareView(
                 contentAlignment = Alignment.Center,
             ) { Text("Trim", style = OT.type.headline, color = Color.White) }
             PrimaryButton(
-                "Send take ${circled?.number ?: 0}",
+                "Send take ${circled?.number ?: left?.number ?: 1}",
                 onClick = onSend,
                 modifier = Modifier.weight(1f),
                 tint = Color(0xFF5B3E73),

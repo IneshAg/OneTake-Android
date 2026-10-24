@@ -56,4 +56,14 @@ class TakesReviewTest {
         assertTrue(store.takes.first { it.id == "tk-1b" }.isCircled)
         assertTrue("Take in scene-2 should remain circled", store.takes.first { it.id == "tk-2a" }.isCircled)
     }
+
+    @Test
+    fun testEmptyTakesStateValues() {
+        val store = AppStore()
+        store.takes = emptyList()
+        val circled = store.takes.firstOrNull { it.isCircled }
+        val canCompare = store.takes.size >= 2
+        assertFalse(canCompare)
+        assertEquals(null, circled)
+    }
 }

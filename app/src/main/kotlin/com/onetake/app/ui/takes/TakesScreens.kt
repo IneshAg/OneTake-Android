@@ -1015,7 +1015,7 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
         saving = true
         failed = false
         scope.launch {
-            val original = src.path?.let(::java.io.File)
+            val original = src.path?.let { java.io.File(it) }
             val dir = original?.parentFile ?: context.filesDir
             // A new name, so anything keyed on the file (thumbnails, Tape check) sees the change.
             val dest = java.io.File(dir, "take-${take.number}-trim-${java.util.UUID.randomUUID().toString().take(8)}.mp4")

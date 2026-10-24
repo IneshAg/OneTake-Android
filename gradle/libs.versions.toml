@@ -9,6 +9,7 @@ navigationCompose = "2.8.3"
 camerax = "1.4.0"
 materialIconsExtended = "1.7.4"
 mlkitTextRecognition = "16.0.1"
+mlkitFaceDetection = "16.1.7"
 glance = "1.1.1"
 junit = "4.13.2"
 
@@ -38,6 +39,7 @@ androidx-camera-view = { group = "androidx.camera", name = "camera-view", versio
 androidx-glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
 
 # ML Kit OCR
+mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "mlkitFaceDetection" }
 mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
 
 [plugins]

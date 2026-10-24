@@ -1099,7 +1099,7 @@ private fun TkTrimFrame(source: Uri?, atMs: Long, modifier: Modifier) {
                     android.media.MediaMetadataRetriever().run {
                         try {
                             setDataSource(context, uri)
-                            getScaledFrameAtTime(key * 250_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 480, 270)
+                            com.onetake.app.data.TapeAnalysis.frameAt(this, key * 250_000, maxSide = 480)
                         } finally {
                             release()
                         }

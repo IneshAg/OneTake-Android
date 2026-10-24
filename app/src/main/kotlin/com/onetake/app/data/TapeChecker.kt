@@ -11,7 +11,8 @@ import java.io.File
 
 /**
  * Tape check built only from what's really on the phone — the recorded files and their metadata —
- * instead of a fixed "11 checks passed" list. No ML: each check is something that can be measured.
+ * instead of a fixed "11 checks passed" list. Each check is something measured: file metadata here,
+ * and inside each scene's take the sound levels and on-device face framing ([TapeAnalysis]).
  * Blocking (reads file metadata); run it on Dispatchers.IO.
  */
 object TapeChecker {
@@ -60,7 +61,10 @@ object TapeChecker {
                 chosen.isCircled -> Check(title, true, "Take ${chosen.number} circled", chosen.fileUri)
                 else -> Check(title, true, "Take ${chosen.number} will be sent — none circled", chosen.fileUri)
             }
-            if (chosen != null) clipInfo(context, "Take ${chosen.number}", chosen.fileUri!!)?.let(clips::add)
+            if (chosen != null) {
+                clipInfo(context, "Take ${chosen.number}", chosen.fileUri!!)?.let(clips::add)
+                checks += takeChecks(context, title, chosen)
+            }
         }
 
         if (clips.isNotEmpty()) {
@@ -83,6 +87,47 @@ object TapeChecker {
             val totalMs = clips.sumOf { it.durationMs }
             if ("Under 3 min" in audition.asks) {
                 checks += Check("Under 3 minutes", totalMs <= 180_000, "Tape runs ${formatMs(totalMs)}")
+            }
+        }
+        return checks
+    }
+
+    /** Sound and framing inside the take that will be sent for a scene ([TapeAnalysis]). */
+    private fun takeChecks(context: Context, sceneTitle: String, take: Take): List<Check> {
+        val uri = take.fileUri ?: return emptyList()
+        val label = "$sceneTitle · take ${take.number}"
+        val checks = mutableListOf<Check>()
+        TapeAnalysis.sound(context, uri)?.let { sound ->
+            checks += when {
+                sound.loudestDb < -50 -> Check("Sound · $label", false, "Nothing audible — check the mic wasn't covered or muted", uri)
+                sound.loudestDb < -32 -> Check("Sound · $label", false, "Your voice is very quiet — move closer to the phone or speak up", uri)
+                else -> Check("Sound · $label", true, "Clear level", uri)
+            }
+            sound.clippedAtMs?.let { at ->
+                checks += Check("Distortion · $label", false, "The sound distorts at ${formatMs(at)} — a little further from the mic", uri)
+            }
+        }
+        TapeAnalysis.framing(context, uri)?.let { f ->
+            val inFrame = f.withFace.toDouble() / f.sampled
+            checks += if (inFrame >= 0.8) {
+                Check("In frame · $label", true, "Your face is in shot throughout", uri)
+            } else {
+                Check("In frame · $label", false, "Out of shot from about ${formatMs(f.missingAtMs ?: 0)} — check your mark", uri)
+            }
+            if (f.withFace > 0) {
+                checks += Check(
+                    "Centred · $label",
+                    f.centredShare >= 0.7,
+                    if (f.centredShare >= 0.7) "Centred left to right" else "Off to one side for much of the take",
+                    uri,
+                )
+                f.faceHeight?.let { h ->
+                    checks += when {
+                        h < 0.12 -> Check("Distance · $label", false, "You're far from the camera — casting wants a medium close-up", uri)
+                        h > 0.6 -> Check("Distance · $label", false, "Very close — step back so your shoulders are in shot", uri)
+                        else -> Check("Distance · $label", true, "Medium close-up", uri)
+                    }
+                }
             }
         }
         return checks

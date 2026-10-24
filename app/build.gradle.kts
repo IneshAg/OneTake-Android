@@ -99,6 +99,8 @@ dependencies {
 
     // ML Kit OCR
     implementation(libs.mlkit.text.recognition)
+    // On-device face detection for Tape check's framing checks
+    implementation(libs.mlkit.face.detection)
 
     // Home-screen widget (Next audition)
     implementation(libs.androidx.glance.appwidget)

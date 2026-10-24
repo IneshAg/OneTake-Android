@@ -39,4 +39,21 @@ class TakesReviewTest {
         assertEquals(initialCount + 1, store.takes.size)
         assertEquals("content://media/take-99.mp4", store.takes.last().fileUri)
     }
+
+    @Test
+    fun testCircleTakeIsScopedToScene() {
+        val store = AppStore()
+        val takeScene1A = Take(id = "tk-1a", number = 1, durationSeconds = 60, recordedAt = LocalDateTime.now(), isCircled = true, notes = emptyList(), sceneId = "scene-1")
+        val takeScene1B = Take(id = "tk-1b", number = 2, durationSeconds = 65, recordedAt = LocalDateTime.now(), isCircled = false, notes = emptyList(), sceneId = "scene-1")
+        val takeScene2A = Take(id = "tk-2a", number = 1, durationSeconds = 70, recordedAt = LocalDateTime.now(), isCircled = true, notes = emptyList(), sceneId = "scene-2")
+
+        store.takes = listOf(takeScene1A, takeScene1B, takeScene2A)
+
+        // Circle takeScene1B: should uncircle 1A, but preserve 2A
+        store.circle(takeScene1B)
+
+        assertFalse(store.takes.first { it.id == "tk-1a" }.isCircled)
+        assertTrue(store.takes.first { it.id == "tk-1b" }.isCircled)
+        assertTrue("Take in scene-2 should remain circled", store.takes.first { it.id == "tk-2a" }.isCircled)
+    }
 }

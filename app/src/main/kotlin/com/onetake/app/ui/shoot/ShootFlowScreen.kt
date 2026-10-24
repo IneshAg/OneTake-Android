@@ -234,6 +234,7 @@ fun ShootFlowScreen(auditionId: String) {
                     recordedAt = LocalDateTime.now(),
                     isCircled = false,
                     notes = emptyList(),
+                    sceneId = audition?.scenes?.firstOrNull()?.id,
                 )
                 store.addTake(take)
                 pendingTakeId = take.id

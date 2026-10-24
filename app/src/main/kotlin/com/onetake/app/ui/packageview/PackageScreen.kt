@@ -120,7 +120,10 @@ private fun calculatePackageDuration(audition: Audition, takes: List<Take>): Int
             PieceKind.Headshot -> 3
             PieceKind.Slate, PieceKind.FullLength -> 5
             PieceKind.Scene -> {
-                val take = takes.firstOrNull { it.sceneId == piece.id && it.isCircled } ?: takes.firstOrNull { it.isCircled }
+                val matchingScene = audition.scenes.firstOrNull { it.id == piece.id || it.title == piece.title }
+                val targetSceneId = matchingScene?.id ?: piece.id
+                val take = takes.firstOrNull { (it.sceneId == targetSceneId || it.sceneId == piece.id) && it.isCircled }
+                    ?: takes.firstOrNull { it.isCircled }
                 take?.durationSeconds ?: 60
             }
         }

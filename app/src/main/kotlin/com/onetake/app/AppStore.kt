@@ -87,7 +87,13 @@ class AppStore : ViewModel() {
     }
 
     fun circle(take: Take) {
-        takes = takes.map { it.copy(isCircled = it.id == take.id) }
+        takes = takes.map {
+            if (take.sceneId != null && it.sceneId != null) {
+                if (it.sceneId == take.sceneId) it.copy(isCircled = it.id == take.id) else it
+            } else {
+                it.copy(isCircled = it.id == take.id)
+            }
+        }
     }
 
     fun addTake(take: Take) {

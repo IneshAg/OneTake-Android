@@ -174,7 +174,7 @@ private data class AddDraft(
             Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false),
         )
         for (scene in finalScenes) {
-            pieces.add(Piece(kind = PieceKind.Scene, title = scene.title, detail = "", isDone = false))
+            pieces.add(Piece(id = scene.id, kind = PieceKind.Scene, title = scene.title, detail = "", isDone = false))
         }
 
         return Audition(

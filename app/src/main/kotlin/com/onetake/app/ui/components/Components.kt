@@ -637,20 +637,9 @@ fun rememberBitmapFromUri(uriString: String?): ImageBitmap? {
     if (uriString.isNullOrBlank()) return null
     var bitmap by remember(uriString) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(uriString) {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val uri = Uri.parse(uriString)
-                val stream = if (uri.scheme == "file" || uri.scheme == null) {
-                    val file = File(uri.path ?: uriString)
-                    if (file.exists()) file.inputStream() else null
-                } else {
-                    context.contentResolver.openInputStream(uri)
-                }
-                stream?.use {
-                    BitmapFactory.decodeStream(it)?.asImageBitmap()
-                }
-            }.getOrNull()
-        }?.let { bitmap = it }
+        // Downsampled + EXIF-rotated + cached (see ImageLoading) — not a full-resolution decode.
+        withContext(Dispatchers.IO) { ImageLoading.photo(context.applicationContext, uriString)?.asImageBitmap() }
+            ?.let { bitmap = it }
     }
     return bitmap
 }

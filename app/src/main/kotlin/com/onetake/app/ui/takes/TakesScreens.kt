@@ -1,5 +1,6 @@
 package com.onetake.app.ui.takes
 
+import com.onetake.app.ui.components.ImageLoading
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -558,16 +559,9 @@ private fun TkPlaybackBar(state: TkPlayerState, onDark: Boolean = false) {
 private fun TkVideoThumbnail(fileUri: String?, modifier: Modifier = Modifier, iconSize: Dp = 28.dp) {
     val context = LocalContext.current
     val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, fileUri) {
+        // Scaled to display size and cached (ImageLoading) — a full 4K frame per thumbnail was ~33 MB.
         value = if (fileUri == null) null else withContext(Dispatchers.IO) {
-            runCatching {
-                val retriever = android.media.MediaMetadataRetriever()
-                try {
-                    retriever.setDataSource(context, Uri.parse(fileUri))
-                    retriever.frameAtTime
-                } finally {
-                    retriever.release()
-                }
-            }.getOrNull()
+            ImageLoading.videoFrame(context.applicationContext, fileUri)
         }
     }
     Box(modifier, contentAlignment = Alignment.Center) {

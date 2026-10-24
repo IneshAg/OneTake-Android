@@ -88,8 +88,10 @@ class CameraController(private val context: Context) {
     private var onFinalized: ((Uri?) -> Unit)? = null
 
     private fun createVideoCapture(): VideoCapture<Recorder> {
+        // 1080p is what self-tape sites ask for (and what the destinations' specs say). 4K first
+        // made files ~4x larger, slowed export, and could break limits like Actors Access's 500 MB.
         val qualitySelector = QualitySelector.fromOrderedList(
-            listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD, Quality.LOWEST),
+            listOf(Quality.FHD, Quality.HD, Quality.SD),
             FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD),
         )
         val recorder = Recorder.Builder().setQualitySelector(qualitySelector).build()

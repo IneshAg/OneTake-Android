@@ -25,4 +25,12 @@ class LineLearningModeTest {
         val masked = LineLearningMode.maskDialogue(dialogue, maskRatio = 1.0f)
         assertEquals("— — — — — — —", masked)
     }
+
+    @Test
+    fun testMaskWithRevealedIndices() {
+        val text = "You said you would be home by eight"
+        val revealed = setOf(0, 2)
+        val result = LineLearningMode.formatMaskedWithReveals(text, revealed)
+        assertEquals("You said you would — home — eight", result)
+    }
 }

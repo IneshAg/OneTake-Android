@@ -56,6 +56,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -838,6 +839,7 @@ private fun prepRunText(
     mode: PrepLineMode,
     level: Int,
     spoken: Int,
+    revealed: Set<Int> = emptySet(),
     accent: Color,
     rest: Color,
 ): AnnotatedString = buildAnnotatedString {
@@ -855,10 +857,14 @@ private fun prepRunText(
         } else if (effective == PrepLineMode.Full) {
             withStyle(SpanStyle(color = rest)) { append(w + sep) }
         } else if (effective == PrepLineMode.FirstLetters) {
-            withStyle(SpanStyle(color = rest)) { append(prepFirstLetterWord(w) + sep) }
+            val token = if (i in revealed) w else prepFirstLetterWord(w)
+            val color = if (i in revealed) accent else rest
+            withStyle(SpanStyle(color = color)) { append(token + sep) }
         } else if (effective == PrepLineMode.MaskAndReveal) {
-            val masked = if (i % 2 == 0) "—" else w
-            withStyle(SpanStyle(color = rest)) { append(masked + sep) }
+            val isMasked = i % 2 == 0 && i !in revealed
+            val token = if (isMasked) "—" else w
+            val color = if (i in revealed) accent else rest
+            withStyle(SpanStyle(color = color)) { append(token + sep) }
         } else if (effective == PrepLineMode.AudioGap) {
             withStyle(SpanStyle(color = rest)) { append(w + sep) }
         } else if (!hiddenAppended) {
@@ -916,6 +922,9 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     var startedAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var endedAt by remember { mutableLongStateOf(0L) }
     var showPrompter by remember { mutableStateOf(false) }
+    var revealedWordIndices by remember(index) { mutableStateOf(emptySet<Int>()) }
+    var audioGapRemainingMs by remember { mutableLongStateOf(0L) }
+    var audioGapTotalMs by remember { mutableLongStateOf(0L) }
 
     var micGranted by remember { mutableStateOf(prepHasMic(context)) }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { micGranted = it }
@@ -933,6 +942,9 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
 
     fun advance() {
         level = 0
+        revealedWordIndices = emptySet()
+        audioGapRemainingMs = 0L
+        audioGapTotalMs = 0L
         if (index + 1 < lines.size) {
             index += 1
         } else {
@@ -949,6 +961,9 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         level = 0
         finished = false
         needed.clear()
+        revealedWordIndices = emptySet()
+        audioGapRemainingMs = 0L
+        audioGapTotalMs = 0L
         startedAt = System.currentTimeMillis()
         runNumber = PrepPrefs.nextRun(runKey)
     }
@@ -972,7 +987,16 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         } else if (mode == PrepLineMode.AudioGap) {
             val words = prepWords(current.text).size
             val gapMs = LineLearningMode.calculateAudioGapMillis(words)
-            delay(gapMs)
+            audioGapTotalMs = gapMs
+            audioGapRemainingMs = gapMs
+            val startTime = System.currentTimeMillis()
+            while (System.currentTimeMillis() - startTime < gapMs && !finished) {
+                val elapsed = System.currentTimeMillis() - startTime
+                audioGapRemainingMs = (gapMs - elapsed).coerceAtLeast(0L)
+                delay(50L)
+            }
+            audioGapRemainingMs = 0L
+            audioGapTotalMs = 0L
             advance()
         } else if (speechOn) {
             follower.start()
@@ -1082,11 +1106,93 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
                             mode = mode,
                             level = level,
                             spoken = if (speechOn) spoken else 0,
+                            revealed = revealedWordIndices,
                             accent = c.accent,
                             rest = if (speechOn || mode != PrepLineMode.Full) c.labelTertiary else c.labelPrimary,
                         ),
                         style = runStyle,
+                        modifier = Modifier.clickable {
+                            val words = prepWords(line.text)
+                            val next = words.indices.firstOrNull { i ->
+                                (mode == PrepLineMode.MaskAndReveal && i % 2 == 0 && i !in revealedWordIndices) ||
+                                (mode == PrepLineMode.FirstLetters && i !in revealedWordIndices)
+                            }
+                            if (next != null) {
+                                revealedWordIndices = revealedWordIndices + next
+                                haptics.impact()
+                            }
+                        },
                     )
+                    if (mode == PrepLineMode.MaskAndReveal || mode == PrepLineMode.FirstLetters) {
+                        val words = prepWords(line.text)
+                        val hasMasked = words.indices.any { i ->
+                            (mode == PrepLineMode.MaskAndReveal && i % 2 == 0 && i !in revealedWordIndices) ||
+                            (mode == PrepLineMode.FirstLetters && i !in revealedWordIndices)
+                        }
+                        if (hasMasked) {
+                            Spacer(Modifier.height(8.dp))
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(c.fillQuiet)
+                                    .clickable {
+                                        val next = words.indices.firstOrNull { i ->
+                                            (mode == PrepLineMode.MaskAndReveal && i % 2 == 0 && i !in revealedWordIndices) ||
+                                            (mode == PrepLineMode.FirstLetters && i !in revealedWordIndices)
+                                        }
+                                        if (next != null) {
+                                            revealedWordIndices = revealedWordIndices + next
+                                            haptics.impact()
+                                        }
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                            ) {
+                                Text("Tap line to peek word", style = OT.type.caption, color = c.labelSecondary)
+                            }
+                        }
+                    }
+                    if (mode == PrepLineMode.AudioGap && audioGapTotalMs > 0) {
+                        Spacer(Modifier.height(14.dp))
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(c.surfaceRaised)
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Icon(Icons.Filled.GraphicEq, null, tint = c.accent, modifier = Modifier.size(16.dp))
+                                    Text(
+                                        "AUDIO GAP · YOUR TURN",
+                                        style = OT.type.caption.copy(fontWeight = FontWeight.Bold),
+                                        color = c.accent,
+                                    )
+                                }
+                                val sec = ((audioGapRemainingMs + 999) / 1000).toInt()
+                                Text(
+                                    "${sec}s",
+                                    style = OT.type.footnote.copy(fontWeight = FontWeight.Bold),
+                                    color = c.labelPrimary,
+                                )
+                            }
+                            val frac = if (audioGapTotalMs > 0) (audioGapRemainingMs.toFloat() / audioGapTotalMs.toFloat()).coerceIn(0f, 1f) else 0f
+                            LinearProgressIndicator(
+                                progress = { frac },
+                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                                color = c.accent,
+                                trackColor = c.fillQuiet,
+                            )
+                        }
+                    }
                 } else {
                     Text(line.text, style = runStyle, color = c.labelPrimary)
                 }

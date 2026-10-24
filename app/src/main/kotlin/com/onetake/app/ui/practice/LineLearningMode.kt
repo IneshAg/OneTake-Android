@@ -57,6 +57,17 @@ enum class LineLearningMode(
         }
 
         /**
+         * Masks alternating words while revealing words at indices in [revealed].
+         */
+        fun formatMaskedWithReveals(text: String, revealed: Set<Int>): String {
+            if (text.isBlank()) return ""
+            val words = text.trim().split(Regex("\\s+"))
+            return words.mapIndexed { index, word ->
+                if (index % 2 == 0 && index !in revealed) "—" else word
+            }.joinToString(" ")
+        }
+
+        /**
          * Computes the pause duration in milliseconds allocated for the actor to deliver their line.
          * Default: ~350ms per word + 1.5s grace time.
          */

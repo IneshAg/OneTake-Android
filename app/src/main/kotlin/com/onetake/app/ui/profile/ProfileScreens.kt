@@ -55,10 +55,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -363,28 +366,31 @@ fun PrivacyScreen() {
     var scriptsBytes by remember { mutableStateOf(0L) }
     var readerBytes by remember { mutableStateOf(0L) }
 
-    fun refreshSizes() {
-        // Real recordings now live under filesDir in audition-*/practice-* subfolders (moved out
-        // of cacheDir once they're kept — see MediaStore.persist), plus the exports folder.
-        val mediaDirs = context.filesDir.listFiles { f ->
-            f.isDirectory && (f.name.startsWith("audition-") || f.name.startsWith("practice-") || f.name == "exports")
-        } ?: emptyArray()
-        takesBytes = mediaDirs.sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
+    /** Bumped after "Delete all local data" so the sizes are measured again. */
+    var wipes by remember { mutableIntStateOf(0) }
 
-        val headshotsDir = File(context.filesDir, "headshots")
-        val headshotFiles = headshotsDir.listFiles() ?: emptyArray()
-        headshotsBytes = headshotFiles.sumOf { it.length() }
-
-        // Reader lines live under reader/<scene id>/, plus any flat files left by older builds.
-        val legacyReader = context.filesDir.listFiles { f -> f.isFile && f.name.startsWith(ReaderFiles.LEGACY_PREFIX) } ?: emptyArray()
-        readerBytes = legacyReader.sumOf { it.length() } +
-            File(context.filesDir, ReaderFiles.DIR).walkTopDown().filter { it.isFile }.sumOf { it.length() }
-
+    LaunchedEffect(store.takes.size, store.headshotsTaken, store.auditions.size, wipes) {
         scriptsBytes = (store.auditions.sumOf { it.scenes.sumOf { s -> s.lines.sumOf { l -> l.text.length } } } * 2L)
-    }
+        // Walking every recording folder is disk I/O, so it's done off the main thread.
+        val (takes, headshots, reader) = withContext(Dispatchers.IO) {
+            // Real recordings now live under filesDir in audition-*/practice-* subfolders (moved out
+            // of cacheDir once they're kept — see MediaStore.persist), plus the exports folder.
+            val mediaDirs = context.filesDir.listFiles { f ->
+                f.isDirectory && (f.name.startsWith("audition-") || f.name.startsWith("practice-") || f.name == "exports")
+            } ?: emptyArray()
+            val media = mediaDirs.sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
 
-    LaunchedEffect(store.takes.size, store.headshotsTaken, store.auditions.size) {
-        refreshSizes()
+            val photos = (File(context.filesDir, "headshots").listFiles() ?: emptyArray()).sumOf { it.length() }
+
+            // Reader lines live under reader/<scene id>/, plus any flat files left by older builds.
+            val legacyReader = context.filesDir.listFiles { f -> f.isFile && f.name.startsWith(ReaderFiles.LEGACY_PREFIX) } ?: emptyArray()
+            val voice = legacyReader.sumOf { it.length() } +
+                File(context.filesDir, ReaderFiles.DIR).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            Triple(media, photos, voice)
+        }
+        takesBytes = takes
+        headshotsBytes = headshots
+        readerBytes = reader
     }
 
     val totalBytes = takesBytes + headshotsBytes + scriptsBytes + readerBytes
@@ -461,7 +467,7 @@ fun PrivacyScreen() {
                         context.cacheDir.listFiles { f -> f.name.startsWith("take-") }?.forEach { it.delete() }
                     }
                     store.resetAfterMediaWipe()
-                    refreshSizes()
+                    wipes++
                     confirmDelete = false
                 }) { Text("Delete", color = c.danger) }
             },

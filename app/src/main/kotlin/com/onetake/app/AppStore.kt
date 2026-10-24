@@ -1,6 +1,7 @@
 package com.onetake.app
 
 import android.app.Application
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -16,6 +17,7 @@ import com.onetake.app.models.PieceKind
 import com.onetake.app.models.PracticePiece
 import com.onetake.app.models.SlateInfo
 import com.onetake.app.models.Take
+import com.onetake.app.ui.system.ReaderFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -23,6 +25,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
 import java.time.LocalDateTime
 
 /**
@@ -140,8 +143,44 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         auditions = listOf(audition) + auditions
     }
 
+    /** Deletes an audition along with everything recorded for it on this phone: its takes, slate,
+     *  full length, export, reader recordings, and the practice pieces made from its scenes (and
+     *  their practice takes). An export file another audition also points at is kept. */
     fun delete(id: String) {
+        val audition = audition(id) ?: return
+        val ownPractice = practice.filter { it.auditionId == id }
         auditions = auditions.filterNot { it.id == id }
+        takes = takes.filterNot { it.auditionId == id }
+        practice = practice.filterNot { it.auditionId == id }
+
+        val ctx = context
+        val exportPath = audition.exportedFileUri
+            ?.takeIf { uri -> auditions.none { it.exportedFileUri == uri } }
+            ?.let { runCatching { Uri.parse(it).path }.getOrNull() }
+        saveScope.launch {
+            runCatching {
+                val dir = ctx.filesDir ?: return@runCatching
+                File(dir, "audition-$id").deleteRecursively()
+                File(File(dir, "exports"), id).deleteRecursively()
+                exportPath?.let { File(it).delete() }
+                ownPractice.forEach { File(dir, "practice-${it.id}").deleteRecursively() }
+                audition.scenes.forEach { ReaderFiles.sceneDir(ctx, it.id).deleteRecursively() }
+            }
+        }
+    }
+
+    /** After Privacy's "Delete all local data" has removed the files: drop every take and media
+     *  link, and un-tick the pieces whose recordings are gone so no audition still reads as Ready.
+     *  Sent auditions keep their Sent status — what was delivered stays delivered. */
+    fun resetAfterMediaWipe() {
+        takes = emptyList()
+        practice = practice.map { it.copy(takesRecorded = 0) }
+        auditions = auditions.map { a ->
+            val cleared = a.copy(slateVideoUri = null, fullLengthVideoUri = null, exportedFileUri = null)
+            if (a.status == AuditionStatus.Sent) cleared
+            else cleared.copy(status = AuditionStatus.Due, pieces = a.pieces.map { it.copy(isDone = false) })
+        }
+        clearHeadshots()
     }
 
     fun update(id: String, transform: (Audition) -> Audition) {

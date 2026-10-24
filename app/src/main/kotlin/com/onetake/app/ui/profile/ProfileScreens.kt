@@ -483,12 +483,7 @@ fun PrivacyScreen() {
                         File(context.filesDir, ReaderFiles.DIR).deleteRecursively()
                         context.cacheDir.listFiles { f -> f.name.startsWith("take-") }?.forEach { it.delete() }
                     }
-                    store.takes = emptyList()
-                    store.practice = store.practice.map { it.copy(takesRecorded = 0) }
-                    store.auditions.forEach { a ->
-                        store.update(a.id) { it.copy(slateVideoUri = null, fullLengthVideoUri = null, exportedFileUri = null) }
-                    }
-                    store.clearHeadshots()
+                    store.resetAfterMediaWipe()
                     refreshSizes()
                     confirmDelete = false
                 }) { Text("Delete", color = c.danger) }

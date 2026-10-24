@@ -200,7 +200,7 @@ class ReaderLineRecorder(private val context: Context) {
     fun start(sceneId: String, readerIndex: Int): Boolean {
         stop()
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else @Suppress("DEPRECATION") MediaRecorder()
-        runCatching {
+        return runCatching {
             r.setAudioSource(MediaRecorder.AudioSource.MIC)
             r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)

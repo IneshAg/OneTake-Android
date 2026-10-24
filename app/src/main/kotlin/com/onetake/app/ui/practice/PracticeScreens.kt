@@ -620,13 +620,13 @@ fun PracticeTakeScreen() {
     val piece = store.practice.firstOrNull()
     KeepScreenOn()
 
-    // The file lands asynchronously (CameraX Finalize) — move it to permanent storage and count a
-    // real practice take, instead of discarding the recording like the old prototype did.
-    LaunchedEffect(camera.lastRecording) {
-        val uri = camera.lastRecording ?: return@LaunchedEffect
-        val p = piece ?: return@LaunchedEffect
+    // The file lands asynchronously (CameraX Finalize), possibly after this screen has closed, so
+    // it's saved from the camera's own callback rather than a composable effect.
+    val appContext = context.applicationContext
+    fun savePracticeTake(uri: android.net.Uri?, pieceId: String) {
+        val p = store.practice.firstOrNull { it.id == pieceId } ?: return
         val number = p.takesRecorded + 1
-        com.onetake.app.data.MediaStore.persist(context, uri, "take-$number.mp4", "practice-${p.id}")
+        com.onetake.app.data.MediaStore.persist(appContext, uri, "take-$number-${System.currentTimeMillis()}.mp4", "practice-${p.id}")
             ?.let { store.incrementPracticeTakes(p.id) }
     }
 
@@ -676,7 +676,12 @@ fun PracticeTakeScreen() {
             Box(Modifier.fillMaxWidth().padding(bottom = 12.dp), contentAlignment = Alignment.Center) {
                 PracticeRecordButton(recording) {
                     haptics.impact()
-                    if (recording) camera.stopRecording() else camera.startRecording()
+                    if (recording) {
+                        val pieceId = piece?.id
+                        camera.stopRecording { uri -> if (pieceId != null) savePracticeTake(uri, pieceId) }
+                    } else {
+                        camera.startRecording()
+                    }
                 }
                 CircleIconButton(
                     Icons.Filled.Cameraswitch,

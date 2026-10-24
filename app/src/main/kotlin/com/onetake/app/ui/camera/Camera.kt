@@ -83,6 +83,9 @@ class CameraController(private val context: Context) {
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
     private var provider: ProcessCameraProvider? = null
+    /** Who gets the finished file of the recording being stopped. Held here, not in a composable
+     *  effect, so the file still lands if the screen closes before CameraX finalizes it. */
+    private var onFinalized: ((Uri?) -> Unit)? = null
 
     private fun createVideoCapture(): VideoCapture<Recorder> {
         val qualitySelector = QualitySelector.fromOrderedList(
@@ -161,18 +164,30 @@ class CameraController(private val context: Context) {
         val withAudio = if (granted(context, Manifest.permission.RECORD_AUDIO)) pending.withAudioEnabled() else pending
         recording = withAudio.start(ContextCompat.getMainExecutor(context)) { event ->
             if (event is VideoRecordEvent.Finalize) {
-                lastRecording = if (event.hasError()) null else event.outputResults.outputUri
+                val uri = if (event.hasError()) null else event.outputResults.outputUri
+                lastRecording = uri
                 state = State.Ready
+                val callback = onFinalized
+                onFinalized = null
+                callback?.invoke(uri)
             }
         }
         state = State.Recording
         elapsed = 0f
     }
 
-    fun stopRecording() {
+    /** Stops the current recording. [onFinalized] runs once the file is fully written (null if
+     *  nothing real was recorded), even if the calling screen has gone by then. */
+    fun stopRecording(onFinalized: ((Uri?) -> Unit)? = null) {
         val r = recording
         recording = null
-        if (r != null) r.stop() else state = if (provider != null) State.Ready else State.Idle
+        if (r != null) {
+            this.onFinalized = onFinalized
+            r.stop()
+        } else {
+            state = if (provider != null) State.Ready else State.Idle
+            onFinalized?.invoke(null)
+        }
     }
 
     fun capturePhoto(onResult: (Uri?) -> Unit) {

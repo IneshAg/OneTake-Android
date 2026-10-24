@@ -46,6 +46,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Movie
@@ -56,6 +57,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -129,6 +131,7 @@ fun TakesScreen(auditionId: String) {
     var notesOpen by remember { mutableStateOf(false) }
     var comparing by remember { mutableStateOf(false) }
     var isPlaying by remember(selected) { mutableStateOf(false) }
+    var trimming by remember { mutableStateOf<Take?>(null) }
 
     // Scoped to this audition — otherwise every audition's takes show up mixed together — and to one
     // scene at a time, since each scene has its own circled take.
@@ -155,10 +158,17 @@ fun TakesScreen(auditionId: String) {
 
     Column(Modifier.fillMaxSize().background(c.bgCanvas)) {
         TkHeader(title = "Your takes", subtitle = sceneTitle, onBack = { nav.back() }) {
-            // (Trim isn't implemented, so there's no Trim button that does nothing.)
-            if (takes.size >= 2) {
+            val canTrim = current?.fileUri != null
+            if (canTrim || takes.size >= 2) {
                 TkToolCapsule {
-                    TkToolButton("Compare", onClick = { comparing = true }) { TkCompareGlyph(c.labelPrimary) }
+                    if (canTrim) {
+                        TkToolButton("Trim take ${current?.number}", onClick = { trimming = current }) {
+                            Icon(Icons.Filled.ContentCut, null, tint = c.labelPrimary, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    if (takes.size >= 2) {
+                        TkToolButton("Compare", onClick = { comparing = true }) { TkCompareGlyph(c.labelPrimary) }
+                    }
                 }
             }
         }
@@ -327,6 +337,8 @@ fun TakesScreen(auditionId: String) {
             )
         }
     }
+
+    trimming?.let { take -> TkTrimSheet(take) { trimming = null } }
 
     if (showOneMore) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -974,3 +986,149 @@ private fun TkFindingRow(
         OTDivider(startIndent = 76.dp)
     }
 }
+
+// MARK: - Trim
+
+/** Drag the ends to cut the walk-in and walk-out; the take's file is replaced by the cut (see
+ *  [com.onetake.app.data.TakeTrimmer]), so playback, Tape check and the package all use it. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
+    val store = LocalAppStore.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
+    val c = OT.colors
+    val source = remember(take.fileUri) { take.fileUri?.let(Uri::parse) }
+    val durationMs by produceState(0L, source) {
+        value = withContext(Dispatchers.IO) { source?.let { tkDurationMs(context, it) } ?: 0L }
+    }
+    var range by remember(durationMs) { mutableStateOf(0f..durationMs.toFloat()) }
+    var saving by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    fun save() {
+        val src = source ?: return
+        val start = range.start.toLong()
+        val end = range.endInclusive.toLong()
+        saving = true
+        failed = false
+        scope.launch {
+            val original = src.path?.let(::java.io.File)
+            val dir = original?.parentFile ?: context.filesDir
+            // A new name, so anything keyed on the file (thumbnails, Tape check) sees the change.
+            val dest = java.io.File(dir, "take-${take.number}-trim-${java.util.UUID.randomUUID().toString().take(8)}.mp4")
+            val trimmed = withContext(Dispatchers.IO) {
+                com.onetake.app.data.TakeTrimmer.trim(context.applicationContext, src, start, end, dest)
+            }
+            saving = false
+            if (trimmed == null) {
+                failed = true
+                haptics.warning()
+                return@launch
+            }
+            store.updateTake(take.id) {
+                it.copy(fileUri = Uri.fromFile(trimmed.file).toString(), durationSeconds = (trimmed.durationMs / 1000).toInt())
+            }
+            original?.takeIf { it != trimmed.file }?.delete()
+            haptics.success()
+            onClose()
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = { if (!saving) onClose() },
+        sheetState = sheetState,
+        containerColor = c.bgCanvas,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = OT.dims.gutter).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("Trim take ${take.number}", style = OT.type.title, color = c.labelPrimary)
+            Text(
+                "Drag the ends to cut the walk-in and the walk-out. The trimmed take replaces this one.",
+                style = OT.type.footnote,
+                color = c.labelTertiary,
+            )
+            if (durationMs <= 0L) {
+                Text("Reading the take…", style = OT.type.callout, color = c.labelSecondary)
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TkTrimFrame(source, range.start.toLong(), Modifier.weight(1f))
+                    TkTrimFrame(source, range.endInclusive.toLong(), Modifier.weight(1f))
+                }
+                RangeSlider(
+                    value = range,
+                    onValueChange = { range = it },
+                    valueRange = 0f..durationMs.toFloat(),
+                    enabled = !saving,
+                )
+                Row(Modifier.fillMaxWidth()) {
+                    Text("Start ${tkClock(range.start.toLong())}", style = OT.type.footnote, color = c.labelSecondary)
+                    Spacer(Modifier.weight(1f))
+                    Text("${tkClock((range.endInclusive - range.start).toLong())} kept", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                    Spacer(Modifier.weight(1f))
+                    Text("End ${tkClock(range.endInclusive.toLong())}", style = OT.type.footnote, color = c.labelSecondary)
+                }
+            }
+            if (failed) {
+                Text("Couldn't trim this take. The original is untouched.", style = OT.type.footnote, color = c.danger)
+            }
+            PrimaryButton(
+                if (saving) "Trimming…" else "Save trim",
+                onClick = ::save,
+                enabled = !saving && durationMs > 0L && range.endInclusive - range.start >= 1000f,
+            )
+            PlainButton("Cancel", onClick = { if (!saving) onClose() })
+        }
+    }
+}
+
+/** A frame from the take at [atMs], for seeing where a cut lands. */
+@Composable
+private fun TkTrimFrame(source: Uri?, atMs: Long, modifier: Modifier) {
+    val context = LocalContext.current
+    // Rounded so dragging doesn't decode a frame for every pixel moved.
+    val key = atMs / 250
+    val frame by produceState<android.graphics.Bitmap?>(null, source, key) {
+        value = withContext(Dispatchers.IO) {
+            source?.let { uri ->
+                runCatching {
+                    android.media.MediaMetadataRetriever().run {
+                        try {
+                            setDataSource(context, uri)
+                            getScaledFrameAtTime(key * 250_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 480, 270)
+                        } finally {
+                            release()
+                        }
+                    }
+                }.getOrNull()
+            }
+        }
+    }
+    Box(modifier.height(90.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF222228)), contentAlignment = Alignment.Center) {
+        frame?.let {
+            androidx.compose.foundation.Image(
+                it.asImageBitmap(),
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } ?: Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(24.dp))
+    }
+}
+
+private fun tkDurationMs(context: android.content.Context, uri: Uri): Long = runCatching {
+    android.media.MediaMetadataRetriever().run {
+        try {
+            setDataSource(context, uri)
+            extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        } finally {
+            release()
+        }
+    }
+}.getOrDefault(0L)
+
+private fun tkClock(ms: Long): String = (ms / 1000).let { "%d:%02d".format(it / 60, it % 60) }

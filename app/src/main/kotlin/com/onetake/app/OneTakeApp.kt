@@ -126,6 +126,11 @@ private fun RootTabs(
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
     LaunchedEffect(route) { navigator.syncTab(route) }
+    // Something shared to OneTake opens Add audition, which reads it (only once onboarded — this
+    // screen doesn't exist before then, so the share waits).
+    LaunchedEffect(store.incomingShare) {
+        if (store.incomingShare != null) navigator.showAddAudition()
+    }
     val showBar = AppTab.entries.any { it.route == route }
     var isProfileSheetVisible by remember { mutableStateOf(false) }
 

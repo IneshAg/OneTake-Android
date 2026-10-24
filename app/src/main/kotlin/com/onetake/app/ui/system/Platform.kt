@@ -80,12 +80,12 @@ fun viewFile(context: Context, file: File) {
     runCatching { context.startActivity(view) }
 }
 
-/** "On your clipboard" card in Add audition — returns text only if it looks like a casting notice. */
-fun clipboardCastingNotice(context: Context): String? {
+/** The clipboard's text — read only when the actor taps Paste in Add audition. Reading it as the
+ *  sheet opened made Android show "OneTake pasted from your clipboard" every time. */
+fun clipboardText(context: Context): String? {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return null
-    val text = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString() ?: return null
-    val lower = text.lowercase()
-    return if ("tape" in lower || "audition" in lower || "sides" in lower) text else null
+    return cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+        ?.takeIf { it.isNotBlank() }
 }
 
 /** Keep the screen on while this composable is visible (filming, prompter). */

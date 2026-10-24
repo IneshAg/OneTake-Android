@@ -107,7 +107,7 @@ import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.SheetHeader
-import com.onetake.app.ui.system.clipboardCastingNotice
+import com.onetake.app.ui.system.clipboardText
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.theme.OT
 import kotlinx.coroutines.delay
@@ -200,7 +200,6 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     var path by remember { mutableStateOf(listOf<AddStep>()) }
     var notice by remember { mutableStateOf("") }
     var draft by remember { mutableStateOf(AddDraft()) }
-    val clip = remember { runCatching { clipboardCastingNotice(context) }.getOrNull() }
 
     fun startReading(text: String) {
         if (text.isBlank()) {
@@ -260,6 +259,28 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
             }
         }
     }
+    // A notice shared from another app (MainActivity → AppStore.incomingShare): its text plus whatever
+    // the attached images or PDFs say, read on the phone like a photo or file.
+    LaunchedEffect(store.incomingShare) {
+        val share = store.incomingShare ?: return@LaunchedEffect
+        store.incomingShare = null
+        notice = ""
+        path = listOf(AddStep.Reading)
+        val parts = buildList {
+            share.text?.let { add(it) }
+            share.uris.forEach { uri ->
+                OcrManager.recognizeTextFromUri(context, uri).getOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
+            }
+        }
+        val text = parts.joinToString("\n\n").trim()
+        if (text.isBlank()) {
+            path = listOf(AddStep.CouldNotRead)
+        } else {
+            notice = text
+            draft = addParseNotice(text)
+        }
+    }
+
     val pickPhoto: () -> Unit = {
         photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
@@ -292,11 +313,8 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
         BackHandler(enabled = path.isNotEmpty()) { path = path.dropLast(1) }
         when (step) {
             null -> AddCaptureStep(
-                clip = clip,
                 onClose = onDismiss,
-                onPaste = {
-                    if (clip != null) startReading(clip)
-                },
+                onPaste = { startReading(runCatching { clipboardText(context) }.getOrNull().orEmpty()) },
                 onPhoto = pickPhoto,
                 onScan = scan,
                 onFile = { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "application/rtf", "text/rtf")) },
@@ -360,7 +378,6 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
 
 @Composable
 private fun AddCaptureStep(
-    clip: String?,
     onClose: () -> Unit,
     onPaste: () -> Unit,
     onPhoto: () -> Unit,
@@ -369,7 +386,6 @@ private fun AddCaptureStep(
     onType: () -> Unit,
 ) {
     val c = OT.colors
-    val parsed = remember(clip) { clip?.let { addParseNotice(it) } }
     Column(
         Modifier
             .fillMaxWidth()
@@ -388,38 +404,26 @@ private fun AddCaptureStep(
             CircleIconButton(Icons.Filled.Close, "Close", onClick = onClose)
         }
 
-        if (clip != null && parsed != null) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(c.accentSoft)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(
-                        Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(c.accentSoft),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Filled.ContentPaste, null, tint = c.accent, modifier = Modifier.size(20.dp)) }
-                    Column {
-                        Text("On your clipboard", style = OT.type.headline, color = c.labelPrimary)
-                        Text(
-                            if (parsed.project.isNotEmpty()) parsed.project else "Looks like a casting notice",
-                            style = OT.type.footnote,
-                            color = c.labelTertiary,
-                        )
-                    }
+        // The clipboard is only read when Paste is tapped.
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(c.accentSoft)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(
+                    Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(c.accentSoft),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Filled.ContentPaste, null, tint = c.accent, modifier = Modifier.size(20.dp)) }
+                Column {
+                    Text("Copied the notice?", style = OT.type.headline, color = c.labelPrimary)
+                    Text("Paste the email or message — OneTake reads it here", style = OT.type.footnote, color = c.labelTertiary)
                 }
-                Text(
-                    "“${clip.take(110)}…”",
-                    style = OT.type.callout,
-                    color = c.labelSecondary,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                PrimaryButton("Paste and set up", onClick = onPaste)
             }
+            PrimaryButton("Paste and set up", onClick = onPaste)
         }
 
         SectionLabel("Or bring it in")
@@ -433,7 +437,7 @@ private fun AddCaptureStep(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Filled.Share, null, tint = c.accent, modifier = Modifier.size(14.dp))
-                Text("Faster: Share from Mail or WhatsApp to OneTake", style = OT.type.footnote, color = c.accent)
+                Text("Faster: in Mail or WhatsApp, Share → OneTake", style = OT.type.footnote, color = c.accent)
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Filled.Lock, null, tint = c.labelTertiary, modifier = Modifier.size(14.dp))

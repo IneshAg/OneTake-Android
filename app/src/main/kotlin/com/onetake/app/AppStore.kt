@@ -107,6 +107,8 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         get() = notifyTwoHoursState.value
         set(value) { notifyTwoHoursState.value = value; persist() }
     private val liquidGlassState = mutableStateOf(true)
+    /** A notice shared from another app, waiting for Add audition to read it. Not persisted. */
+    var incomingShare by mutableStateOf<com.onetake.app.data.SharedNotice?>(null)
     var liquidGlass: Boolean
         get() = liquidGlassState.value
         set(value) { liquidGlassState.value = value; persist() }

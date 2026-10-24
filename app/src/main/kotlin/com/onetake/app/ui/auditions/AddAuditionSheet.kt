@@ -145,11 +145,11 @@ private data class AddDraft(
         // the lines is yours, or there are at least two speakers. Notice prose would otherwise
         // become a fake "monologue" for the role.
         val hasCues = rawScriptText.isNotBlank() && ScriptParser.extractCharacters(rawScriptText).isNotEmpty()
-        val parsedScene = if (!hasCues) null else
-            ScriptParser.parse(rawScriptText, myCharacter = role.ifBlank { "Me" }, sceneTitle = "Scene 1")
-                .takeIf { scene -> scene.lines.any { it.isMine } || scene.lines.distinctBy { it.character }.size >= 2 }
-        val finalScenes = parsedScene?.let { listOf(it) }
-            ?: (1..maxOf(1, scenes)).map { ScriptScene.placeholder(it, role) }
+        // One scene per slugline / "SCENE 2" header in the sides.
+        val parsedScenes = if (!hasCues) emptyList() else
+            ScriptParser.parseScenes(rawScriptText, myCharacter = role.ifBlank { "Me" })
+                .filter { scene -> scene.lines.any { it.isMine } || scene.lines.distinctBy { it.character }.size >= 2 }
+        val finalScenes = parsedScenes.ifEmpty { (1..maxOf(1, scenes)).map { ScriptScene.placeholder(it, role) } }
 
         val pieces = mutableListOf(
             Piece(kind = PieceKind.Headshot, title = "Headshot", detail = "Front", isDone = hasHeadshot),

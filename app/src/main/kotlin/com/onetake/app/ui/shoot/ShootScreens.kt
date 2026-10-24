@@ -112,12 +112,12 @@ import kotlinx.coroutines.delay
 // MARK: - 13b How are you shooting?
 
 @Composable
-fun ShootModeScreen(auditionId: String) {
+fun ShootModeScreen(auditionId: String, scene: Int = -1) {
     val nav = LocalNavigator.current
 
     PushedScreen(
         bottomBar = {
-            PrimaryButton(text = "Continue solo", onClick = { nav.push(Route.ShootSetup(auditionId)) })
+            PrimaryButton(text = "Continue solo", onClick = { nav.push(Route.ShootSetup(auditionId, scene)) })
         },
     ) {
         LargeTitle(
@@ -212,11 +212,11 @@ private fun ShootIconTile(icon: ImageVector, tint: Color = OT.colors.accent) {
 // MARK: - 13c Before you roll
 
 @Composable
-fun ShootSetupScreen(auditionId: String) {
+fun ShootSetupScreen(auditionId: String, scene: Int = -1) {
     val nav = LocalNavigator.current
     val context = LocalContext.current
     val c = OT.colors
-    val roll = { nav.openCamera(CameraFlow.Shoot(auditionId)) }
+    val roll = { nav.openCamera(CameraFlow.Shoot(auditionId, scene)) }
 
     // Re-read the phone's real state whenever the screen comes back (e.g. from Settings).
     var status by remember { mutableStateOf(SetupStatus.read(context)) }

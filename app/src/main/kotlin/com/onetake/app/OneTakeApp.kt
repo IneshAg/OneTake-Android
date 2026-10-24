@@ -170,10 +170,10 @@ private fun RootTabs(
                 withIdScene(Route.Pattern.PREPARE) { id, s -> PrepareScreen(id, s) }
                 withIdScene(Route.Pattern.RUN_LINES) { id, s -> RunLinesScreen(id, s) }
                 withIdScene(Route.Pattern.AUDIO_WALK) { id, s -> AudioWalkScreen(id, s) }
-                withId(Route.Pattern.READER) { ReaderScreen(it) }
-                withId(Route.Pattern.RECORD_READER) { RecordReaderScreen(it) }
-                withId(Route.Pattern.SHOOT_MODE) { ShootModeScreen(it) }
-                withId(Route.Pattern.SHOOT_SETUP) { ShootSetupScreen(it) }
+                withIdScene(Route.Pattern.READER) { id, s -> ReaderScreen(id, s) }
+                withIdScene(Route.Pattern.RECORD_READER) { id, s -> RecordReaderScreen(id, s) }
+                withIdScene(Route.Pattern.SHOOT_MODE) { id, s -> ShootModeScreen(id, s) }
+                withIdScene(Route.Pattern.SHOOT_SETUP) { id, s -> ShootSetupScreen(id, s) }
                 withId(Route.Pattern.TAKES) { TakesScreen(it) }
                 withId(Route.Pattern.TAPE_CHECK) { TapeCheckScreen(it) }
                 withId(Route.Pattern.PACKAGE) { PackageScreen(it) }
@@ -185,7 +185,9 @@ private fun RootTabs(
                 composable(Route.PracticeSetup.path) { PracticeSetupScreen() }
 
                 // Full-screen camera flows slide up like a modal.
-                cameraRoute(Route.Pattern.CAMERA_SHOOT, withId = true) { ShootFlowScreen(it.idArg()) }
+                cameraRoute(Route.Pattern.CAMERA_SHOOT, withId = true, withScene = true) {
+                    ShootFlowScreen(it.idArg(), initialScene = it.arguments?.getInt("scene")?.takeIf { s -> s >= 0 })
+                }
                 cameraRoute(Route.Pattern.CAMERA_HEADSHOT) { HeadshotFlowScreen() }
                 cameraRoute(Route.Pattern.CAMERA_PRACTICE) { PracticeTakeScreen() }
             }
@@ -250,11 +252,15 @@ private fun NavGraphBuilder.withIdScene(pattern: String, content: @Composable (S
 private fun NavGraphBuilder.cameraRoute(
     pattern: String,
     withId: Boolean = false,
+    withScene: Boolean = false,
     content: @Composable (NavBackStackEntry) -> Unit,
 ) {
     composable(
         pattern,
-        arguments = if (withId) listOf(navArgument("id") { type = NavType.StringType }) else emptyList(),
+        arguments = buildList {
+            if (withId) add(navArgument("id") { type = NavType.StringType })
+            if (withScene) add(navArgument("scene") { type = NavType.IntType })
+        },
         enterTransition = { slideInVertically(tween(320)) { it } },
         exitTransition = { fadeOut(tween(200)) },
         popEnterTransition = { fadeIn(tween(200)) },

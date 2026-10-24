@@ -64,7 +64,8 @@ enum class Destination(val label: String, val spec: String) {
     ActorsAccess("Actors Access", "H.264 .mp4 · 1080p · under 500 MB"),
     CastingNetworks("Casting Networks", "H.264 .mp4 · 1080p · up to 300 MB"),
     Spotlight("Spotlight", "H.264 .mp4 · 1080p"),
-    EmailOrLink("Email or link", "Private link · 30 days"),
+    // There's no link hosting on Android: the tape goes through the share sheet (mail, messaging, Drive…).
+    EmailOrLink("Email or link", "Through your share sheet · mail, messaging or Drive"),
 }
 
 data class Audition(
@@ -98,7 +99,7 @@ data class Audition(
     /** The single "Next:" line used on Home and on audition rows. */
     val nextAction: String
         get() {
-            if (status == AuditionStatus.Sent) return "Sent · link active"
+            if (status == AuditionStatus.Sent) return "Sent"
             val next = nextPiece ?: return "Watch it once, then send"
             return when (next.kind) {
                 PieceKind.Headshot -> "Take your headshot"

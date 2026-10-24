@@ -421,7 +421,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
                         Modifier
                             .heightIn(min = 48.dp)
                             .clip(CircleShape)
-                            .clickable(role = Role.Button) { if (a != null) nav.push(Route.Reader(a.id)) }
+                            .clickable(role = Role.Button) { if (a != null) nav.push(Route.Reader(a.id, sceneIndex)) }
                             .padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -525,7 +525,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
             }
             PrepCapsule("Run lines", Icons.Filled.PlayArrow, onClick = { nav.push(Route.RunLines(auditionId, sceneIndex)) })
             PrepCapsule("Record", Icons.Filled.RadioButtonChecked, filled = true, onClick = {
-                if (a != null) nav.push(Route.ShootMode(a.id)) else nav.openCamera(CameraFlow.PracticeTake)
+                if (a != null) nav.push(Route.ShootMode(a.id, sceneIndex)) else nav.openCamera(CameraFlow.PracticeTake)
             })
         }
     }

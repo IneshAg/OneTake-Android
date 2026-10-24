@@ -289,9 +289,20 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Next take number for a scene — real takes only, so numbering reflects what's actually on disk. */
+    /** The scene the camera should open on: the first whose checklist piece isn't done, else the
+     *  first with no takes yet, else the first. */
+    fun sceneToShoot(auditionId: String): Int {
+        val a = audition(auditionId) ?: return 0
+        val undone = a.pieces.filter { it.kind == PieceKind.Scene && !it.isDone }.map { it.title }.toSet()
+        a.scenes.indexOfFirst { it.title in undone }.takeIf { it >= 0 }?.let { return it }
+        a.scenes.indices.firstOrNull { i -> takes.none { it.auditionId == auditionId && it.sceneIndex == i } }?.let { return it }
+        return 0
+    }
+
+    /** Next take number for a scene: one past the highest real take, so numbers never repeat after a
+     *  take is removed (a count-based number would collide with an existing one). */
     fun nextTakeNumber(auditionId: String, sceneIndex: Int): Int =
-        takes.count { it.auditionId == auditionId && it.sceneIndex == sceneIndex } + 1
+        (takes.filter { it.auditionId == auditionId && it.sceneIndex == sceneIndex }.maxOfOrNull { it.number } ?: 0) + 1
 
     /** Appends a real take, circling it automatically if it's the first for that scene (so there's
      *  always a sensible send pick without the actor having to remember to circle one). */

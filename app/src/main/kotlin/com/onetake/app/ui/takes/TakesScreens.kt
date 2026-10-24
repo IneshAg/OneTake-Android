@@ -130,11 +130,16 @@ fun TakesScreen(auditionId: String) {
     var comparing by remember { mutableStateOf(false) }
     var isPlaying by remember(selected) { mutableStateOf(false) }
 
-    // Scoped to this audition — otherwise every audition's takes show up mixed together.
-    val takes = store.takes.filter { it.auditionId == auditionId }
+    // Scoped to this audition — otherwise every audition's takes show up mixed together — and to one
+    // scene at a time, since each scene has its own circled take.
+    val scenes = store.audition(auditionId)?.scenes.orEmpty()
+    var sceneChoice by remember { mutableStateOf<Int?>(null) }
+    val auditionTakes = store.takes.filter { it.auditionId == auditionId }
+    val sceneIndex = sceneChoice ?: auditionTakes.lastOrNull()?.sceneIndex ?: 0
+    val takes = auditionTakes.filter { (it.sceneIndex ?: 0) == sceneIndex }
     val circled = takes.firstOrNull { it.isCircled }
     val current = takes.firstOrNull { it.id == (selected ?: circled?.id) } ?: takes.lastOrNull()
-    val sceneTitle = store.audition(auditionId)?.scenes?.firstOrNull()?.title ?: "Scene 1"
+    val sceneTitle = scenes.getOrNull(sceneIndex)?.title ?: "Scene ${sceneIndex + 1}"
 
     if (comparing) {
         BackHandler { comparing = false }
@@ -167,6 +172,24 @@ fun TakesScreen(auditionId: String) {
                 .padding(top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (scenes.size > 1) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    scenes.forEachIndexed { i, s ->
+                        val on = i == sceneIndex
+                        Box(
+                            Modifier
+                                .heightIn(min = 40.dp)
+                                .clip(CircleShape)
+                                .background(if (on) c.accent else c.fillField)
+                                .clickable(role = Role.Tab) { sceneChoice = i; selected = null; haptics.tick() }
+                                .padding(horizontal = 14.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(s.title, style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = if (on) c.labelOnAccent else c.labelPrimary)
+                        }
+                    }
+                }
+            }
             val player = remember(current?.id) { TkPlayerState() }
             TkPlayerCard(
                 modifier = Modifier.fillMaxWidth().height(260.dp),
@@ -335,8 +358,8 @@ fun TakesScreen(auditionId: String) {
                     color = c.labelSecondary,
                     textAlign = TextAlign.Center,
                 )
-                PrimaryButton("Record take ${takes.size + 1}", onClick = {
-                    dismiss { nav.openCamera(CameraFlow.Shoot(auditionId)) }
+                PrimaryButton("Record take ${store.nextTakeNumber(auditionId, sceneIndex)}", onClick = {
+                    dismiss { nav.openCamera(CameraFlow.Shoot(auditionId, sceneIndex)) }
                 })
                 SecondaryButton("Not now", onClick = { dismiss {} })
             }

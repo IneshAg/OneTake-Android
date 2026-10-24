@@ -16,6 +16,38 @@ object ScriptParser {
     private val CHARACTER_HEADING_REGEX = Regex("""^([A-Z0-9 '\-\.]{2,30})(\s*\(.*\))?$""")
     private val PARENTHETICAL_REGEX = Regex("""^\(.*\)$""")
 
+    /** Where a new scene starts: an all-caps slugline ("INT. CAFÉ — DAY", "EXT/INT CAR", "I/E") or a
+     *  "SCENE 2" / "SC. 14A" header followed by nothing or a separator — so dialogue like "Scene two
+     *  was better" or "Int. was the word" isn't taken for one. Transitions don't start scenes. */
+    private val SLUGLINE_REGEX = Regex("""^(?:INT\.?/EXT|EXT\.?/INT|INT|EXT|EST|I/E)[.\s]""")
+    private val SCENE_HEADER_REGEX = Regex("""^(?:SCENE|SC\.?)\s*\d+[A-Z]?\b(.*)$""", RegexOption.IGNORE_CASE)
+
+    fun isSceneHeading(line: String): Boolean {
+        val t = line.trim()
+        if (t.isEmpty() || t.length > 80) return false
+        if (t == t.uppercase() && SLUGLINE_REGEX.containsMatchIn(t)) return true
+        val rest = SCENE_HEADER_REGEX.matchEntire(t)?.groupValues?.get(1)?.trim() ?: return false
+        return rest.isEmpty() || rest.first() in ":.-–—("
+    }
+
+    /** Sides often hold several scenes; each becomes its own `ScriptScene` ("Scene 1", "Scene 2"…)
+     *  so it can be prepared and shot on its own. Stretches with no dialogue between two headings
+     *  are dropped. With no headings at all this is just `parse` on the whole text. */
+    fun parseScenes(rawText: String, myCharacter: String): List<ScriptScene> {
+        val chunks = mutableListOf<MutableList<String>>(mutableListOf())
+        for (line in rawText.lines()) {
+            if (isSceneHeading(line) && chunks.last().any { it.isNotBlank() && !isSceneHeading(it) }) {
+                chunks.add(mutableListOf())
+            }
+            chunks.last().add(line)
+        }
+        val withDialogue = chunks.map { it.joinToString("\n") }.filter { extractCharacters(it).isNotEmpty() }
+        if (withDialogue.size <= 1) return listOf(parse(rawText, myCharacter))
+        return withDialogue.mapIndexed { i, chunk ->
+            parse(chunk, myCharacter, sceneTitle = "Scene ${i + 1}", sceneNumber = i + 1)
+        }
+    }
+
     fun extractCharacters(rawText: String): List<String> {
         val lines = rawText.lines().map { it.trim() }.filter { it.isNotBlank() }
         val characters = LinkedHashSet<String>()

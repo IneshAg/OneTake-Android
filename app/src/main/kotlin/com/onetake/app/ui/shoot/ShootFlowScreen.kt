@@ -33,6 +33,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -134,7 +136,7 @@ import java.time.LocalDateTime
 private enum class ShootStage { Check, Slate, SlateDone, FullLength, Scene, Saved }
 
 @Composable
-fun ShootFlowScreen(auditionId: String) {
+fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val haptics = rememberHaptics()
@@ -151,9 +153,9 @@ fun ShootFlowScreen(auditionId: String) {
     var showTimerMenu by remember { mutableStateOf(false) }
     var voiceEnabled by remember { mutableStateOf(true) }
     var lineIndex by remember { mutableIntStateOf(0) }
-    // Shoot always records the audition's first scene in one sitting — mirrors iOS's ShootFlow,
-    // which hardcodes the same `sceneIndex = 0` (multi-scene selection isn't part of this flow).
-    val sceneIndex = 0
+    // The scene being shot: the one asked for, else the next one still to shoot. Takes, reader lines
+    // and the checklist tick all follow it.
+    var sceneIndex by remember { mutableIntStateOf(initialScene ?: store.sceneToShoot(auditionId)) }
     var takeNumber by remember { mutableIntStateOf(store.nextTakeNumber(auditionId, sceneIndex)) }
     var front by remember { mutableStateOf(true) }
     var exposureLocked by remember { mutableStateOf(false) }
@@ -199,14 +201,17 @@ fun ShootFlowScreen(auditionId: String) {
         store.markDone(PieceKind.FullLength, auditionId)
     }
     fun saveTake(uri: Uri?, take: Take) {
+        // The take's own scene, not the screen's current one: the file can land after the actor has
+        // already moved on to the next scene.
+        val shotScene = take.sceneIndex ?: 0
         val saved = MediaStore.persist(
-            appContext, uri, "take-${take.number}-${take.id.take(8)}.mp4", "audition-$auditionId/scene-$sceneIndex",
+            appContext, uri, "take-${take.number}-${take.id.take(8)}.mp4", "audition-$auditionId/scene-$shotScene",
         ) ?: return couldNotSave()
         store.addTake(take.copy(fileUri = saved.toString()))
         // Tick off the scene that was actually shot, not whichever scene piece is first undone.
         val a = store.audition(auditionId)
         val pieces = a?.pieces.orEmpty()
-        val title = a?.scenes?.getOrNull(sceneIndex)?.title
+        val title = a?.scenes?.getOrNull(shotScene)?.title
             ?.takeIf { t -> pieces.any { it.kind == PieceKind.Scene && it.title == t } }
         store.markDone(PieceKind.Scene, auditionId, title)
     }
@@ -313,6 +318,33 @@ fun ShootFlowScreen(auditionId: String) {
         voiceCommander.setRecordingMode(recording)
     }
 
+    /** Scenes with a take already (saved, or the one just shot whose file is still landing). */
+    val shotScenes = store.takes.filter { it.auditionId == auditionId }.mapNotNull { it.sceneIndex }.toSet() +
+        (if (stage == ShootStage.Saved) setOf(sceneIndex) else emptySet())
+
+    fun pickScene(i: Int) {
+        if (recording || countdown != null) return
+        reader.stop()
+        tts.stop()
+        sceneIndex = i
+        lineIndex = 0
+        takeNumber = store.nextTakeNumber(auditionId, i)
+        haptics.tick()
+    }
+
+    /** The next scene after this one (wrapping round) with no take yet. */
+    fun nextUnshotScene(): Int? {
+        val count = audition?.scenes?.size ?: 0
+        return (1 until count).map { (sceneIndex + it) % count }.firstOrNull { it !in shotScenes }
+    }
+
+    fun moveToScene(i: Int) {
+        sceneIndex = i
+        lineIndex = 0
+        takeNumber = store.nextTakeNumber(auditionId, i)
+        stage = ShootStage.Scene
+    }
+
     // The scene piece is ticked off by saveTake once the take is really on disk — not here.
     fun finish(goTo: Route) {
         nav.closeCamera(then = goTo)
@@ -323,7 +355,7 @@ fun ShootFlowScreen(auditionId: String) {
         ShootStage.Check -> "Camera check"
         ShootStage.Slate, ShootStage.SlateDone -> "Slate  $time"
         ShootStage.FullLength -> "Full length  $time"
-        ShootStage.Scene, ShootStage.Saved -> "SC 1 · TK $takeNumber  $time"
+        ShootStage.Scene, ShootStage.Saved -> "SC ${sceneIndex + 1} · TK $takeNumber  $time"
     }
 
     RecordStartErrorDialog(camera)
@@ -476,10 +508,18 @@ fun ShootFlowScreen(auditionId: String) {
                 if (audition != null) {
                     Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
                         when (stage) {
-                            ShootStage.Check -> ShootCheckChips()
+                            ShootStage.Check -> {
+                                ShootCheckChips()
+                                Spacer(Modifier.height(10.dp))
+                                ShootScenePicker(audition.scenes, sceneIndex, shotScenes, onPick = ::pickScene)
+                            }
                             ShootStage.Slate -> ShootPromptCard(eyebrow = "Slate · say it to the lens · ≈ 5 s", text = store.slate.spoken)
                             ShootStage.FullLength -> ShootPromptCard(eyebrow = "After the slate", text = "Head to feet, hold still")
                             ShootStage.Scene -> {
+                                if (!recording && countdown == null) {
+                                    ShootScenePicker(audition.scenes, sceneIndex, shotScenes, onPick = ::pickScene)
+                                    Spacer(Modifier.height(10.dp))
+                                }
                                 val line = lines.getOrNull(lineIndex)
                                 if (line != null) {
                                     ShootScenePrompt(
@@ -505,19 +545,38 @@ fun ShootFlowScreen(auditionId: String) {
                             secondary = "Redo" to { stage = ShootStage.Slate },
                             primaryFirst = true,
                         )
-                        ShootStage.Saved -> ShootResultCard(
-                            modifier = Modifier.align(Alignment.Center),
-                            eyebrow = "Take saved",
-                            title = "Take $takeNumber, in the can.",
-                            detail = "${formatDuration(lastTakeSeconds)} · saved to this phone",
-                            primary = "Watch take $takeNumber" to { finish(Route.Takes(auditionId)) },
-                            secondary = "Go again" to {
+                        ShootStage.Saved -> {
+                            val goAgain = "Go again" to {
                                 takeNumber += 1
                                 lineIndex = 0
                                 stage = ShootStage.Scene
-                            },
-                            tertiary = "Done for now" to { finish(Route.AuditionDetail(auditionId)) },
-                        )
+                            }
+                            val next = nextUnshotScene()
+                            if (next != null) {
+                                ShootResultCard(
+                                    modifier = Modifier.align(Alignment.Center),
+                                    eyebrow = "Take saved",
+                                    title = "Take $takeNumber, in the can.",
+                                    detail = "${formatDuration(lastTakeSeconds)} · ${audition.scenes[next].title} is still to shoot",
+                                    primary = "Next: ${audition.scenes[next].title}" to { moveToScene(next) },
+                                    secondary = goAgain,
+                                    extras = listOf(
+                                        "Watch take $takeNumber" to { finish(Route.Takes(auditionId)) },
+                                        "Done for now" to { finish(Route.AuditionDetail(auditionId)) },
+                                    ),
+                                )
+                            } else {
+                                ShootResultCard(
+                                    modifier = Modifier.align(Alignment.Center),
+                                    eyebrow = "Take saved",
+                                    title = "Take $takeNumber, in the can.",
+                                    detail = "${formatDuration(lastTakeSeconds)} · saved to this phone",
+                                    primary = "Watch take $takeNumber" to { finish(Route.Takes(auditionId)) },
+                                    secondary = goAgain,
+                                    extras = listOf("Done for now" to { finish(Route.AuditionDetail(auditionId)) }),
+                                )
+                            }
+                        }
                         else -> Unit
                     }
                 }
@@ -920,7 +979,7 @@ private fun ShootResultCard(
     detail: String,
     primary: Pair<String, () -> Unit>,
     secondary: Pair<String, () -> Unit>,
-    tertiary: Pair<String, () -> Unit>? = null,
+    extras: List<Pair<String, () -> Unit>> = emptyList(),
     checks: List<String> = emptyList(),
     primaryFirst: Boolean = false,
 ) {
@@ -962,13 +1021,49 @@ private fun ShootResultCard(
                 PrimaryButton(primary.first, onClick = primary.second, modifier = Modifier.weight(1f))
             }
         }
-        if (tertiary != null) {
+        extras.forEach { (label, action) ->
             PlainButton(
-                tertiary.first,
-                onClick = tertiary.second,
+                label,
+                onClick = action,
                 color = c.accent,
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+    }
+}
+
+/** Scene chips — only when the sides have more than one scene. A tick marks scenes with a take. */
+@Composable
+private fun ShootScenePicker(
+    scenes: List<com.onetake.app.models.ScriptScene>,
+    selected: Int,
+    shot: Set<Int>,
+    onPick: (Int) -> Unit,
+) {
+    if (scenes.size < 2) return
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+    ) {
+        scenes.forEachIndexed { i, scene ->
+            val on = i == selected
+            Row(
+                Modifier
+                    .heightIn(min = 36.dp)
+                    .clip(CircleShape)
+                    .background(if (on) DarkOT.accent else Color.Black.copy(alpha = 0.55f))
+                    .clickable(role = Role.Tab, onClickLabel = "Shoot ${scene.title}") { onPick(i) }
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (i in shot) Icon(Icons.Filled.Check, null, tint = if (on) DarkOT.labelOnAccent else Color.White, modifier = Modifier.size(14.dp))
+                Text(
+                    scene.title,
+                    style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                    color = if (on) DarkOT.labelOnAccent else Color.White,
+                )
+            }
         }
     }
 }

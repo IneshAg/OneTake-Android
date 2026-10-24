@@ -163,7 +163,7 @@ private fun RdrPlayCircle(
 // MARK: - 12 Reader — "Who reads Maya?"
 
 @Composable
-fun ReaderScreen(auditionId: String) {
+fun ReaderScreen(auditionId: String, sceneIndex: Int = 0) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val context = LocalContext.current
@@ -171,7 +171,7 @@ fun ReaderScreen(auditionId: String) {
     val player = rememberReaderPlayer()
     val c = OT.colors
     val a = store.audition(auditionId)
-    val scene = a?.scenes?.firstOrNull()
+    val scene = a?.scenes?.getOrNull(sceneIndex)
     val readerName = scene?.let { prepReaderName(it) } ?: "Reader"
     val readerLines = scene?.lines?.filter { !it.isMine } ?: emptyList()
     val sceneId = scene?.id.orEmpty()
@@ -291,7 +291,7 @@ fun ReaderScreen(auditionId: String) {
             onClick = {
                 player.stop()
                 playingLine = null
-                nav.push(Route.RecordReader(auditionId))
+                nav.push(Route.RecordReader(auditionId, sceneIndex))
             },
         )
     }
@@ -300,7 +300,7 @@ fun ReaderScreen(auditionId: String) {
 // MARK: - 13 Record the reader yourself
 
 @Composable
-fun RecordReaderScreen(auditionId: String) {
+fun RecordReaderScreen(auditionId: String, sceneIndex: Int = 0) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val context = LocalContext.current
@@ -309,7 +309,7 @@ fun RecordReaderScreen(auditionId: String) {
     val player = rememberReaderPlayer()
     val c = OT.colors
     val a = store.audition(auditionId)
-    val scene = a?.scenes?.firstOrNull()
+    val scene = a?.scenes?.getOrNull(sceneIndex)
     val readerPositions = scene?.lines?.let { ls -> ls.indices.filter { !ls[it].isMine } } ?: emptyList()
     if (a == null || scene == null || readerPositions.isEmpty()) {
         PushedScreen {

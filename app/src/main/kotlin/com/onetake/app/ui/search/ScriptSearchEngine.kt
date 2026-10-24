@@ -7,6 +7,8 @@ data class ScriptSearchLine(
     val text: String,
     val auditionId: String? = null,
     val practicePieceId: String? = null,
+    /** Which scene of the audition the line is in, so a result opens that scene. */
+    val sceneIndex: Int = 0,
 )
 
 data class DialogueMatch(
@@ -17,6 +19,7 @@ data class DialogueMatch(
     val highlightSpan: IntRange,
     val auditionId: String? = null,
     val practicePieceId: String? = null,
+    val sceneIndex: Int = 0,
 )
 
 class ScriptSearchEngine(
@@ -40,6 +43,7 @@ class ScriptSearchEngine(
                     highlightSpan = if (start >= 0) start until start + trimmed.length else IntRange.EMPTY,
                     auditionId = line.auditionId,
                     practicePieceId = line.practicePieceId,
+                    sceneIndex = line.sceneIndex,
                 )
             }
     }

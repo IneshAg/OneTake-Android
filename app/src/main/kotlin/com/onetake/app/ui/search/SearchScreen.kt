@@ -77,7 +77,7 @@ fun SearchScreen(
 
     val dynamicLines = remember(store.auditions, store.practice) {
         val fromAuditions = store.auditions.flatMap { audition ->
-            audition.scenes.flatMap { scene ->
+            audition.scenes.flatMapIndexed { sceneIndex, scene ->
                 scene.lines.map { line ->
                     ScriptSearchLine(
                         character = line.character,
@@ -85,12 +85,16 @@ fun SearchScreen(
                         scene = scene.title.ifBlank { "Scene ${scene.number}" },
                         text = line.text,
                         auditionId = audition.id,
+                        sceneIndex = sceneIndex,
                     )
                 }
             }
         }
+        // A practice piece made from an audition scene carries a copy of that scene — skip it, or
+        // every one of its lines would show up twice.
+        val auditionSceneIds = store.auditions.flatMap { it.scenes }.mapTo(HashSet()) { it.id }
         val fromPractice = store.practice.mapNotNull { piece ->
-            piece.scene?.let { s -> piece to s }
+            piece.scene?.takeIf { it.id !in auditionSceneIds }?.let { s -> piece to s }
         }.flatMap { (piece, scene) ->
             scene.lines.map { line ->
                 ScriptSearchLine(
@@ -313,7 +317,7 @@ fun SearchScreen(
                                     .clickable {
                                         val targetId = match.auditionId ?: match.practicePieceId
                                         if (targetId != null) {
-                                            nav.push(Route.Prepare(targetId, 0))
+                                            nav.push(Route.Prepare(targetId, match.sceneIndex))
                                         }
                                     }
                                     .padding(horizontal = 18.dp, vertical = 14.dp)

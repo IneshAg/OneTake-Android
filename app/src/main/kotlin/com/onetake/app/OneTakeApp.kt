@@ -89,7 +89,6 @@ import com.onetake.app.ui.profile.HeadshotsScreen
 import com.onetake.app.ui.profile.NotificationSettingsScreen
 import com.onetake.app.ui.profile.PrivacyScreen
 import com.onetake.app.ui.profile.ProfileScreen
-import com.onetake.app.ui.shoot.MultiDeviceScreen
 import com.onetake.app.ui.shoot.ShootFlowScreen
 import com.onetake.app.ui.shoot.ShootModeScreen
 import com.onetake.app.ui.shoot.ShootSetupScreen
@@ -176,7 +175,6 @@ private fun RootTabs(
                 withId(Route.Pattern.READER) { ReaderScreen(it) }
                 withId(Route.Pattern.RECORD_READER) { RecordReaderScreen(it) }
                 withId(Route.Pattern.SHOOT_MODE) { ShootModeScreen(it) }
-                withId(Route.Pattern.MULTI_DEVICE) { MultiDeviceScreen(it) }
                 withId(Route.Pattern.SHOOT_SETUP) { ShootSetupScreen(it) }
                 withId(Route.Pattern.TAKES) { TakesScreen(it) }
                 withId(Route.Pattern.TAPE_CHECK) { TapeCheckScreen(it) }

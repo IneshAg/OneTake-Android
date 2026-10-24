@@ -171,9 +171,6 @@ fun ProfileScreen() {
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("More")
-        ListRow(title = "Multi-Device", onClick = {
-            store.auditions.firstOrNull()?.let { nav.push(Route.MultiDevice(it.id)) }
-        })
         ListRow(title = "Notifications", onClick = { nav.push(Route.Notifications) })
         ListRow(title = "Privacy & data", onClick = { nav.push(Route.Privacy) })
         Box(

@@ -26,7 +26,6 @@ sealed class Route(val path: String) {
     data class Reader(val id: String) : Route("reader/$id")
     data class RecordReader(val id: String) : Route("recordReader/$id")
     data class ShootMode(val id: String) : Route("shootMode/$id")
-    data class MultiDevice(val id: String) : Route("multiDevice/$id")
     data class ShootSetup(val id: String) : Route("shootSetup/$id")
     data class Takes(val id: String) : Route("takes/$id")
     data class TapeCheck(val id: String) : Route("tapeCheck/$id")
@@ -48,7 +47,6 @@ sealed class Route(val path: String) {
         const val READER = "reader/{id}"
         const val RECORD_READER = "recordReader/{id}"
         const val SHOOT_MODE = "shootMode/{id}"
-        const val MULTI_DEVICE = "multiDevice/{id}"
         const val SHOOT_SETUP = "shootSetup/{id}"
         const val TAKES = "takes/{id}"
         const val TAPE_CHECK = "tapeCheck/{id}"

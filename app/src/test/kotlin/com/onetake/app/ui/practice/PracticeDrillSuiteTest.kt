@@ -8,30 +8,24 @@ import com.onetake.app.models.ScriptLine
 import com.onetake.app.models.ScriptScene
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
 
 class PracticeDrillSuiteTest {
     @Test
-    fun testDefaultRepertoireSeededAndAvailableForDrills() {
+    fun testPracticeStoreStartsEmptyAndResolvesExplicitPieces() {
         val store = AppStore()
-        val defaultPiece = store.practicePiece("default-practice-audition-piece")
-        assertNotNull("Default repertoire should be resolvable", defaultPiece)
-        assertEquals("The Audition", defaultPiece!!.title)
-        assertNotNull(defaultPiece.scene)
-        assertTrue("Default scene should contain rehearsal lines", defaultPiece.scene!!.lines.size >= 4)
-        assertTrue("Default scene should have actor and reader lines", defaultPiece.scene!!.lines.any { it.isMine } && defaultPiece.scene!!.lines.any { !it.isMine })
-
-        val fallback = store.defaultPracticePiece()
-        assertEquals("The Audition", fallback.title)
+        assertTrue("Store practice list must start empty without hardcoded scripts", store.practice.isEmpty())
+        assertNull(store.practicePiece("any-id"))
     }
 
     @Test
     fun testPracticeTakeSavingAndNumbering() {
         val store = AppStore()
-        val practicePiece = store.defaultPracticePiece()
-        val initialTakes = store.takes.filter { it.sceneId == practicePiece.id }.size
+        val pieceId = "test-practice-piece-1"
+        val initialTakes = store.takes.filter { it.sceneId == pieceId }.size
         assertEquals(0, initialTakes)
 
         val newTake = com.onetake.app.models.Take(
@@ -40,24 +34,25 @@ class PracticeDrillSuiteTest {
             recordedAt = LocalDateTime.now(),
             isCircled = false,
             notes = listOf("Practice rehearsal"),
-            sceneId = practicePiece.id,
+            sceneId = pieceId,
         )
         store.addTake(newTake)
-        assertEquals(1, store.takes.filter { it.sceneId == practicePiece.id }.size)
+        assertEquals(1, store.takes.filter { it.sceneId == pieceId }.size)
         assertEquals(1, newTake.number)
 
         val secondTake = com.onetake.app.models.Take(
-            number = store.takes.count { it.sceneId == practicePiece.id } + 1,
+            number = store.takes.count { it.sceneId == pieceId } + 1,
             durationSeconds = 38,
             recordedAt = LocalDateTime.now(),
             isCircled = true,
             notes = listOf("Great pacing"),
-            sceneId = practicePiece.id,
+            sceneId = pieceId,
         )
         store.addTake(secondTake)
-        assertEquals(2, store.takes.filter { it.sceneId == practicePiece.id }.size)
+        assertEquals(2, store.takes.filter { it.sceneId == pieceId }.size)
         assertEquals(2, secondTake.number)
     }
+
     @Test
     fun testMaskDialogueDifferentRatios() {
         val dialogue = "One two three four"

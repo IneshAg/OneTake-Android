@@ -146,28 +146,22 @@ fun PracticeScreen(
         // 2. Compact 2x2 Drill Suite (Option 1) - ALWAYS visible on practice tab
         CompactDrillGrid(
             onSelectMode = { mode ->
-                val targetId = store.practice.firstOrNull()?.id
-                    ?: store.auditions.firstOrNull()?.id
-                    ?: run {
-                        store.addPractice(com.onetake.app.data.DefaultRepertoire.defaultPiece)
-                        com.onetake.app.data.DefaultRepertoire.defaultPiece.id
-                    }
                 when (mode) {
-                    LineLearningMode.FIRST_LETTER -> {
-                        PrepPrefs.mode = PrepLineMode.FirstLetters
-                        nav.push(Route.RunLines(targetId, 0))
-                    }
-                    LineLearningMode.MASK_AND_REVEAL -> {
-                        PrepPrefs.mode = PrepLineMode.MaskAndReveal
-                        nav.push(Route.RunLines(targetId, 0))
-                    }
-                    LineLearningMode.AUDIO_GAP -> {
-                        PrepPrefs.mode = PrepLineMode.AudioGap
-                        nav.push(Route.RunLines(targetId, 0))
-                    }
-                    LineLearningMode.HANDS_FREE_WALK -> {
+                    LineLearningMode.FIRST_LETTER -> PrepPrefs.mode = PrepLineMode.FirstLetters
+                    LineLearningMode.MASK_AND_REVEAL -> PrepPrefs.mode = PrepLineMode.MaskAndReveal
+                    LineLearningMode.AUDIO_GAP -> PrepPrefs.mode = PrepLineMode.AudioGap
+                    LineLearningMode.HANDS_FREE_WALK -> Unit
+                }
+                val targetId = store.practice.firstOrNull()?.id ?: store.auditions.firstOrNull()?.id
+                if (targetId != null) {
+                    if (mode == LineLearningMode.HANDS_FREE_WALK) {
                         nav.push(Route.AudioWalk(targetId, 0))
+                    } else {
+                        nav.push(Route.RunLines(targetId, 0))
                     }
+                } else {
+                    // Direct the actor to import, paste, or scan their script
+                    nav.push(Route.PracticeSetup)
                 }
             },
         )
@@ -365,7 +359,7 @@ private fun PracticeSourceStep(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 240.dp),
                     decorationBox = { innerTextField ->
                         if (textInput.isBlank()) {
-                            Text("Paste dialogue, scan pages, or import sides PDF...\nExample:\nSAM: Hello\nNINA: Hi", style = OT.type.body, color = c.labelTertiary)
+                            Text("Paste dialogue, scan pages, or import sides PDF…", style = OT.type.body, color = c.labelTertiary)
                         }
                         innerTextField()
                     }
@@ -621,17 +615,18 @@ fun PracticeTakeScreen(pieceId: String? = null) {
     val recording = camera.state == CameraController.State.Recording
     KeepScreenOn()
 
-    val piece = if (pieceId != null) store.practicePiece(pieceId) else store.practice.firstOrNull() ?: store.defaultPracticePiece()
-    val activeScene = piece?.scene ?: store.defaultPracticePiece().scene
+    val piece = if (pieceId != null) store.practicePiece(pieceId) else store.practice.firstOrNull()
+    val audition = if (piece == null) store.auditions.firstOrNull() else null
+    val activeScene = piece?.scene ?: audition?.scenes?.firstOrNull()
     val myLines = activeScene?.lines?.filter { it.isMine }.orEmpty()
     val partnerLines = activeScene?.lines?.filter { !it.isMine }.orEmpty()
 
-    val firstMyLine = myLines.firstOrNull()?.text ?: "Deliver your practice scene dialogue."
-    val myChar = piece?.character?.ifBlank { "YOU" } ?: "YOU"
-    val firstCueLine = partnerLines.firstOrNull()?.text ?: "Listen for partner cue."
-    val cueChar = partnerLines.firstOrNull()?.character ?: "PARTNER"
+    val firstMyLine = myLines.firstOrNull()
+    val myChar = piece?.character?.ifBlank { audition?.role?.ifBlank { "YOU" } } ?: "YOU"
+    val firstCueLine = partnerLines.firstOrNull()
+    val cueChar = firstCueLine?.character ?: "PARTNER"
 
-    val currentPieceId = piece?.id ?: "default-practice-audition-piece"
+    val currentPieceId = piece?.id ?: audition?.id ?: "rehearsal"
     val takeCount = store.takes.count { it.sceneId == currentPieceId }
     var currentTakeNumber by remember(takeCount) { mutableIntStateOf(takeCount + 1) }
     var savedTake by remember { mutableStateOf<Take?>(null) }
@@ -672,15 +667,30 @@ fun PracticeTakeScreen(pieceId: String? = null) {
             Spacer(Modifier.height(8.dp))
 
             // Dynamic Top of the scene
-            Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(OT.camera.glass).padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(activeScene?.title?.uppercase() ?: "TOP OF THE SCENE", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
-                Text("$myChar · YOU", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
-                Text(firstMyLine, style = OT.type.headline.copy(fontSize = 20.sp, lineHeight = 25.sp), color = OT.camera.label)
-                Text(cueChar, style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2.copy(alpha = 0.5f))
-                Text(firstCueLine, style = OT.type.footnote, color = OT.camera.label2.copy(alpha = 0.5f))
+            if (activeScene != null && activeScene.lines.isNotEmpty()) {
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(OT.camera.glass).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(activeScene.title.uppercase(), style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
+                    if (firstMyLine != null) {
+                        Text("$myChar · YOU", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
+                        Text(firstMyLine.text, style = OT.type.headline.copy(fontSize = 20.sp, lineHeight = 25.sp), color = OT.camera.label)
+                    }
+                    if (firstCueLine != null) {
+                        Text(cueChar, style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2.copy(alpha = 0.5f))
+                        Text(firstCueLine.text, style = OT.type.footnote, color = OT.camera.label2.copy(alpha = 0.5f))
+                    }
+                }
+            } else {
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(OT.camera.glass).padding(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text("FREE REHEARSAL", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
+                    Text("Record unscripted practice take", style = OT.type.footnote, color = OT.camera.label)
+                }
             }
 
             Spacer(Modifier.weight(1f))

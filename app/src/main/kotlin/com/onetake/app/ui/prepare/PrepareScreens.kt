@@ -317,41 +317,29 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
     val haptics = rememberHaptics()
     val c = OT.colors
     val a = store.audition(auditionId)
-    val practicePiece = if (a == null) store.practice.firstOrNull { it.id == auditionId } else null
-
-    val fallbackScene = remember(a?.id, a?.role, sceneIndex) {
-        if (a != null) {
-            ScriptScene(
-                number = sceneIndex + 1,
-                title = "Scene ${sceneIndex + 1}",
-                heading = "INT. AUDITION ROOM - DAY",
-                lines = listOf(
-                    ScriptLine(
-                        character = a.role.ifBlank { "ME" }.uppercase(),
-                        text = "Audition scene lines.",
-                        isMine = true,
-                    )
-                ),
-                estimatedSeconds = 60,
-            )
-        } else null
-    }
+    val practicePiece = if (a == null) store.practicePiece(auditionId) else null
 
     val scene = a?.scenes?.getOrNull(sceneIndex)
         ?: a?.scenes?.firstOrNull()
         ?: practicePiece?.scene
-        ?: fallbackScene
 
     LaunchedEffect(a?.id) {
-        if (a != null && a.scenes.isEmpty() && fallbackScene != null) {
+        if (a != null && a.scenes.isEmpty()) {
+            val emptyScene = ScriptScene(
+                number = sceneIndex + 1,
+                title = "Scene ${sceneIndex + 1}",
+                heading = "SCENE ${sceneIndex + 1}",
+                lines = emptyList(),
+                estimatedSeconds = 60,
+            )
             store.update(a.id) { current ->
-                if (current.scenes.isEmpty()) current.copy(scenes = listOf(fallbackScene)) else current
+                if (current.scenes.isEmpty()) current.copy(scenes = listOf(emptyScene)) else current
             }
         }
     }
 
     if ((a == null && practicePiece == null) || scene == null) {
-        PrepMissing("This scene isn’t available any more.")
+        PrepMissing("No script lines available for this scene.")
         return
     }
 
@@ -888,21 +876,6 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     val scene = a?.scenes?.getOrNull(sceneIndex)
         ?: a?.scenes?.firstOrNull()
         ?: practicePiece?.scene
-        ?: if (a != null) {
-            ScriptScene(
-                number = sceneIndex + 1,
-                title = "Scene ${sceneIndex + 1}",
-                heading = "INT. AUDITION ROOM - DAY",
-                lines = listOf(
-                    ScriptLine(
-                        character = a.role.ifBlank { "ME" }.uppercase(),
-                        text = "Audition scene lines.",
-                        isMine = true,
-                    )
-                ),
-                estimatedSeconds = 60,
-            )
-        } else null
     val lines = if (scene != null) prepRehearsalLines(scene) else emptyList()
     if ((a == null && practicePiece == null) || scene == null || lines.isEmpty()) {
         PrepMissing("There are no lines to run in this scene.")

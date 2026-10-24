@@ -142,14 +142,8 @@ fun AuditionDetailScreen(auditionId: String) {
                 ScriptScene(
                     number = i,
                     title = "Scene $i",
-                    heading = "INT. AUDITION ROOM - DAY",
-                    lines = listOf(
-                        ScriptLine(
-                            character = a.role.ifBlank { "ME" }.uppercase(),
-                            text = "Audition scene lines.",
-                            isMine = true,
-                        )
-                    ),
+                    heading = "SCENE $i",
+                    lines = emptyList(),
                     estimatedSeconds = 60,
                 )
             }
@@ -381,10 +375,14 @@ private fun DetailUpNext(a: Audition, nav: Navigator) {
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         DetailCardTitle(scene?.let { detailSceneName(it, next) } ?: next.title)
-                        Text(scene?.heading ?: "INT. AUDITION ROOM - DAY", style = OT.type.caption, color = c.labelTertiary)
+                        if (!scene?.heading.isNullOrBlank()) {
+                            Text(scene!!.heading, style = OT.type.caption, color = c.labelTertiary)
+                        }
                     }
-                    val quote = scene?.lines?.firstOrNull { it.isMine }?.text ?: "Audition scene lines."
-                    DetailQuoteLine(quote)
+                    val quote = scene?.lines?.firstOrNull { it.isMine }?.text
+                    if (!quote.isNullOrBlank()) {
+                        DetailQuoteLine(quote)
+                    }
                     PrimaryButton("Prepare scene $sceneNum", onClick = { nav.push(Route.Prepare(a.id, sceneIndex)) })
                 }
                 else -> {

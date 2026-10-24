@@ -75,21 +75,6 @@ fun AudioWalkScreen(
     val scene = audition?.scenes?.getOrNull(sceneIndex)
         ?: audition?.scenes?.firstOrNull()
         ?: practicePiece?.scene
-        ?: if (audition != null) {
-            ScriptScene(
-                number = sceneIndex + 1,
-                title = "Scene ${sceneIndex + 1}",
-                heading = "INT. AUDITION ROOM - DAY",
-                lines = listOf(
-                    ScriptLine(
-                        character = audition.role.ifBlank { "ME" }.uppercase(),
-                        text = "Audition scene lines.",
-                        isMine = true,
-                    )
-                ),
-                estimatedSeconds = 60,
-            )
-        } else null
 
     if (scene == null || scene.lines.isEmpty()) {
         Column(

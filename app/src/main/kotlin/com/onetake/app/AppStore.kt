@@ -6,7 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.ViewModel
-import com.onetake.app.data.DefaultRepertoire
 import com.onetake.app.models.Audition
 import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
@@ -48,10 +47,7 @@ class AppStore : ViewModel() {
 
     fun audition(id: String): Audition? = auditions.firstOrNull { it.id == id }
 
-    fun practicePiece(id: String): PracticePiece? =
-        practice.firstOrNull { it.id == id } ?: if (id == DefaultRepertoire.defaultPiece.id) DefaultRepertoire.defaultPiece else null
-
-    fun defaultPracticePiece(): PracticePiece = DefaultRepertoire.defaultPiece
+    fun practicePiece(id: String): PracticePiece? = practice.firstOrNull { it.id == id }
 
     /** The audition Home pushes the actor toward: soonest due, not sent. */
     val nextPriority: Audition?

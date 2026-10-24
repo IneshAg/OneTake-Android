@@ -156,14 +156,8 @@ private data class AddDraft(
                 ScriptScene(
                     number = i,
                     title = "Scene $i",
-                    heading = "INT. AUDITION ROOM - DAY",
-                    lines = listOf(
-                        ScriptLine(
-                            character = role.ifBlank { "ME" }.uppercase(),
-                            text = "Audition scene lines.",
-                            isMine = true,
-                        )
-                    ),
+                    heading = "SCENE $i",
+                    lines = emptyList(),
                     estimatedSeconds = 60,
                 )
             }

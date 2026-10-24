@@ -30,16 +30,14 @@ class ScriptSearchEngine(
         return allLines
             .filter { it.text.contains(trimmed, ignoreCase = true) || it.character.contains(trimmed, ignoreCase = true) }
             .map { line ->
-                val startIndex = line.text.indexOf(trimmed, ignoreCase = true).let { idx ->
-                    if (idx >= 0) idx else 0
-                }
-                val endIndex = (startIndex + trimmed.length).coerceAtMost(line.text.length)
+                // Empty when only the character's name matched — nothing in the line to highlight.
+                val start = line.text.indexOf(trimmed, ignoreCase = true)
                 DialogueMatch(
                     character = line.character,
                     project = line.project,
                     scene = line.scene,
                     line = line.text,
-                    highlightSpan = startIndex until endIndex,
+                    highlightSpan = if (start >= 0) start until start + trimmed.length else IntRange.EMPTY,
                     auditionId = line.auditionId,
                     practicePieceId = line.practicePieceId,
                 )

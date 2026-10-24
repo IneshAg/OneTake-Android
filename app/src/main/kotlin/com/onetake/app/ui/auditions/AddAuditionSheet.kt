@@ -96,7 +96,6 @@ import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
-import com.onetake.app.models.ScriptLine
 import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.otTime
 import com.onetake.app.ocr.OcrManager
@@ -142,32 +141,15 @@ private data class AddDraft(
     val rawScriptText: String = "",
 ) {
     fun makeAudition(hasHeadshot: Boolean = false): Audition {
-        val parsedScene = if (rawScriptText.isNotBlank()) {
+        // Use the pasted/scanned text as the scene only when it actually reads like sides — one of
+        // the lines is yours, or there are at least two speakers. Notice prose would otherwise
+        // become a fake "monologue" for the role.
+        val hasCues = rawScriptText.isNotBlank() && ScriptParser.extractCharacters(rawScriptText).isNotEmpty()
+        val parsedScene = if (!hasCues) null else
             ScriptParser.parse(rawScriptText, myCharacter = role.ifBlank { "Me" }, sceneTitle = "Scene 1")
-        } else null
-
-        val sceneCount = maxOf(1, scenes)
-        val finalScenes = if (parsedScene != null && parsedScene.lines.isNotEmpty()) {
-            listOf(parsedScene)
-        } else if (rawScriptText.isNotBlank()) {
-            listOf(ScriptParser.parse(rawScriptText, myCharacter = role.ifBlank { "Me" }, sceneTitle = "Scene 1"))
-        } else {
-            (1..sceneCount).map { i ->
-                ScriptScene(
-                    number = i,
-                    title = "Scene $i",
-                    heading = "INT. AUDITION ROOM - DAY",
-                    lines = listOf(
-                        ScriptLine(
-                            character = role.ifBlank { "ME" }.uppercase(),
-                            text = "Audition scene lines.",
-                            isMine = true,
-                        )
-                    ),
-                    estimatedSeconds = 60,
-                )
-            }
-        }
+                .takeIf { scene -> scene.lines.any { it.isMine } || scene.lines.distinctBy { it.character }.size >= 2 }
+        val finalScenes = parsedScene?.let { listOf(it) }
+            ?: (1..maxOf(1, scenes)).map { ScriptScene.placeholder(it, role) }
 
         val pieces = mutableListOf(
             Piece(kind = PieceKind.Headshot, title = "Headshot", detail = "Front", isDone = hasHeadshot),
@@ -193,74 +175,16 @@ private data class AddDraft(
     }
 }
 
+/** Notice → draft. The rules live in [NoticeParser] (pure, unit-tested). */
 private fun addParseNotice(text: String): AddDraft {
-    val clean = text.trim()
-    if (clean.isBlank()) return AddDraft()
-
-    val lower = clean.lowercase()
-    val characters = ScriptParser.extractCharacters(clean)
-
-    // Look for role indications like "role: X", "for X in", "seeking X"
-    var detectedRole = ""
-    val roleRegexes = listOf(
-        Regex("""(?i)\brole(?:\s+of)?:\s*([A-Za-z0-9'\s]+)"""),
-        Regex("""(?i)\bfor\s+([A-Z][a-zA-Z0-9'\s]+)\s+in\b"""),
-        Regex("""(?i)\bseeking\s+([A-Z][a-zA-Z0-9'\s]+)\b"""),
-    )
-    for (regex in roleRegexes) {
-        val match = regex.find(clean)
-        if (match != null) {
-            detectedRole = match.groupValues[1].trim().take(30)
-            break
-        }
-    }
-    if (detectedRole.isBlank() && characters.isNotEmpty()) {
-        detectedRole = characters.first().take(30)
-    }
-
-    // Look for project indications like "in PROJECT", "project: PROJECT"
-    var detectedProject = ""
-    val projectRegexes = listOf(
-        Regex("""(?i)\bproject:\s*([A-Za-z0-9'\s]+)"""),
-        Regex("""(?i)\bin\s+([A-Z][A-Z0-9'\s]{2,})\b"""),
-        Regex("""(?i)\bfilm:\s*([A-Za-z0-9'\s]+)"""),
-        Regex("""(?i)\bseries:\s*([A-Za-z0-9'\s]+)"""),
-    )
-    for (regex in projectRegexes) {
-        val match = regex.find(clean)
-        if (match != null) {
-            detectedProject = match.groupValues[1].trim().take(40)
-            break
-        }
-    }
-    if (detectedProject.isBlank()) {
-        detectedProject = clean.lines().firstOrNull { line ->
-            val l = line.trim()
-            l.isNotBlank() && !l.contains(":") && l.length < 50
-        }?.trim()?.take(40) ?: "Untitled Audition"
-    }
-
-    val asks = mutableListOf<String>()
-    if ("slate" in lower) asks += "Slate first"
-    if ("landscape" in lower) asks += "Landscape"
-    if ("full-length" in lower || "full length" in lower) asks += "Full length"
-    if ("under 3" in lower) asks += "Under 3 min"
-    if ("actors access" in lower) asks += "Actors Access"
-    if ("casting networks" in lower) asks += "Casting Networks"
-
-    val destination = when {
-        "casting networks" in lower -> Destination.CastingNetworks
-        "spotlight" in lower -> Destination.Spotlight
-        "email" in lower || "link" in lower -> Destination.EmailOrLink
-        else -> Destination.ActorsAccess
-    }
-
+    val f = NoticeParser.parse(text)
     return AddDraft(
-        project = detectedProject,
-        role = detectedRole,
-        asks = asks,
-        destination = destination,
-        rawScriptText = clean,
+        project = f.project,
+        role = f.role,
+        due = f.due,
+        asks = f.asks,
+        destination = f.destination,
+        rawScriptText = f.scriptText,
     )
 }
 
@@ -290,6 +214,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
 
     val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
+            notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = OcrManager.recognizeTextFromUri(context, uri)
@@ -305,6 +230,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     }
     val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
         if (bitmap != null) {
+            notice = ""
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = OcrManager.recognizeTextFromBitmap(bitmap)
@@ -320,6 +246,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     }
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
+            notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = OcrManager.recognizeTextFromUri(context, uri)
@@ -417,7 +344,8 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
             )
             AddStep.CouldNotRead -> AddErrorStep(
                 onCancel = onDismiss,
-                onRetry = { path = listOf(AddStep.Reading) },
+                // Back to capture: re-reading the same text would just fail the same way again.
+                onRetry = { path = emptyList() },
                 onScan = scan,
                 onType = {
                     draft = AddDraft()
@@ -546,11 +474,18 @@ private fun AddReadingStep(notice: String, onCancel: () -> Unit, onDone: (AddDra
         "Project" to parsed.project.ifEmpty { "not in the notice" },
         "Your role" to parsed.role.ifEmpty { "not in the notice" },
         "Due" to (parsed.due?.format(addDueLong) ?: "no date given"),
-        "Sides" to "${parsed.scenes} scenes",
-        "What they asked for" to "${parsed.asks.size + 1} things",
+        "Sides" to if (parsed.scenes == 1) "1 scene" else "${parsed.scenes} scenes",
+        "What they asked for" to when (parsed.asks.size) {
+            0 -> "nothing specific"
+            1 -> "1 thing"
+            else -> "${parsed.asks.size} things"
+        },
     )
 
     LaunchedEffect(notice) {
+        // Blank while a scan/photo is still being recognised: keep showing "reading…" and wait —
+        // the effect restarts once the recognised text arrives.
+        if (notice.isBlank()) return@LaunchedEffect
         for (i in 1..rows.size) {
             delay(450)
             found = i

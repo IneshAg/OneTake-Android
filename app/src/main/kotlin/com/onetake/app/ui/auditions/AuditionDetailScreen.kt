@@ -139,19 +139,7 @@ fun AuditionDetailScreen(auditionId: String) {
         if (a.scenes.isEmpty()) {
             val count = a.pieces.count { it.kind == PieceKind.Scene }.coerceAtLeast(1)
             val healedScenes = (1..count).map { i ->
-                ScriptScene(
-                    number = i,
-                    title = "Scene $i",
-                    heading = "INT. AUDITION ROOM - DAY",
-                    lines = listOf(
-                        ScriptLine(
-                            character = a.role.ifBlank { "ME" }.uppercase(),
-                            text = "Audition scene lines.",
-                            isMine = true,
-                        )
-                    ),
-                    estimatedSeconds = 60,
-                )
+                ScriptScene.placeholder(i, a.role)
             }
             store.update(a.id) { current ->
                 if (current.scenes.isEmpty()) current.copy(scenes = healedScenes) else current

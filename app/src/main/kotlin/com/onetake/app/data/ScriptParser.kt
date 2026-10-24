@@ -4,8 +4,15 @@ import com.onetake.app.models.ScriptLine
 import com.onetake.app.models.ScriptScene
 
 object ScriptParser {
-    private val SLUG_PREFIXES = listOf("INT.", "EXT.", "INT ", "EXT ", "SCENE", "ACT", "FADE", "CUT TO", "TITLE:")
-    private val COLON_REGEX = Regex("""^([A-Za-z0-9 '\-\.]{2,30})\s*:\s*(.*)$""")
+    /** Scene headings and transitions. Word-anchored so dialogue that merely starts with the same
+     *  letters ("Actually…", "Scenery…", "Faded…") isn't mistaken for one and dropped. */
+    private val SLUG_REGEX = Regex(
+        """^(?:(?:INT|EXT|EST|I/E|INT\./EXT)[.\s]|(?:SCENE|ACT)\s+[0-9IVXLC]+\b|FADE\s+(?:IN|OUT)\b|""" +
+            """(?:CUT|DISSOLVE|SMASH CUT|MATCH CUT)\s+TO\b|TITLE:)""",
+    )
+    /** "NAME: line" — a speaker of at most three words, and the colon not followed by a digit,
+     *  so "Submit by Oct 30 at 10:00 AM" isn't read as a character called "SUBMIT BY OCT 30 AT 10". */
+    private val COLON_REGEX = Regex("""^([A-Za-z][A-Za-z0-9'\-\.]*(?: [A-Za-z0-9'\-\.]+){0,2})\s*:(?!\d)\s*(.*)$""")
     private val CHARACTER_HEADING_REGEX = Regex("""^([A-Z0-9 '\-\.]{2,30})(\s*\(.*\))?$""")
     private val PARENTHETICAL_REGEX = Regex("""^\(.*\)$""")
 
@@ -71,7 +78,7 @@ object ScriptParser {
                             ScriptLine(
                                 character = char,
                                 text = text,
-                                isMine = char.equals(myCharacter, ignoreCase = true),
+                                isMine = isMyCue(char, myCharacter),
                             )
                         )
                     }
@@ -89,7 +96,7 @@ object ScriptParser {
                         ScriptLine(
                             character = char,
                             text = text,
-                            isMine = char.equals(myCharacter, ignoreCase = true),
+                            isMine = isMyCue(char, myCharacter),
                         )
                     )
                 }
@@ -98,6 +105,10 @@ object ScriptParser {
 
             for (line in rawLines) {
                 if (line.isBlank()) {
+                    // A blank line ends the speech: what follows is action until the next cue,
+                    // and must not be glued onto this character's dialogue.
+                    flushDialogue()
+                    currentCharacter = null
                     continue
                 }
 
@@ -144,11 +155,21 @@ object ScriptParser {
     }
 
     private fun isSlugOrTransition(text: String): Boolean {
-        val upper = text.uppercase()
-        return SLUG_PREFIXES.any { upper.startsWith(it) } ||
-                upper.endsWith("TO:") ||
-                upper == "FADE OUT." ||
-                upper == "THE END"
+        val upper = text.trim().uppercase()
+        return SLUG_REGEX.containsMatchIn(upper) || upper.endsWith(" TO:") || upper == "THE END"
+    }
+
+    /** Whether a cue is the actor's role. Exact match, or the same first name — casting lists
+     *  "Maya Reyes" while the sides cue "MAYA". First names must be 3+ letters so a short cue
+     *  like "AN" never matches "Anaya". */
+    fun isMyCue(cue: String, role: String): Boolean {
+        val c = cue.trim()
+        val r = role.trim()
+        if (c.isEmpty() || r.isEmpty()) return false
+        if (c.equals(r, ignoreCase = true)) return true
+        val cFirst = c.substringBefore(' ')
+        val rFirst = r.substringBefore(' ')
+        return cFirst.length >= 3 && cFirst.equals(rFirst, ignoreCase = true)
     }
 
     private fun isCharacterHeading(line: String): Boolean {

@@ -1,5 +1,7 @@
 package com.onetake.app.ui.prepare
 
+import com.onetake.app.ui.system.playAndAwait
+import android.widget.Toast
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -334,7 +336,10 @@ fun RecordReaderScreen(auditionId: String) {
 
     fun startRec() {
         player.stop()
-        recorder.start(scene.id, lineIndex)
+        if (!recorder.start(scene.id, lineIndex)) {
+            Toast.makeText(context, "Couldn't start recording. Is another app using the microphone?", Toast.LENGTH_SHORT).show()
+            return
+        }
         recMs = 0L
         recording = true
         phase = 1
@@ -398,8 +403,11 @@ fun RecordReaderScreen(auditionId: String) {
         }
         for (k in 0 until count) {
             pauseFor(k)?.let { delay((it * 1000f).toLong()) }
-            prepPlay(player, scene.id, k)
-            delay(((durations[k] ?: 2) * 1000L) + 150L)
+            // Wait for each recording to finish — lines recorded on an earlier visit aren't in
+            // `durations`, and a guessed 2 s cut them off or overlapped the next one.
+            val ms = prepAudioMillis(ReaderFiles.file(context, scene.id, k)) ?: 0L
+            player.playAndAwait(scene.id, k, text = "", ttsEngine = null, timeoutMs = ms + 2_000)
+            delay(150L)
         }
         player.stop()
         playingAll = false

@@ -192,7 +192,8 @@ suspend fun ReaderTrackPlayer.playAndAwait(
 class ReaderLineRecorder(private val context: Context) {
     private var recorder: MediaRecorder? = null
 
-    fun start(sceneId: String, readerIndex: Int) {
+    /** Starts recording; false if the recorder couldn't start (mic busy, no permission…). */
+    fun start(sceneId: String, readerIndex: Int): Boolean {
         stop()
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else @Suppress("DEPRECATION") MediaRecorder()
         runCatching {
@@ -207,7 +208,7 @@ class ReaderLineRecorder(private val context: Context) {
             r.prepare()
             r.start()
             recorder = r
-        }.onFailure { r.release() }
+        }.onFailure { r.release() }.isSuccess
     }
 
     fun stop() {

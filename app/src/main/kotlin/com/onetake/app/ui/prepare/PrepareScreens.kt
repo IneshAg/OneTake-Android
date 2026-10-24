@@ -172,8 +172,8 @@ internal fun prepAudioMillis(file: File): Long? {
 }
 
 /** Plays a recorded reader line; a corrupt/empty file (e.g. a too-short recording) must not crash the screen. */
-internal fun prepPlay(player: ReaderTrackPlayer, lineIndex: Int) {
-    runCatching { player.play(lineIndex) }
+internal fun prepPlay(player: ReaderTrackPlayer, sceneId: String, readerIndex: Int) {
+    runCatching { player.play(sceneId, readerIndex) }
 }
 
 internal fun prepCapitalized(name: String): String = name.lowercase().replaceFirstChar { it.titlecase() }
@@ -964,8 +964,8 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         if (!current.isMine) {
             follower.stop()
             val ri = prepReaderLineIndex(scene, current)
-            player.playOrSynthesize(ri, current.text, tts)
-            val fileMs = prepAudioMillis(ReaderFiles.file(context, ri)) ?: 0L
+            player.playOrSynthesize(scene.id, ri, current.text, tts)
+            val fileMs = prepAudioMillis(ReaderFiles.file(context, scene.id, ri)) ?: 0L
             val spokenMs = maxOf(fileMs, LineLearningMode.calculateSpokenPacingMillis(prepWords(current.text).size))
             delay(spokenMs)
             advance()
@@ -1110,7 +1110,7 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
                     }
                 }
                 Spacer(Modifier.height(24.dp))
-                if (!line.isMine && !ReaderFiles.file(context, prepReaderLineIndex(scene, line)).exists()) {
+                if (!line.isMine && !ReaderFiles.file(context, scene.id, prepReaderLineIndex(scene, line)).exists()) {
                     Text(
                         "You haven’t recorded this line yet. Record $readerName yourself to hear it here.",
                         style = OT.type.footnote,

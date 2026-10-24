@@ -172,6 +172,7 @@ fun ReaderScreen(auditionId: String) {
     val scene = a?.scenes?.firstOrNull()
     val readerName = scene?.let { prepReaderName(it) } ?: "Reader"
     val readerLines = scene?.lines?.filter { !it.isMine } ?: emptyList()
+    val sceneId = scene?.id.orEmpty()
 
     var playingLine by remember { mutableStateOf<Int?>(null) }
     var volumeMenu by remember { mutableStateOf(false) }
@@ -198,7 +199,7 @@ fun ReaderScreen(auditionId: String) {
             Text("No reader lines in this scene yet.", style = OT.type.footnote, color = c.labelTertiary)
         } else {
             readerLines.forEachIndexed { i, line ->
-                val recorded = ReaderFiles.file(context, i).exists()
+                val recorded = ReaderFiles.file(context, sceneId, i).exists()
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -208,7 +209,7 @@ fun ReaderScreen(auditionId: String) {
                                 if (playingLine == i) {
                                     player.stop(); playingLine = null
                                 } else {
-                                    player.play(i); playingLine = i; haptics.tick()
+                                    player.play(sceneId, i); playingLine = i; haptics.tick()
                                 }
                             } else Modifier
                         )
@@ -221,7 +222,7 @@ fun ReaderScreen(auditionId: String) {
                         description = if (recorded) "Play line ${i + 1}" else "Line ${i + 1} not recorded",
                         onClick = {
                             if (!recorded) return@RdrPlayCircle
-                            if (playingLine == i) { player.stop(); playingLine = null } else { player.play(i); playingLine = i }
+                            if (playingLine == i) { player.stop(); playingLine = null } else { player.play(sceneId, i); playingLine = i }
                         },
                         background = if (recorded) c.accentSoft else c.fillField,
                         tint = if (recorded) c.accent else c.labelTertiary,
@@ -333,7 +334,7 @@ fun RecordReaderScreen(auditionId: String) {
 
     fun startRec() {
         player.stop()
-        recorder.start(lineIndex)
+        recorder.start(scene.id, lineIndex)
         recMs = 0L
         recording = true
         phase = 1
@@ -397,7 +398,7 @@ fun RecordReaderScreen(auditionId: String) {
         }
         for (k in 0 until count) {
             pauseFor(k)?.let { delay((it * 1000f).toLong()) }
-            prepPlay(player, k)
+            prepPlay(player, scene.id, k)
             delay(((durations[k] ?: 2) * 1000L) + 150L)
         }
         player.stop()
@@ -574,7 +575,7 @@ fun RecordReaderScreen(auditionId: String) {
                                     .heightIn(min = 48.dp)
                                     .clip(CircleShape)
                                     .clickable(role = Role.Button) {
-                                        runCatching { ReaderFiles.file(context, prev).delete() }
+                                        runCatching { ReaderFiles.file(context, scene.id, prev).delete() }
                                         durations.remove(prev)
                                         lineIndex = prev
                                         lastSaved = null
@@ -602,7 +603,7 @@ fun RecordReaderScreen(auditionId: String) {
                                 Modifier
                                     .heightIn(min = 48.dp)
                                     .clip(CircleShape)
-                                    .clickable(role = Role.Button) { prepPlay(player, lineIndex) }
+                                    .clickable(role = Role.Button) { prepPlay(player, scene.id, lineIndex) }
                                     .padding(horizontal = 8.dp),
                                 contentAlignment = Alignment.Center,
                             ) {
@@ -645,7 +646,7 @@ fun RecordReaderScreen(auditionId: String) {
                     if (recording) {
                         RdrSideButton(Icons.Filled.Headphones, "Listen", "Stop and listen back") {
                             stopRec(advance = false)
-                            prepPlay(player, lineIndex)
+                            prepPlay(player, scene.id, lineIndex)
                         }
                     } else if (lineIndex > 0) {
                         RdrSideButton(Icons.Filled.FastRewind, "Line $lineIndex", "Back to line $lineIndex") {
@@ -763,7 +764,7 @@ fun RecordReaderScreen(auditionId: String) {
                             RdrPlayCircle(
                                 playing = false,
                                 description = "Play $readerName line ${k + 1}",
-                                onClick = { prepPlay(player, k) },
+                                onClick = { prepPlay(player, scene.id, k) },
                                 size = 28.dp,
                                 background = c.accentSoft,
                                 tint = c.accent,

@@ -1,5 +1,6 @@
 package com.onetake.app.ui.profile
 
+import com.onetake.app.ui.system.ReaderFiles
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -392,9 +393,10 @@ fun PrivacyScreen() {
         val headshotFiles = headshotsDir.listFiles() ?: emptyArray()
         headshotsBytes = headshotFiles.sumOf { it.length() }
 
-        // Reader lines are flat files directly under filesDir (ReaderFiles.file), not a subfolder.
-        val readerFiles = context.filesDir.listFiles { f -> f.isFile && f.name.startsWith("reader-line-") } ?: emptyArray()
-        readerBytes = readerFiles.sumOf { it.length() }
+        // Reader lines live under reader/<scene id>/, plus any flat files left by older builds.
+        val legacyReader = context.filesDir.listFiles { f -> f.isFile && f.name.startsWith(ReaderFiles.LEGACY_PREFIX) } ?: emptyArray()
+        readerBytes = legacyReader.sumOf { it.length() } +
+            File(context.filesDir, ReaderFiles.DIR).walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
         scriptsBytes = (store.auditions.sumOf { it.scenes.sumOf { s -> s.lines.sumOf { l -> l.text.length } } } * 2L)
     }
@@ -476,7 +478,8 @@ fun PrivacyScreen() {
                             f.isDirectory && (f.name.startsWith("audition-") || f.name.startsWith("practice-") || f.name == "exports")
                         }?.forEach { it.deleteRecursively() }
                         File(context.filesDir, "headshots").listFiles()?.forEach { it.delete() }
-                        context.filesDir.listFiles { f -> f.isFile && f.name.startsWith("reader-line-") }?.forEach { it.delete() }
+                        context.filesDir.listFiles { f -> f.isFile && f.name.startsWith(ReaderFiles.LEGACY_PREFIX) }?.forEach { it.delete() }
+                        File(context.filesDir, ReaderFiles.DIR).deleteRecursively()
                         context.cacheDir.listFiles { f -> f.name.startsWith("take-") }?.forEach { it.delete() }
                     }
                     store.takes = emptyList()

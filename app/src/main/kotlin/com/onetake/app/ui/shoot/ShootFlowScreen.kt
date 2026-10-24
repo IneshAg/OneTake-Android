@@ -159,7 +159,8 @@ fun ShootFlowScreen(auditionId: String) {
 
     val recording = camera.state == CameraController.State.Recording
     val audition = store.audition(auditionId)
-    val lines = audition?.scenes?.firstOrNull()?.lines.orEmpty()
+    val scene = audition?.scenes?.getOrNull(sceneIndex)
+    val lines = scene?.lines.orEmpty()
 
     KeepScreenOn()
     ShootLightSystemBars()
@@ -211,8 +212,10 @@ fun ShootFlowScreen(auditionId: String) {
     LaunchedEffect(lineIndex, recording, stage) {
         val line = lines.getOrNull(lineIndex)
         runCatching {
-            if (stage == ShootStage.Scene && recording && line != null && !line.isMine) {
-                reader.playOrSynthesize(lineIndex, line.text, tts)
+            if (stage == ShootStage.Scene && recording && scene != null && line != null && !line.isMine) {
+                // Reader files are numbered by reader line within the scene, not by overall line.
+                val readerIndex = lines.take(lineIndex).count { !it.isMine }
+                reader.playOrSynthesize(scene.id, readerIndex, line.text, tts)
             } else {
                 reader.stop()
                 tts.stop()

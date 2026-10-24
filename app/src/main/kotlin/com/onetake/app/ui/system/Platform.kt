@@ -95,18 +95,25 @@ fun KeepScreenOn() {
     }
 }
 
-// MARK: - Reader: your own recorded voice only (one file per reader line)
+// MARK: - Reader: your own recorded voice only (one file per reader line, per scene)
 
+/** Reader recordings live under reader/<scene id>/, numbered by reader line within that scene.
+ *  Scoped by scene so one audition never plays (or overwrites) another audition's reader voice.
+ *  Older builds wrote flat filesDir/reader-line-N.m4a files that can't be attributed to a scene;
+ *  those are only counted and deleted by Privacy & data ([LEGACY_PREFIX]). */
 object ReaderFiles {
-    fun file(context: Context, lineIndex: Int) = File(context.filesDir, "reader-line-$lineIndex.m4a")
+    const val DIR = "reader"
+    const val LEGACY_PREFIX = "reader-line-"
+    fun sceneDir(context: Context, sceneId: String) = File(File(context.filesDir, DIR), sceneId)
+    fun file(context: Context, sceneId: String, readerIndex: Int) = File(sceneDir(context, sceneId), "line-$readerIndex.m4a")
 }
 
 /** Plays the reader lines the actor recorded in "Record Maya". Falls back to TTS if provided and unrecorded. */
 class ReaderTrackPlayer(private val context: Context) {
     private var player: MediaPlayer? = null
 
-    fun play(lineIndex: Int) {
-        val f = ReaderFiles.file(context, lineIndex)
+    fun play(sceneId: String, readerIndex: Int) {
+        val f = ReaderFiles.file(context, sceneId, readerIndex)
         if (!f.exists()) return
         stop()
         val mp = MediaPlayer()
@@ -120,12 +127,13 @@ class ReaderTrackPlayer(private val context: Context) {
     }
 
     fun playOrSynthesize(
-        lineIndex: Int,
+        sceneId: String,
+        readerIndex: Int,
         text: String = "",
         ttsEngine: RehearsalSpeechEngine? = null,
         onDone: () -> Unit = {},
     ) {
-        val f = ReaderFiles.file(context, lineIndex)
+        val f = ReaderFiles.file(context, sceneId, readerIndex)
         if (f.exists()) {
             stop()
             val mp = MediaPlayer()
@@ -165,7 +173,7 @@ class ReaderTrackPlayer(private val context: Context) {
 class ReaderLineRecorder(private val context: Context) {
     private var recorder: MediaRecorder? = null
 
-    fun start(lineIndex: Int) {
+    fun start(sceneId: String, readerIndex: Int) {
         stop()
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else @Suppress("DEPRECATION") MediaRecorder()
         runCatching {
@@ -174,7 +182,9 @@ class ReaderLineRecorder(private val context: Context) {
             r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             r.setAudioSamplingRate(44_100)
             r.setAudioChannels(1)
-            r.setOutputFile(ReaderFiles.file(context, lineIndex).absolutePath)
+            val out = ReaderFiles.file(context, sceneId, readerIndex)
+            out.parentFile?.mkdirs()
+            r.setOutputFile(out.absolutePath)
             r.prepare()
             r.start()
             recorder = r

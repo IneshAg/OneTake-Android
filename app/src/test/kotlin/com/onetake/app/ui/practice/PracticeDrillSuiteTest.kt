@@ -1,5 +1,6 @@
 package com.onetake.app.ui.practice
 
+import com.onetake.app.AppStore
 import com.onetake.app.models.Audition
 import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
@@ -12,6 +13,19 @@ import org.junit.Test
 import java.time.LocalDateTime
 
 class PracticeDrillSuiteTest {
+    @Test
+    fun testDefaultRepertoireSeededAndAvailableForDrills() {
+        val store = AppStore()
+        val defaultPiece = store.practicePiece("default-practice-audition-piece")
+        assertNotNull("Default repertoire should be resolvable", defaultPiece)
+        assertEquals("The Audition", defaultPiece!!.title)
+        assertNotNull(defaultPiece.scene)
+        assertTrue("Default scene should contain rehearsal lines", defaultPiece.scene!!.lines.size >= 4)
+        assertTrue("Default scene should have actor and reader lines", defaultPiece.scene!!.lines.any { it.isMine } && defaultPiece.scene!!.lines.any { !it.isMine })
+
+        val fallback = store.defaultPracticePiece()
+        assertEquals("The Audition", fallback.title)
+    }
     @Test
     fun testMaskDialogueDifferentRatios() {
         val dialogue = "One two three four"

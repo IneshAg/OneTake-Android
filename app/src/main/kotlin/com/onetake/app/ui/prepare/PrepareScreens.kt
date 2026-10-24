@@ -878,7 +878,7 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     val tts = rememberTtsEngine()
     val c = OT.colors
     val a = store.audition(auditionId)
-    val practicePiece = if (a == null) store.practice.firstOrNull { it.id == auditionId } else null
+    val practicePiece = if (a == null) store.practicePiece(auditionId) else null
     val scene = a?.scenes?.getOrNull(sceneIndex)
         ?: a?.scenes?.firstOrNull()
         ?: practicePiece?.scene

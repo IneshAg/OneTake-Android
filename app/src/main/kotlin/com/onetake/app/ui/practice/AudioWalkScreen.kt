@@ -71,7 +71,7 @@ fun AudioWalkScreen(
     val c = OT.colors
 
     val audition = store.audition(id)
-    val practicePiece = if (audition == null) store.practice.firstOrNull { it.id == id } else null
+    val practicePiece = if (audition == null) store.practicePiece(id) else null
     val scene = audition?.scenes?.getOrNull(sceneIndex)
         ?: audition?.scenes?.firstOrNull()
         ?: practicePiece?.scene

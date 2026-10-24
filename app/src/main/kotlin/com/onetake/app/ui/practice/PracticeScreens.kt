@@ -141,27 +141,28 @@ fun PracticeScreen(
         // 2. Compact 2x2 Drill Suite (Option 1) - ALWAYS visible on practice tab
         CompactDrillGrid(
             onSelectMode = { mode ->
-                val targetId = store.practice.firstOrNull()?.id ?: store.auditions.firstOrNull()?.id
-                if (targetId != null) {
-                    when (mode) {
-                        LineLearningMode.FIRST_LETTER -> {
-                            PrepPrefs.mode = PrepLineMode.FirstLetters
-                            nav.push(Route.RunLines(targetId, 0))
-                        }
-                        LineLearningMode.MASK_AND_REVEAL -> {
-                            PrepPrefs.mode = PrepLineMode.MaskAndReveal
-                            nav.push(Route.RunLines(targetId, 0))
-                        }
-                        LineLearningMode.AUDIO_GAP -> {
-                            PrepPrefs.mode = PrepLineMode.AudioGap
-                            nav.push(Route.RunLines(targetId, 0))
-                        }
-                        LineLearningMode.HANDS_FREE_WALK -> {
-                            nav.push(Route.AudioWalk(targetId, 0))
-                        }
+                val targetId = store.practice.firstOrNull()?.id
+                    ?: store.auditions.firstOrNull()?.id
+                    ?: run {
+                        store.addPractice(com.onetake.app.data.DefaultRepertoire.defaultPiece)
+                        com.onetake.app.data.DefaultRepertoire.defaultPiece.id
                     }
-                } else {
-                    nav.push(Route.PracticeSetup)
+                when (mode) {
+                    LineLearningMode.FIRST_LETTER -> {
+                        PrepPrefs.mode = PrepLineMode.FirstLetters
+                        nav.push(Route.RunLines(targetId, 0))
+                    }
+                    LineLearningMode.MASK_AND_REVEAL -> {
+                        PrepPrefs.mode = PrepLineMode.MaskAndReveal
+                        nav.push(Route.RunLines(targetId, 0))
+                    }
+                    LineLearningMode.AUDIO_GAP -> {
+                        PrepPrefs.mode = PrepLineMode.AudioGap
+                        nav.push(Route.RunLines(targetId, 0))
+                    }
+                    LineLearningMode.HANDS_FREE_WALK -> {
+                        nav.push(Route.AudioWalk(targetId, 0))
+                    }
                 }
             },
         )

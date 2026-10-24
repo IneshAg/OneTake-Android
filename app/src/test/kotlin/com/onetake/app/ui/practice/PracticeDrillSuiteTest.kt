@@ -26,6 +26,38 @@ class PracticeDrillSuiteTest {
         val fallback = store.defaultPracticePiece()
         assertEquals("The Audition", fallback.title)
     }
+
+    @Test
+    fun testPracticeTakeSavingAndNumbering() {
+        val store = AppStore()
+        val practicePiece = store.defaultPracticePiece()
+        val initialTakes = store.takes.filter { it.sceneId == practicePiece.id }.size
+        assertEquals(0, initialTakes)
+
+        val newTake = com.onetake.app.models.Take(
+            number = initialTakes + 1,
+            durationSeconds = 42,
+            recordedAt = LocalDateTime.now(),
+            isCircled = false,
+            notes = listOf("Practice rehearsal"),
+            sceneId = practicePiece.id,
+        )
+        store.addTake(newTake)
+        assertEquals(1, store.takes.filter { it.sceneId == practicePiece.id }.size)
+        assertEquals(1, newTake.number)
+
+        val secondTake = com.onetake.app.models.Take(
+            number = store.takes.count { it.sceneId == practicePiece.id } + 1,
+            durationSeconds = 38,
+            recordedAt = LocalDateTime.now(),
+            isCircled = true,
+            notes = listOf("Great pacing"),
+            sceneId = practicePiece.id,
+        )
+        store.addTake(secondTake)
+        assertEquals(2, store.takes.filter { it.sceneId == practicePiece.id }.size)
+        assertEquals(2, secondTake.number)
+    }
     @Test
     fun testMaskDialogueDifferentRatios() {
         val dialogue = "One two three four"

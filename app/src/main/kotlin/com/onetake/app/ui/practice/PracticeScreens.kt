@@ -58,14 +58,19 @@ import com.onetake.app.data.ScriptParser
 import com.onetake.app.ocr.OcrManager
 import kotlinx.coroutines.launch
 import com.onetake.app.models.PracticePiece
+import com.onetake.app.models.Take
+import com.onetake.app.ui.components.PrimaryButton
+import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.prepare.PrepLineMode
 import com.onetake.app.ui.prepare.PrepPrefs
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import java.time.LocalDateTime
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -607,13 +612,51 @@ private fun PracticeReaderOption(title: String, detail: String, selected: Boolea
 // MARK: - 24e Practice take (no slate, never sent) — always dark
 
 @Composable
-fun PracticeTakeScreen() {
+fun PracticeTakeScreen(pieceId: String? = null) {
+    val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val camera = rememberCameraController()
     val haptics = rememberHaptics()
     var front by remember { mutableStateOf(true) }
     val recording = camera.state == CameraController.State.Recording
     KeepScreenOn()
+
+    val piece = if (pieceId != null) store.practicePiece(pieceId) else store.practice.firstOrNull() ?: store.defaultPracticePiece()
+    val activeScene = piece?.scene ?: store.defaultPracticePiece().scene
+    val myLines = activeScene?.lines?.filter { it.isMine }.orEmpty()
+    val partnerLines = activeScene?.lines?.filter { !it.isMine }.orEmpty()
+
+    val firstMyLine = myLines.firstOrNull()?.text ?: "Deliver your practice scene dialogue."
+    val myChar = piece?.character?.ifBlank { "YOU" } ?: "YOU"
+    val firstCueLine = partnerLines.firstOrNull()?.text ?: "Listen for partner cue."
+    val cueChar = partnerLines.firstOrNull()?.character ?: "PARTNER"
+
+    val currentPieceId = piece?.id ?: "default-practice-audition-piece"
+    val takeCount = store.takes.count { it.sceneId == currentPieceId }
+    var currentTakeNumber by remember(takeCount) { mutableIntStateOf(takeCount + 1) }
+    var savedTake by remember { mutableStateOf<Take?>(null) }
+
+    fun onRecordToggle() {
+        haptics.impact()
+        if (recording) {
+            val secs = camera.elapsed.toInt().coerceAtLeast(1)
+            camera.stopRecording()
+            val newTake = Take(
+                number = currentTakeNumber,
+                durationSeconds = secs,
+                recordedAt = LocalDateTime.now(),
+                isCircled = false,
+                notes = listOf("Practice rehearsal take"),
+                sceneId = currentPieceId,
+            )
+            store.addTake(newTake)
+            savedTake = newTake
+            haptics.success()
+        } else {
+            savedTake = null
+            camera.startRecording()
+        }
+    }
 
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
         CameraBackground(camera, Modifier.fillMaxSize(), front = front)
@@ -624,29 +667,61 @@ fun PracticeTakeScreen() {
                 CircleIconButton(Icons.Filled.Close, "Close", onClick = { nav.closeCamera() }, onDark = true)
                 Spacer(Modifier.weight(1f))
                 val secs = camera.elapsed.toInt()
-                CameraPill("Practice · TK 4  %02d:%02d:%02d".format(secs / 3600, (secs / 60) % 60, secs % 60))
+                CameraPill("Practice · TK $currentTakeNumber  %02d:%02d:%02d".format(secs / 3600, (secs / 60) % 60, secs % 60))
             }
             Spacer(Modifier.height(8.dp))
-            // Top of the scene, so the actor can glance at their first line.
+
+            // Dynamic Top of the scene
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(OT.camera.glass).padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text("TOP OF THE SCENE", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
-                Text("SAM · YOU", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
-                Text("You said you’d be home by eight.", style = OT.type.headline.copy(fontSize = 20.sp, lineHeight = 25.sp), color = OT.camera.label)
-                Text("NINA", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2.copy(alpha = 0.5f))
-                Text("I said I’d try. There’s a difference.", style = OT.type.footnote, color = OT.camera.label2.copy(alpha = 0.5f))
+                Text(activeScene?.title?.uppercase() ?: "TOP OF THE SCENE", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
+                Text("$myChar · YOU", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
+                Text(firstMyLine, style = OT.type.headline.copy(fontSize = 20.sp, lineHeight = 25.sp), color = OT.camera.label)
+                Text(cueChar, style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2.copy(alpha = 0.5f))
+                Text(firstCueLine, style = OT.type.footnote, color = OT.camera.label2.copy(alpha = 0.5f))
             }
+
             Spacer(Modifier.weight(1f))
+
+            if (savedTake != null) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("PRACTICE TAKE ${savedTake?.number} SAVED", style = OT.type.caption.copy(fontWeight = FontWeight.Bold), color = OT.colors.accent)
+                    Text("Rehearsal take saved · ${formatDuration(savedTake?.durationSeconds ?: 0)}", style = OT.type.footnote, color = Color.White)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SecondaryButton(
+                            text = "Done",
+                            onClick = { nav.closeCamera() },
+                            modifier = Modifier.weight(1f),
+                        )
+                        PrimaryButton(
+                            text = "Go again",
+                            onClick = {
+                                savedTake = null
+                                currentTakeNumber = store.takes.count { it.sceneId == currentPieceId } + 1
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 CameraPill("Practice · no slate, never sent", icon = Icons.Filled.Lock, background = Color.Black.copy(alpha = 0.55f))
             }
             Spacer(Modifier.height(12.dp))
             Box(Modifier.fillMaxWidth().padding(bottom = 12.dp), contentAlignment = Alignment.Center) {
                 PracticeRecordButton(recording) {
-                    haptics.impact()
-                    if (recording) camera.stopRecording() else camera.startRecording()
+                    onRecordToggle()
                 }
                 CircleIconButton(
                     Icons.Filled.Cameraswitch,

@@ -7,7 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.onetake.app.ui.theme.OneTakeTheme
 import com.onetake.app.ui.theme.StudioFinish
@@ -20,7 +20,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            var finish by remember { mutableStateOf(StudioFinish.VELVET) }
+            // Saveable: survives activity recreation (e.g. a dark-mode switch) instead of resetting.
+            var finish by rememberSaveable { mutableStateOf(StudioFinish.VELVET) }
             OneTakeTheme(studioFinish = finish) {
                 OneTakeApp(
                     store = store,

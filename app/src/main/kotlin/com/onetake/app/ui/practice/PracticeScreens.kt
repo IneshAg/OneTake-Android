@@ -86,6 +86,7 @@ import com.onetake.app.Route
 import com.onetake.app.CameraFlow
 import com.onetake.app.TabBarClearance
 import com.onetake.app.ui.camera.CameraBackground
+import com.onetake.app.ui.camera.RecordStartErrorDialog
 import com.onetake.app.ui.camera.CameraController
 import com.onetake.app.ui.camera.rememberCameraController
 import com.onetake.app.ui.components.CameraPill
@@ -630,6 +631,7 @@ fun PracticeTakeScreen() {
             ?.let { store.incrementPracticeTakes(p.id) }
     }
 
+    RecordStartErrorDialog(camera)
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
         CameraBackground(camera, Modifier.fillMaxSize(), front = front)
         Column(
@@ -682,6 +684,7 @@ fun PracticeTakeScreen() {
                     } else {
                         camera.startRecording()
                     }
+                    // A failed start shows RecordStartErrorDialog rather than a fake take.
                 }
                 CircleIconButton(
                     Icons.Filled.Cameraswitch,

@@ -109,6 +109,7 @@ import com.onetake.app.models.Take
 import com.onetake.app.models.formatDuration
 import com.onetake.app.ui.camera.CameraBackground
 import com.onetake.app.ui.camera.CameraController
+import com.onetake.app.ui.camera.RecordStartErrorDialog
 import com.onetake.app.ui.camera.rememberCameraController
 import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.components.GLASS_EDGE_COLOR
@@ -239,8 +240,7 @@ fun ShootFlowScreen(auditionId: String) {
     fun roll() {
         if (countdown != null || recording) return
         if (timerSeconds == 0) {
-            camera.startRecording()
-            haptics.impact()
+            if (camera.startRecording()) haptics.impact() else haptics.warning()
             return
         }
         countdownJob?.cancel()
@@ -252,8 +252,7 @@ fun ShootFlowScreen(auditionId: String) {
             }
             countdown = null
             countdownJob = null
-            camera.startRecording()
-            haptics.impact()
+            if (camera.startRecording()) haptics.impact() else haptics.warning()
         }
     }
 
@@ -327,6 +326,7 @@ fun ShootFlowScreen(auditionId: String) {
         ShootStage.Scene, ShootStage.Saved -> "SC 1 · TK $takeNumber  $time"
     }
 
+    RecordStartErrorDialog(camera)
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
         CameraBackground(camera, Modifier.fillMaxSize(), front = front)
         // Soft bottom scrim so chips and controls stay legible on bright frames.

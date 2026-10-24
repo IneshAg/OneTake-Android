@@ -151,31 +151,51 @@ class CameraController(private val context: Context) {
         }, ContextCompat.getMainExecutor(context))
     }
 
+    /** Why the last [startRecording] didn't start, for the screen to show ([RecordStartErrorDialog]);
+     *  null once it's been seen or a recording did start. */
+    var startError by mutableStateOf<String?>(null)
+        private set
+
+    fun clearStartError() { startError = null }
+
+    /** Starts a real recording and returns true. With nothing to record with (camera not bound yet,
+     *  or this device can't bind video) it returns false and sets [startError] — it used to run the
+     *  timer anyway, so the actor performed a whole take that was never saved. */
     @SuppressLint("MissingPermission")
-    fun startRecording() {
+    fun startRecording(): Boolean {
         val vc = videoCapture
         if (state != State.Ready || vc == null) {
-            // No camera or video capture not supported on this device/emulator:
-            // still run the timer so the flow can be tested.
-            state = State.Recording
-            elapsed = 0f
-            return
+            startError = when {
+                state == State.Failed -> "The camera couldn't start on this device."
+                state == State.Ready -> "This camera can't record video on this device, only photos."
+                else -> "The camera isn't ready yet. Give it a second and try again."
+            }
+            return false
         }
         val file = File(context.cacheDir, "take-${System.currentTimeMillis()}.mp4")
-        val pending = vc.output.prepareRecording(context, FileOutputOptions.Builder(file).build())
-        val withAudio = if (granted(context, Manifest.permission.RECORD_AUDIO)) pending.withAudioEnabled() else pending
-        recording = withAudio.start(ContextCompat.getMainExecutor(context)) { event ->
-            if (event is VideoRecordEvent.Finalize) {
-                val uri = if (event.hasError()) null else event.outputResults.outputUri
-                lastRecording = uri
-                state = State.Ready
-                val callback = onFinalized
-                onFinalized = null
-                callback?.invoke(uri)
+        val started = runCatching {
+            val pending = vc.output.prepareRecording(context, FileOutputOptions.Builder(file).build())
+            val withAudio = if (granted(context, Manifest.permission.RECORD_AUDIO)) pending.withAudioEnabled() else pending
+            withAudio.start(ContextCompat.getMainExecutor(context)) { event ->
+                if (event is VideoRecordEvent.Finalize) {
+                    val uri = if (event.hasError()) null else event.outputResults.outputUri
+                    lastRecording = uri
+                    state = State.Ready
+                    val callback = onFinalized
+                    onFinalized = null
+                    callback?.invoke(uri)
+                }
             }
         }
+        recording = started.getOrElse {
+            android.util.Log.e("CameraController", "Recording failed to start", it)
+            startError = "The recording couldn't start. Try again, or close and reopen the camera."
+            return false
+        }
+        startError = null
         state = State.Recording
         elapsed = 0f
+        return true
     }
 
     /** Stops the current recording. [onFinalized] runs once the file is fully written (null if
@@ -322,4 +342,18 @@ fun CameraBackground(
             }
         }
     }
+}
+
+/** Tells the actor when a take didn't start, instead of a silent timer over nothing. */
+@Composable
+fun RecordStartErrorDialog(controller: CameraController) {
+    val message = controller.startError ?: return
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { controller.clearStartError() },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = { controller.clearStartError() }) { Text("OK") }
+        },
+        title = { Text("Not recording") },
+        text = { Text(message) },
+    )
 }

@@ -9,14 +9,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.AndroidViewModel
 import com.onetake.app.data.DeadlineReminders
-import com.onetake.app.data.Persistence
 import com.onetake.app.data.PersistedState
+import com.onetake.app.data.Persistence
+import com.onetake.app.data.ScriptParser
 import com.onetake.app.models.Audition
 import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
 import com.onetake.app.models.PracticePiece
+import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.SlateInfo
 import com.onetake.app.models.Take
 import com.onetake.app.ui.system.ReaderFiles
@@ -250,6 +252,50 @@ class AppStore(application: Application) : AndroidViewModel(application) {
             else cleared.copy(status = AuditionStatus.Due, pieces = a.pieces.map { it.copy(isDone = false) })
         }
         clearHeadshots()
+    }
+
+    /** Edit details: the fields casting can change after the fact. A new role re-marks which lines
+     *  are yours. */
+    fun editDetails(
+        id: String,
+        project: String,
+        role: String,
+        castingOffice: String,
+        due: LocalDateTime,
+        destination: Destination,
+        notes: String,
+    ) = update(id) { a ->
+        val newRole = role.trim().ifEmpty { a.role }
+        val scenes = if (newRole == a.role) a.scenes else a.scenes.map { scene ->
+            scene.copy(lines = scene.lines.map { it.copy(isMine = ScriptParser.isMyCue(it.character, newRole)) })
+        }
+        a.copy(
+            project = project.trim().ifEmpty { a.project },
+            role = newRole,
+            castingOffice = castingOffice.trim(),
+            due = due,
+            destination = destination,
+            notes = notes.trim(),
+            scenes = scenes,
+        )
+    }
+
+    /** Revised sides: the new scenes replace the old, and the scene pieces start again (the old
+     *  takes stay, but the new pages need shooting). Practice pieces follow the new text. */
+    fun replaceSides(id: String, scenes: List<ScriptScene>) {
+        update(id) { a ->
+            val pieces = a.pieces.filterNot { it.kind == PieceKind.Scene } +
+                scenes.map { Piece(kind = PieceKind.Scene, title = it.title, detail = "Revised sides", isDone = false) }
+            a.copy(scenes = scenes, pieces = pieces, status = if (a.status == AuditionStatus.Ready) AuditionStatus.Due else a.status)
+        }
+        practice = practice.map { p ->
+            val scene = p.sceneIndex?.let { scenes.getOrNull(it) }
+            if (p.auditionId != id || scene == null) p
+            else {
+                val mine = scene.lines.count { it.isMine }
+                p.copy(scene = scene, linesTotal = mine, linesLearned = minOf(p.linesLearned, mine))
+            }
+        }
     }
 
     fun update(id: String, transform: (Audition) -> Audition) {

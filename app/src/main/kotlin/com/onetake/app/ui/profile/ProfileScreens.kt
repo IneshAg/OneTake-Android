@@ -180,13 +180,7 @@ fun ProfileScreen() {
         SectionLabel("More")
         ListRow(title = "Notifications", onClick = { nav.push(Route.Notifications) })
         ListRow(title = "Privacy & data", onClick = { nav.push(Route.Privacy) })
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = 52.dp)
-                .clickable(role = Role.Button) { store.isOnboarded = false },
-            contentAlignment = Alignment.CenterStart,
-        ) { Text("Sign out", style = OT.type.body, color = c.danger) }
+        // No accounts exist (everything stays on this phone), so there's nothing to sign out of.
     }
 }
 

@@ -108,13 +108,13 @@ import com.onetake.app.ui.theme.OT
 import kotlinx.coroutines.delay
 
 /*
- * 01 Welcome → 02 Sign in (→ 02.2 Email code) → 03 Your slate → 04 Camera & mic (→ 04.1 Camera off)
- * → 04b Notifications → Home (first run). No Navigator exists yet, so steps are local state.
+ * 01 Welcome → 03 Your slate → 04 Camera & mic (→ 04.1 Camera off) → 04b Notifications → Home.
+ * There are no accounts — everything stays on this phone — so there's no sign-in step (the old
+ * "Continue with Google" / email-code screens accepted anything and connected to nothing).
+ * No Navigator exists yet, so steps are local state.
  */
 
 private const val StepWelcome = 0
-private const val StepSignIn = 1
-private const val StepEmailCode = 2
 private const val StepSlate = 3
 private const val StepPermissions = 4
 private const val StepCameraOff = 5
@@ -124,20 +124,14 @@ private const val StepNotifications = 6
 fun OnboardingFlow() {
     val store = LocalAppStore.current
     var step by rememberSaveable { mutableIntStateOf(StepWelcome) }
-    var email by rememberSaveable { mutableStateOf("") }
-    // Where "back" from the slate step goes (sign-in or the email code screen).
-    var slateBack by rememberSaveable { mutableIntStateOf(StepSignIn) }
-
-    // Onboarding also runs again after "Sign out", so it must not touch the actor's data — on a
-    // true first run there's nothing saved yet and Home already shows "Add your first audition".
+    // On a first run there's nothing saved yet, so finishing only marks the actor onboarded — it
+    // must never clear data.
     fun finish() {
         store.isOnboarded = true
     }
 
     fun previousOf(s: Int): Int = when (s) {
-        StepSignIn -> StepWelcome
-        StepEmailCode -> StepSignIn
-        StepSlate -> slateBack
+        StepSlate -> StepWelcome
         StepPermissions -> StepSlate
         StepCameraOff -> StepPermissions
         StepNotifications -> StepPermissions
@@ -161,19 +155,7 @@ fun OnboardingFlow() {
             label = "onboarding",
         ) { s ->
             when (s) {
-                StepWelcome -> OnbWelcomeStep(onStart = { step = StepSignIn })
-                StepSignIn -> OnbSignInStep(
-                    email = email,
-                    onEmailChange = { email = it },
-                    onBack = goBack,
-                    onGoogle = { slateBack = StepSignIn; step = StepSlate },
-                    onEmail = { step = StepEmailCode },
-                )
-                StepEmailCode -> OnbEmailCodeStep(
-                    email = email,
-                    onBack = goBack,
-                    onVerified = { slateBack = StepEmailCode; step = StepSlate },
-                )
+                StepWelcome -> OnbWelcomeStep(onStart = { step = StepSlate })
                 StepSlate -> OnbSlateStep(onBack = goBack, onContinue = { step = StepPermissions })
                 StepPermissions -> OnbPermissionsStep(
                     onBack = goBack,
@@ -435,196 +417,6 @@ private fun OnbScriptLine(who: String, text: String, mine: Boolean) {
     }
 }
 
-// MARK: - 02 Sign in
-
-@Composable
-private fun OnbSignInStep(
-    email: String,
-    onEmailChange: (String) -> Unit,
-    onBack: () -> Unit,
-    onGoogle: () -> Unit,
-    onEmail: () -> Unit,
-) {
-    val c = OT.colors
-    val emailValid = email.trim().let { it.contains('@') && it.substringAfter('@').contains('.') }
-    OnbScreen(onBack = onBack, actions = null) {
-        OnbTitle("Sign in or create an account")
-        Text(
-            "Your auditions, reader tracks and takes, on every device you own.",
-            style = OT.type.callout,
-            color = c.labelSecondary,
-            modifier = Modifier.padding(top = 6.dp),
-        )
-
-        // Plain styled button — no real auth; it just advances.
-        PrimaryButton(
-            text = "Continue with Google",
-            onClick = onGoogle,
-            tint = c.labelPrimary,
-            contentColor = c.bgCanvas,
-            modifier = Modifier.padding(top = 24.dp),
-        )
-
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Box(Modifier.weight(1f).height(1.dp).background(c.separator))
-            Text("or", style = OT.type.footnote, color = c.labelTertiary)
-            Box(Modifier.weight(1f).height(1.dp).background(c.separator))
-        }
-
-        Text(
-            "Email",
-            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-            color = c.labelSecondary,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
-        OnbField(
-            value = email,
-            onValueChange = onEmailChange,
-            placeholder = "you@example.com",
-            shape = CircleShape,
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.None,
-                keyboardType = KeyboardType.Email,
-                imeAction = ImeAction.Go,
-            ),
-            keyboardActions = KeyboardActions(onGo = { if (emailValid) onEmail() }),
-            contentLabel = "Email",
-        )
-        SecondaryButton(
-            text = "Continue with email",
-            onClick = onEmail,
-            enabled = emailValid,
-            modifier = Modifier.padding(top = 12.dp),
-        )
-
-        Row(
-            Modifier.padding(top = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.Lock, null, tint = c.labelTertiary, modifier = Modifier.size(14.dp))
-            Text("Takes stay on this phone until you send them.", style = OT.type.footnote, color = c.labelSecondary)
-        }
-        Text(
-            "By continuing you agree to the Terms and Privacy Policy.",
-            style = OT.type.caption,
-            color = c.labelTertiary,
-            modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
-        )
-    }
-}
-
-// MARK: - 02.2 Email code
-
-@Composable
-private fun OnbEmailCodeStep(email: String, onBack: () -> Unit, onVerified: () -> Unit) {
-    val c = OT.colors
-    var code by rememberSaveable { mutableStateOf("") }
-    var seconds by rememberSaveable { mutableIntStateOf(30) }
-    val focus = remember { FocusRequester() }
-
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-    LaunchedEffect(seconds) {
-        if (seconds > 0) {
-            delay(1000)
-            seconds -= 1
-        }
-    }
-    LaunchedEffect(code) {
-        if (code.length == 6) {
-            delay(250)
-            onVerified()
-        }
-    }
-
-    OnbScreen(onBack = onBack, actions = null) {
-        OnbTitle("Check your email")
-        Text(
-            "We sent a 6-digit code to ${email.trim()}",
-            style = OT.type.callout,
-            color = c.labelSecondary,
-            modifier = Modifier.padding(top = 6.dp),
-        )
-
-        BasicTextField(
-            value = code,
-            onValueChange = { v -> code = v.filter { it.isDigit() }.take(6) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
-            singleLine = true,
-            cursorBrush = SolidColor(Color.Transparent),
-            textStyle = TextStyle(color = Color.Transparent),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 24.dp)
-                .focusRequester(focus)
-                .semantics { contentDescription = "6-digit code" },
-            decorationBox = { inner ->
-                Box(Modifier.fillMaxWidth()) {
-                    // The real (invisible) text field sits under the digit boxes so focus and IME work.
-                    Box(Modifier.matchParentSize(), contentAlignment = Alignment.CenterStart) { inner() }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (i in 0 until 6) {
-                            val ch = code.getOrNull(i)
-                            val current = i == code.length
-                            Box(
-                                Modifier
-                                    .weight(1f)
-                                    .height(58.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(c.fillField)
-                                    .then(
-                                        if (current) Modifier.border(1.5.dp, c.accent, RoundedCornerShape(12.dp)) else Modifier,
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                if (ch != null) Text(ch.toString(), style = OT.type.title, color = c.labelPrimary)
-                            }
-                        }
-                    }
-                }
-            },
-        )
-
-        val resend = buildAnnotatedString {
-            withStyle(SpanStyle(color = c.labelSecondary)) {
-                if (seconds > 0) append("Didn’t get it? Resend in 0:${seconds.toString().padStart(2, '0')}")
-                else append("Didn’t get it?")
-            }
-        }
-        Row(
-            Modifier.padding(top = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(resend, style = OT.type.footnote)
-            if (seconds == 0) {
-                Text(
-                    "Resend",
-                    style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                    color = c.accent,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable(role = Role.Button) { seconds = 30; code = "" }
-                        .padding(horizontal = 6.dp, vertical = 14.dp),
-                )
-            }
-            Text(" · ", style = OT.type.footnote, color = c.labelTertiary)
-            Text(
-                "Use a different email",
-                style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                color = c.accent,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable(role = Role.Button, onClick = onBack)
-                    .padding(horizontal = 4.dp, vertical = 14.dp),
-            )
-        }
-    }
-}
-
 // MARK: - 03 Your slate
 
 @Composable
@@ -695,8 +487,7 @@ private fun OnbSlateStep(onBack: () -> Unit, onContinue: () -> Unit) {
         ) {
             OnbLabeledField(
                 label = buildAnnotatedString {
-                    append("Full name ")
-                    withStyle(SpanStyle(color = c.accent, fontWeight = FontWeight.Medium)) { append("· from your Google Account") }
+                    append("Full name")
                 },
                 plainLabel = "Full name",
             ) {

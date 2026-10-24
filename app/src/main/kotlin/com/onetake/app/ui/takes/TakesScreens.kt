@@ -184,7 +184,8 @@ fun TakesScreen(auditionId: String) {
 
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Take ${circled?.number ?: 0} is circled — that's your send.",
+                    if (circled != null) "Take ${circled.number} is circled — that's your send."
+                    else "No take circled yet — long-press one to make it your send.",
                     style = OT.type.footnote,
                     color = c.labelSecondary,
                     modifier = Modifier.weight(1f),

@@ -122,6 +122,7 @@ import com.onetake.app.ui.system.rememberReaderPlayer
 import com.onetake.app.ui.system.rememberTtsEngine
 import com.onetake.app.ui.theme.DarkOT
 import com.onetake.app.ui.theme.OT
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
@@ -144,6 +145,7 @@ fun ShootFlowScreen(auditionId: String) {
 
     var stage by remember { mutableStateOf(ShootStage.Check) }
     var countdown by remember { mutableStateOf<Int?>(null) }
+    var countdownJob by remember { mutableStateOf<Job?>(null) }
     var timerSeconds by remember { mutableIntStateOf(3) }
     var showTimerMenu by remember { mutableStateOf(false) }
     var voiceEnabled by remember { mutableStateOf(true) }
@@ -223,31 +225,37 @@ fun ShootFlowScreen(auditionId: String) {
         }
     }
 
+    /** Cancels a running countdown. Cancelling the job (not just clearing the number) means a
+     *  quick cancel + re-roll can't leave two countdowns running and starting two recordings. */
+    fun cancelCountdown() {
+        countdownJob?.cancel()
+        countdownJob = null
+        countdown = null
+    }
+
     fun roll() {
         if (countdown != null || recording) return
         if (timerSeconds == 0) {
-            countdown = null
             camera.startRecording()
             haptics.impact()
             return
         }
-        scope.launch {
+        countdownJob?.cancel()
+        countdownJob = scope.launch {
             for (n in timerSeconds downTo 1) {
-                if (countdown == null && n < timerSeconds) return@launch // Cancelled
                 countdown = n
                 haptics.tick()
                 delay(1000)
             }
-            if (countdown != null) {
-                countdown = null
-                camera.startRecording()
-                haptics.impact()
-            }
+            countdown = null
+            countdownJob = null
+            camera.startRecording()
+            haptics.impact()
         }
     }
 
     fun cut() {
-        countdown = null
+        cancelCountdown()
         val seconds = camera.elapsed.toInt()
         haptics.success()
         when (stage) {
@@ -490,7 +498,6 @@ fun ShootFlowScreen(auditionId: String) {
                             eyebrow = null,
                             title = "Slate’s done.",
                             detail = "${formatDuration(lastSlateSeconds)} · opens every scene in ${audition.project}",
-                            checks = listOf("Name", "Height", "City", "Lens"),
                             primary = "Next: full length" to { stage = ShootStage.FullLength },
                             secondary = "Redo" to { stage = ShootStage.Slate },
                             primaryFirst = true,
@@ -499,7 +506,7 @@ fun ShootFlowScreen(auditionId: String) {
                             modifier = Modifier.align(Alignment.Center),
                             eyebrow = "Take saved",
                             title = "Take $takeNumber, in the can.",
-                            detail = "${formatDuration(lastTakeSeconds)} · Reader under your voice · walk-in trimmed",
+                            detail = "${formatDuration(lastTakeSeconds)} · saved to this phone",
                             primary = "Watch take $takeNumber" to { finish(Route.Takes(auditionId)) },
                             secondary = "Go again" to {
                                 takeNumber += 1
@@ -515,7 +522,7 @@ fun ShootFlowScreen(auditionId: String) {
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .clickable { countdown = null },
+                            .clickable { cancelCountdown() },
                         contentAlignment = Alignment.Center,
                     ) {
                         AnimatedContent(
@@ -552,8 +559,6 @@ fun ShootFlowScreen(auditionId: String) {
                     Modifier.align(Alignment.CenterHorizontally),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    ShootChip(null, "1080p · 30")
-                    ShootChip(null, "1/60")
                     if (exposureLocked) ShootChip(Icons.Filled.Lock, "Exposure locked", tint = DarkOT.warning)
                     ShootChip(Icons.Filled.Storage, "$minutes min")
                 }
@@ -581,7 +586,7 @@ fun ShootFlowScreen(auditionId: String) {
                         else -> {
                             ShootRecordButton(isRecording = recording) {
                                 when {
-                                    countdown != null -> countdown = null
+                                    countdown != null -> cancelCountdown()
                                     recording -> cut()
                                     else -> roll()
                                 }
@@ -845,7 +850,8 @@ private fun ShootCheckChips() {
         horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        listOf("Framing", "Eyeline", "Light", "Sound").forEach { ShootChip(Icons.Filled.Check, it, big = true) }
+        // A checklist to run through, not results — nothing here measures framing, light or sound.
+        listOf("Framing", "Eyeline", "Light", "Sound").forEach { ShootChip(null, "Check $it".lowercase().replaceFirstChar { c -> c.uppercase() }, big = true) }
     }
 }
 

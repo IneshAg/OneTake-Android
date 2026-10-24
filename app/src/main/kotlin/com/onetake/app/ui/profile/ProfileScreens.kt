@@ -1,5 +1,15 @@
 package com.onetake.app.ui.profile
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -36,6 +46,8 @@ import androidx.compose.material.icons.filled.CropPortrait
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.AlertDialog
@@ -45,14 +57,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import com.onetake.app.ui.camera.HeadshotFramingEngine
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
@@ -772,15 +788,173 @@ private fun HeadshotTip(icon: ImageVector, title: String, detail: String, modifi
 
 private enum class HeadshotAngle(val label: String) { Front("Front"), Left("Left"), Right("Right") }
 
+private class HeadshotVoiceCommander(
+    private val context: Context,
+    private val onSnapTrigger: () -> Unit,
+) {
+    val available: Boolean = runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)
+    var isListening by mutableStateOf(false)
+        private set
+
+    private var recognizer: SpeechRecognizer? = null
+    private var wanted = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val relisten = Runnable { if (wanted) listen() }
+
+    private val listener = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) { isListening = true }
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onError(error: Int) {
+            isListening = false
+            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                wanted = false
+                return
+            }
+            handler.removeCallbacks(relisten)
+            if (wanted) {
+                val delayMs = if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) 200L else 700L
+                handler.postDelayed(relisten, delayMs)
+            }
+        }
+        override fun onResults(results: Bundle?) {
+            isListening = false
+            evaluate(results)
+            handler.removeCallbacks(relisten)
+            if (wanted) handler.postDelayed(relisten, 150)
+        }
+        override fun onPartialResults(partialResults: Bundle?) {
+            evaluate(partialResults)
+        }
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+    }
+
+    private fun evaluate(bundle: Bundle?) {
+        val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+        for (text in matches) {
+            if (HeadshotFramingEngine.VOICE_TRIGGER_REGEX.containsMatchIn(text)) {
+                onSnapTrigger()
+                break
+            }
+        }
+    }
+
+    fun start() {
+        if (!available) return
+        wanted = true
+        handler.removeCallbacks(relisten)
+        runCatching { recognizer?.cancel() }
+        listen()
+    }
+
+    private fun listen() {
+        if (!wanted) return
+        val r = recognizer ?: runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
+            ?.also { it.setRecognitionListener(listener); recognizer = it }
+            ?: return
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+        }
+        runCatching {
+            r.startListening(intent)
+            isListening = true
+        }.onFailure {
+            isListening = false
+            if (wanted) handler.postDelayed(relisten, 800)
+        }
+    }
+
+    fun stop() {
+        wanted = false
+        isListening = false
+        handler.removeCallbacks(relisten)
+        runCatching { recognizer?.stopListening() }
+    }
+
+    fun destroy() {
+        wanted = false
+        isListening = false
+        handler.removeCallbacks(relisten)
+        runCatching {
+            recognizer?.cancel()
+            recognizer?.destroy()
+        }
+        recognizer = null
+    }
+}
+
+@Composable
+private fun rememberHeadshotVoiceCommander(onSnapTrigger: () -> Unit): HeadshotVoiceCommander {
+    val context = LocalContext.current
+    val currentOnSnap by rememberUpdatedState(onSnapTrigger)
+    val commander = remember {
+        HeadshotVoiceCommander(
+            context = context.applicationContext,
+            onSnapTrigger = { currentOnSnap() },
+        )
+    }
+    DisposableEffect(commander) {
+        onDispose { commander.destroy() }
+    }
+    return commander
+}
+
 @Composable
 fun HeadshotFlowScreen() {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
+    val context = LocalContext.current
     val camera = rememberCameraController()
     val haptics = rememberHaptics()
     var angle by rememberSaveable { mutableStateOf(HeadshotAngle.Front) }
     var front by remember { mutableStateOf(true) }
     var capturing by remember { mutableStateOf(false) }
+    var voiceEnabled by rememberSaveable { mutableStateOf(true) }
+    val micPermissionGranted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    fun takeSnap() {
+        if (capturing) return
+        capturing = true
+        haptics.impact()
+        camera.capturePhoto { rawUri ->
+            val finalUri = if (rawUri != null) {
+                HeadshotFramingEngine.frameAndCropImage(context, rawUri)
+            } else null
+            capturing = false
+            if (finalUri != null || rawUri != null) {
+                store.saveHeadshot(angle.name.lowercase(), (finalUri ?: rawUri).toString())
+            }
+            store.headshotsTaken = maxOf(store.headshotsTaken, angle.ordinal + 1)
+            store.auditions.forEach { a ->
+                if (a.pieces.any { it.kind == PieceKind.Headshot && !it.isDone }) {
+                    store.markDone(PieceKind.Headshot, a.id)
+                }
+            }
+            val next = HeadshotAngle.entries.getOrNull(angle.ordinal + 1)
+            if (next != null) {
+                angle = next
+            } else {
+                haptics.success()
+                nav.closeCamera()
+            }
+        }
+    }
+
+    val voiceCommander = rememberHeadshotVoiceCommander(onSnapTrigger = {
+        if (!capturing) takeSnap()
+    })
+
+    LaunchedEffect(voiceEnabled, micPermissionGranted) {
+        if (voiceEnabled && micPermissionGranted) {
+            voiceCommander.start()
+        } else {
+            voiceCommander.stop()
+        }
+    }
 
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
         CameraBackground(camera, Modifier.fillMaxSize(), front = front, photoOnly = true)
@@ -833,27 +1007,7 @@ fun HeadshotFlowScreen() {
                             .border(4.dp, Color.White, CircleShape)
                             .clip(CircleShape)
                             .clickable(enabled = !capturing, role = Role.Button) {
-                                capturing = true
-                                haptics.impact()
-                                camera.capturePhoto { uri ->
-                                    capturing = false
-                                    if (uri != null) {
-                                        store.saveHeadshot(angle.name.lowercase(), uri.toString())
-                                    }
-                                    store.headshotsTaken = maxOf(store.headshotsTaken, angle.ordinal + 1)
-                                    store.auditions.forEach { a ->
-                                        if (a.pieces.any { it.kind == PieceKind.Headshot && !it.isDone }) {
-                                            store.markDone(PieceKind.Headshot, a.id)
-                                        }
-                                    }
-                                    val next = HeadshotAngle.entries.getOrNull(angle.ordinal + 1)
-                                    if (next != null) {
-                                        angle = next
-                                    } else {
-                                        haptics.success()
-                                        nav.closeCamera()
-                                    }
-                                }
+                                takeSnap()
                             }
                             .semantics { contentDescription = "Take photo" },
                         contentAlignment = Alignment.Center,
@@ -866,8 +1020,27 @@ fun HeadshotFlowScreen() {
                         modifier = Modifier.align(Alignment.CenterEnd),
                     )
                 }
-                Spacer(Modifier.height(6.dp))
-                Text("Tap, or say “Now”", style = OT.type.footnote, color = OT.camera.label2)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { voiceEnabled = !voiceEnabled }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Icon(
+                        if (voiceCommander.isListening) Icons.Filled.Mic else Icons.Filled.MicOff,
+                        null,
+                        tint = if (voiceCommander.isListening) OT.colors.accent else OT.camera.label2,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        if (voiceCommander.isListening) "Listening: say “Now”" else "Tap or say “Now”",
+                        style = OT.type.footnote,
+                        color = if (voiceCommander.isListening) Color.White else OT.camera.label2,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
             }
         }

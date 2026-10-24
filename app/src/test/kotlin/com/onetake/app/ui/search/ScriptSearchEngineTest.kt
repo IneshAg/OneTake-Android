@@ -78,4 +78,21 @@ class ScriptSearchEngineTest {
         assertEquals(1, results.size)
         assertEquals("Morpheus", results.first().character)
     }
+
+    @Test
+    fun search_preservesSceneIndexInDialogueMatch() {
+        val lines = listOf(
+            ScriptSearchLine(
+                character = "Hamlet",
+                project = "Hamlet",
+                scene = "Scene 3",
+                text = "Get thee to a nunnery",
+                auditionId = "aud-h",
+                sceneIndex = 2,
+            )
+        )
+        val matches = engine.search("nunnery", lines)
+        assertEquals(1, matches.size)
+        assertEquals(2, matches.first().sceneIndex)
+    }
 }

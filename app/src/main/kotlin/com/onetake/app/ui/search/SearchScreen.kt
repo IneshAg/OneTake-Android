@@ -77,7 +77,7 @@ fun SearchScreen(
 
     val dynamicLines = remember(store.auditions, store.practice) {
         val fromAuditions = store.auditions.flatMap { audition ->
-            audition.scenes.flatMap { scene ->
+            audition.scenes.flatMapIndexed { sceneIdx, scene ->
                 scene.lines.map { line ->
                     ScriptSearchLine(
                         character = line.character,
@@ -85,6 +85,7 @@ fun SearchScreen(
                         scene = scene.title.ifBlank { "Scene ${scene.number}" },
                         text = line.text,
                         auditionId = audition.id,
+                        sceneIndex = sceneIdx,
                     )
                 }
             }
@@ -313,7 +314,7 @@ fun SearchScreen(
                                     .clickable {
                                         val targetId = match.auditionId ?: match.practicePieceId
                                         if (targetId != null) {
-                                            nav.push(Route.Prepare(targetId, 0))
+                                            nav.push(Route.Prepare(targetId, match.sceneIndex))
                                         }
                                     }
                                     .padding(horizontal = 18.dp, vertical = 14.dp)

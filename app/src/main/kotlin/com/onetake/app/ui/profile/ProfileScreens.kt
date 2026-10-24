@@ -1,5 +1,6 @@
 package com.onetake.app.ui.profile
 
+import android.widget.Toast
 import com.onetake.app.ui.system.ReaderFiles
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -564,9 +565,9 @@ fun HeadshotsScreen(auditionId: String? = null) {
     val taken = store.headshotsTaken
     val targetAudition = auditionId?.let { store.audition(it) } ?: store.active.firstOrNull() ?: store.auditions.firstOrNull()
     val project = targetAudition?.project ?: "your audition"
-    val hasFront = store.hasHeadshot("front") || taken >= 1
-    val hasLeft = store.hasHeadshot("left") || taken >= 2
-    val hasRight = store.hasHeadshot("right") || taken >= 3
+    val hasFront = store.hasHeadshot("front")
+    val hasLeft = store.hasHeadshot("left")
+    val hasRight = store.hasHeadshot("right")
 
     fun onProceed() {
         if (targetAudition != null) {
@@ -791,6 +792,7 @@ fun HeadshotFlowScreen() {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val camera = rememberCameraController()
+    val context = LocalContext.current
     val haptics = rememberHaptics()
     var angle by rememberSaveable { mutableStateOf(HeadshotAngle.Front) }
     var front by remember { mutableStateOf(true) }
@@ -851,10 +853,12 @@ fun HeadshotFlowScreen() {
                                 haptics.impact()
                                 camera.capturePhoto { uri ->
                                     capturing = false
-                                    if (uri != null) {
-                                        store.saveHeadshot(angle.name.lowercase(), uri.toString())
+                                    if (uri == null) {
+                                        // Nothing was saved: stay on this angle, tick nothing off.
+                                        Toast.makeText(context, "Couldn't take that photo. Try again.", Toast.LENGTH_SHORT).show()
+                                        return@capturePhoto
                                     }
-                                    store.headshotsTaken = maxOf(store.headshotsTaken, angle.ordinal + 1)
+                                    store.saveHeadshot(angle.name.lowercase(), uri.toString())
                                     store.auditions.forEach { a ->
                                         if (a.pieces.any { it.kind == PieceKind.Headshot && !it.isDone }) {
                                             store.markDone(PieceKind.Headshot, a.id)

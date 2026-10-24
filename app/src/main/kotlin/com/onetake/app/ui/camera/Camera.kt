@@ -195,25 +195,9 @@ class CameraController(private val context: Context) {
         val file = File(dir, "headshot-${System.currentTimeMillis()}.jpg")
         val p = provider
         if (p == null || state != State.Ready) {
-            // Camera hardware not ready or unavailable (e.g. headless emulator).
-            // Generate a real user silhouette image so photo capture completes cleanly.
-            runCatching {
-                val bitmap = android.graphics.Bitmap.createBitmap(720, 960, android.graphics.Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(bitmap)
-                canvas.drawColor(android.graphics.Color.rgb(0x18, 0x18, 0x1C))
-                val paint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.rgb(0x3E, 0x3E, 0x48)
-                    isAntiAlias = true
-                    style = android.graphics.Paint.Style.FILL
-                }
-                canvas.drawCircle(360f, 380f, 150f, paint)
-                val oval = android.graphics.RectF(140f, 540f, 580f, 1000f)
-                canvas.drawRoundRect(oval, 120f, 120f, paint)
-                file.outputStream().use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
-                }
-                onResult(Uri.fromFile(file))
-            }.onFailure { onResult(null) }
+            // Camera not ready or unavailable: report failure rather than saving a placeholder
+            // image as if it were the actor's real headshot.
+            onResult(null)
             return
         }
         imageCapture.takePicture(

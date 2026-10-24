@@ -128,10 +128,9 @@ fun OnboardingFlow() {
     // Where "back" from the slate step goes (sign-in or the email code screen).
     var slateBack by rememberSaveable { mutableIntStateOf(StepSignIn) }
 
+    // Onboarding also runs again after "Sign out", so it must not touch the actor's data — on a
+    // true first run there's nothing saved yet and Home already shows "Add your first audition".
     fun finish() {
-        // First run: Home shows "Add your first audition", Practice shows "No Practice".
-        store.auditions = emptyList()
-        store.practice = emptyList()
         store.isOnboarded = true
     }
 

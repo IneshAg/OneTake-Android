@@ -3,6 +3,7 @@ package com.onetake.app.ocr
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.ImageDecoder
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
@@ -24,10 +25,12 @@ object OcrManager {
      */
     suspend fun recognizeTextFromBitmap(bitmap: Bitmap): Result<String> = withContext(Dispatchers.Default) {
         runCatching {
-            val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-            recognizeFromBitmapInternal(bitmap, recognizer)
+            newRecognizer().use { recognizeFromBitmapInternal(bitmap, it) }
         }
     }
+
+    /** Recognizers hold native resources — every one is closed via `use`. */
+    private fun newRecognizer(): TextRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
     /**
      * Extracts text from a document or image URI (PDF, image file, or text document).
@@ -57,10 +60,11 @@ object OcrManager {
             val bitmap = loadBitmapFromUri(context, uri)
                 ?: error("Could not decode image from URI: $uri")
 
-            val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-            val result = recognizeFromBitmapInternal(bitmap, recognizer)
-            runCatching { bitmap.recycle() }
-            result
+            try {
+                newRecognizer().use { recognizeFromBitmapInternal(bitmap, it) }
+            } finally {
+                bitmap.recycle()
+            }
         }
     }
 
@@ -69,28 +73,32 @@ object OcrManager {
             val pfd = context.contentResolver.openFileDescriptor(uri, "r")
                 ?: return@runCatching ""
             pfd.use { descriptor ->
-                val renderer = PdfRenderer(descriptor)
-                val sb = StringBuilder()
-                val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                val pageCount = minOf(renderer.pageCount, 15) // Read up to 15 pages of sides
-
-                for (i in 0 until pageCount) {
-                    val page = renderer.openPage(i)
-                    val width = page.width * 2
-                    val height = page.height * 2
-                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    page.close()
-
-                    val pageText = recognizeFromBitmapInternal(bitmap, recognizer)
-                    runCatching { bitmap.recycle() }
-                    if (pageText.isNotBlank()) {
-                        if (sb.isNotEmpty()) sb.append("\n\n")
-                        sb.append(pageText)
+                PdfRenderer(descriptor).use { renderer ->
+                    newRecognizer().use { recognizer ->
+                        val sb = StringBuilder()
+                        val pageCount = minOf(renderer.pageCount, 15) // Read up to 15 pages of sides
+                        for (i in 0 until pageCount) {
+                            val bitmap = renderer.openPage(i).use { page ->
+                                Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888).also {
+                                    // PdfRenderer draws onto a transparent bitmap; without a white
+                                    // page, black text can reach the recogniser as black-on-black.
+                                    it.eraseColor(Color.WHITE)
+                                    page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                }
+                            }
+                            val pageText = try {
+                                recognizeFromBitmapInternal(bitmap, recognizer)
+                            } finally {
+                                bitmap.recycle()
+                            }
+                            if (pageText.isNotBlank()) {
+                                if (sb.isNotEmpty()) sb.append("\n\n")
+                                sb.append(pageText)
+                            }
+                        }
+                        sb.toString()
                     }
                 }
-                renderer.close()
-                sb.toString()
             }
         }
     }

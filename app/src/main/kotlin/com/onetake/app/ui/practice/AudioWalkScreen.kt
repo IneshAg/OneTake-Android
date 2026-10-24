@@ -54,6 +54,7 @@ import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.system.rememberTtsEngine
+import com.onetake.app.ui.system.speakAndAwait
 import com.onetake.app.ui.theme.OT
 import kotlinx.coroutines.delay
 
@@ -106,11 +107,11 @@ fun AudioWalkScreen(
         val words = currentLine.text.split(Regex("\\s+")).size
         val pacingMs = LineLearningMode.calculateSpokenPacingMillis(words)
 
-        tts.speak(currentLine.text) {
-            // Callback when line finishes
-        }
-
-        delay(pacingMs)
+        // Wait for the line to actually finish — a fixed timer cut long lines off mid-sentence —
+        // with the estimated pacing as a floor if TTS isn't available.
+        val started = System.currentTimeMillis()
+        tts.speakAndAwait(currentLine.text, timeoutMs = pacingMs * 3 + 2_000)
+        delay((pacingMs - (System.currentTimeMillis() - started)).coerceAtLeast(300))
 
         if (isPlaying) {
             if (lineIndex + 1 < lines.size) {

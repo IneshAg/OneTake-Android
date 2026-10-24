@@ -27,7 +27,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -82,7 +81,6 @@ import com.onetake.app.Route
 import com.onetake.app.models.Audition
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
-import com.onetake.app.models.ScriptLine
 import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.formatDuration
 import com.onetake.app.models.otDayMonth
@@ -107,6 +105,8 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import com.onetake.app.models.Destination
+import kotlinx.coroutines.launch
 
 /** 07 Audition detail (and 7.0 "just added · 0 of 4" when nothing is done yet). */
 @Composable
@@ -139,19 +139,7 @@ fun AuditionDetailScreen(auditionId: String) {
         if (a.scenes.isEmpty()) {
             val count = a.pieces.count { it.kind == PieceKind.Scene }.coerceAtLeast(1)
             val healedScenes = (1..count).map { i ->
-                ScriptScene(
-                    number = i,
-                    title = "Scene $i",
-                    heading = "INT. AUDITION ROOM - DAY",
-                    lines = listOf(
-                        ScriptLine(
-                            character = a.role.ifBlank { "ME" }.uppercase(),
-                            text = "Audition scene lines.",
-                            isMine = true,
-                        )
-                    ),
-                    estimatedSeconds = 60,
-                )
+                ScriptScene.placeholder(i, a.role)
             }
             store.update(a.id) { current ->
                 if (current.scenes.isEmpty()) current.copy(scenes = healedScenes) else current
@@ -163,6 +151,8 @@ fun AuditionDetailScreen(auditionId: String) {
     var showPackage by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
     var showCallback by remember { mutableStateOf(false) }
+    var showEdit by remember { mutableStateOf(false) }
+    var showSides by remember { mutableStateOf(false) }
     val c = OT.colors
 
     PushedScreen(
@@ -178,8 +168,16 @@ fun AuditionDetailScreen(auditionId: String) {
                         .background(Color(0xF01A1A1E))
                         .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, RoundedCornerShape(24.dp)),
                 ) {
-                    DetailMenuItem("Revised sides", "New pages from casting", Icons.Outlined.Description) { showMenu = false }
-                    DetailMenuItem("Edit details", "Due date, role, what they want", Icons.Outlined.Edit) { showMenu = false }
+                    DetailMenuItem("Edit details", "Project, role, due date, destination", Icons.Outlined.Edit) {
+                        showMenu = false
+                        showEdit = true
+                    }
+                    OTDivider()
+                    DetailMenuItem("Revised sides", "Swap in new pages", Icons.Outlined.Description) {
+                        showMenu = false
+                        showSides = true
+                    }
+                    OTDivider()
                     DetailMenuItem("Start a callback", "Same role, next round", Icons.AutoMirrored.Filled.ArrowForward) {
                         showMenu = false
                         showCallback = true
@@ -223,6 +221,12 @@ fun AuditionDetailScreen(auditionId: String) {
     }
     if (showCallback) {
         DetailCallbackSheet(a, onDismiss = { showCallback = false })
+    }
+    if (showEdit) {
+        DetailEditSheet(a, onDismiss = { showEdit = false })
+    }
+    if (showSides) {
+        DetailRevisedSidesSheet(a, onDismiss = { showSides = false })
     }
     if (showDelete) {
         DetailDeleteSheet(
@@ -618,6 +622,8 @@ private val detailChipDate = DateTimeFormatter.ofPattern("EEE, d MMM", Locale.US
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DetailCallbackSheet(a: Audition, onDismiss: () -> Unit) {
+    val store = LocalAppStore.current
+    val nav = LocalNavigator.current
     val c = OT.colors
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val today = remember { LocalDate.now() }
@@ -671,10 +677,7 @@ private fun DetailCallbackSheet(a: Audition, onDismiss: () -> Unit) {
                     DetailChip(suggested.format(detailChipDate), choice == 1) { choice = 1 }
                     DetailChip(otherDate?.format(detailChipDate) ?: "Other date", choice == 2) { showPicker = true }
                 }
-                Row {
-                    Text("By 10:00 AM · ", style = OT.type.footnote, color = c.due)
-                    Text("change time", style = OT.type.footnote, color = c.accent)
-                }
+                Text("By 10:00 AM", style = OT.type.footnote, color = c.due)
                 OTDivider()
 
                 SectionLabel("Scenes to tape")
@@ -698,16 +701,6 @@ private fun DetailCallbackSheet(a: Audition, onDismiss: () -> Unit) {
                             Text("Same pages · ≈ ${formatDuration(scene.estimatedSeconds)}", style = OT.type.footnote, color = c.labelTertiary)
                         }
                     }
-                }
-                Row(
-                    Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Box(Modifier.size(24.dp).border(1.5.dp, c.accent, CircleShape), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Add, null, tint = c.accent, modifier = Modifier.size(16.dp))
-                    }
-                    Text("New pages for the callback", style = OT.type.body, color = c.accent)
                 }
                 OTDivider()
 
@@ -751,7 +744,23 @@ private fun DetailCallbackSheet(a: Audition, onDismiss: () -> Unit) {
             }
             PrimaryButton(
                 "Create callback",
-                onClick = onDismiss,
+                onClick = {
+                    val dueDate = when (choice) {
+                        0 -> today.plusDays(1)
+                        2 -> otherDate ?: suggested
+                        else -> suggested
+                    }
+                    val callback = store.startCallback(
+                        original = a,
+                        due = dueDate.atTime(10, 0),
+                        sceneIds = selectedScenes,
+                        notes = notes,
+                        shareReader = bringReader,
+                    )
+                    onDismiss()
+                    nav.push(Route.AuditionDetail(callback.id))
+                },
+                enabled = selectedScenes.isNotEmpty(),
                 modifier = Modifier.padding(horizontal = OT.dims.gutter, vertical = 8.dp),
             )
         }
@@ -798,5 +807,205 @@ private fun DetailChip(text: String, selected: Boolean, onClick: () -> Unit) {
             color = if (selected) c.labelOnAccent else c.labelPrimary,
             maxLines = 1,
         )
+    }
+}
+
+// MARK: - Edit details
+
+/** Everything casting might change after the notice: project, role, casting office, due date and
+ *  time, where it's going, and their notes. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetailEditSheet(a: Audition, onDismiss: () -> Unit) {
+    val store = LocalAppStore.current
+    val c = OT.colors
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var project by remember { mutableStateOf(a.project) }
+    var role by remember { mutableStateOf(a.role) }
+    var office by remember { mutableStateOf(a.castingOffice) }
+    var notes by remember { mutableStateOf(a.notes) }
+    var dueDate by remember { mutableStateOf(a.due.toLocalDate()) }
+    var dueHour by remember { mutableIntStateOf(a.due.hour) }
+    var destination by remember { mutableStateOf(a.destination) }
+    var showPicker by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = c.bgCanvas) {
+        Column(Modifier.fillMaxWidth()) {
+            SheetHeader("Edit details", leading = "Cancel", onLeading = onDismiss)
+            Column(
+                Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = OT.dims.gutter),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SectionLabel("Project")
+                DetailTextField(project, { project = it }, "Project")
+                SectionLabel("Your role")
+                DetailTextField(role, { role = it }, "Role")
+                SectionLabel("Casting office")
+                DetailTextField(office, { office = it }, "Casting office")
+
+                SectionLabel("Due")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DetailChip(dueDate.format(detailChipDate), true) { showPicker = true }
+                    listOf(10, 12, 17, 23).forEach { h ->
+                        DetailChip("%d:00".format(h), dueHour == h) { dueHour = h }
+                    }
+                }
+
+                SectionLabel("Where it's going")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Destination.entries.forEach { d -> DetailChip(d.label, destination == d) { destination = d } }
+                }
+                Text(destination.spec, style = OT.type.footnote, color = c.labelTertiary)
+
+                SectionLabel("Notes from casting")
+                DetailTextField(notes, { notes = it }, "e.g. “Less angry, more hurt.”", minHeight = 72)
+                Spacer(Modifier.height(4.dp))
+            }
+            PrimaryButton(
+                "Save",
+                onClick = {
+                    store.editDetails(
+                        a.id, project = project, role = role, castingOffice = office,
+                        due = dueDate.atTime(dueHour, 0), destination = destination, notes = notes,
+                    )
+                    onDismiss()
+                },
+                enabled = project.isNotBlank() && role.isNotBlank(),
+                modifier = Modifier.padding(horizontal = OT.dims.gutter, vertical = 8.dp),
+            )
+        }
+    }
+
+    if (showPicker) {
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = dueDate.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { dueDate = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate() }
+                    showPicker = false
+                }) { Text("Done", color = c.accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Cancel", color = c.labelSecondary) }
+            },
+        ) { DatePicker(state = pickerState) }
+    }
+}
+
+@Composable
+private fun DetailTextField(value: String, onValueChange: (String) -> Unit, placeholder: String, minHeight: Int = 48) {
+    val c = OT.colors
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        textStyle = OT.type.body.copy(color = c.labelPrimary),
+        cursorBrush = SolidColor(c.accent),
+        modifier = Modifier.fillMaxWidth(),
+        decorationBox = { inner ->
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = minHeight.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(c.fillField)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (value.isEmpty()) Text(placeholder, style = OT.type.body, color = c.labelTertiary)
+                inner()
+            }
+        },
+    )
+}
+
+// MARK: - Revised sides
+
+/** New pages from casting: paste them, or read a photo or file on the phone. The scenes are
+ *  replaced and the scene pieces start again; takes already shot stay in Takes. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetailRevisedSidesSheet(a: Audition, onDismiss: () -> Unit) {
+    val store = LocalAppStore.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val c = OT.colors
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var text by remember { mutableStateOf("") }
+    var reading by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+
+    fun readUri(uri: android.net.Uri?) {
+        if (uri == null) return
+        reading = true
+        problem = null
+        scope.launch {
+            val read = com.onetake.app.ocr.OcrManager.recognizeTextFromUri(context, uri).getOrNull().orEmpty().trim()
+            reading = false
+            if (read.isEmpty()) problem = "Couldn't read any text from that. Try a clearer photo, or paste the text." else text = read
+        }
+    }
+    val fileLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { readUri(it) }
+    val photoLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { readUri(it) }
+
+    val scenes = remember(text, a.role) {
+        if (text.isBlank() || com.onetake.app.data.ScriptParser.extractCharacters(text).isEmpty()) emptyList()
+        else com.onetake.app.data.ScriptParser.parseScenes(text, a.role)
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = c.bgCanvas) {
+        Column(Modifier.fillMaxWidth()) {
+            SheetHeader("Revised sides", leading = "Cancel", onLeading = onDismiss)
+            Column(
+                Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = OT.dims.gutter),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                LargeTitle("New pages", subtitle = "They replace the scenes in ${a.project}. Takes you've shot stay in Takes.")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DetailChip("Photo", false) {
+                        photoLauncher.launch(
+                            androidx.activity.result.PickVisualMediaRequest(
+                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                            ),
+                        )
+                    }
+                    DetailChip("File", false) { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "image/*")) }
+                }
+                DetailTextField(text, { text = it; problem = null }, "Or paste the new sides here", minHeight = 160)
+                when {
+                    reading -> Text("Reading on this phone…", style = OT.type.footnote, color = c.labelSecondary)
+                    problem != null -> Text(problem.orEmpty(), style = OT.type.footnote, color = c.danger)
+                    text.isNotBlank() && scenes.isEmpty() ->
+                        Text("No character lines found yet — sides need a name on its own line, or NAME: line.", style = OT.type.footnote, color = c.labelTertiary)
+                    scenes.isNotEmpty() -> Text(
+                        "${scenes.size} scene${if (scenes.size == 1) "" else "s"} · ${scenes.sumOf { s -> s.lines.count { it.isMine } }} of your lines",
+                        style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                        color = c.labelPrimary,
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+            PrimaryButton(
+                "Replace sides",
+                onClick = {
+                    store.replaceSides(a.id, scenes)
+                    onDismiss()
+                },
+                enabled = scenes.isNotEmpty() && !reading,
+                modifier = Modifier.padding(horizontal = OT.dims.gutter, vertical = 8.dp),
+            )
+        }
     }
 }

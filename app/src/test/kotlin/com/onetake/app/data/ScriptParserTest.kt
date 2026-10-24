@@ -77,4 +77,24 @@ class ScriptParserTest {
         assertTrue(scene.lines[0].isMine)
         assertEquals(monologue, scene.lines[0].text)
     }
+
+    @Test
+    fun testDialogueStartingWithSlugWordsIsKept() {
+        val scene = ScriptParser.parse("MAYA\nActually, I stayed.\n\nDEV\nScenery's nice.", myCharacter = "Maya Reyes")
+        assertEquals(listOf("Actually, I stayed.", "Scenery's nice."), scene.lines.map { it.text })
+        assertTrue("first-name cue matches full role name", scene.lines[0].isMine)
+        assertFalse(scene.lines[1].isMine)
+    }
+
+    @Test
+    fun testActionAfterBlankLineIsNotGluedToDialogue() {
+        val scene = ScriptParser.parse("MAYA\nHi.\n\nShe crosses to the window.\n\nDEV\nHey.", myCharacter = "MAYA")
+        assertEquals(listOf("Hi.", "Hey."), scene.lines.map { it.text })
+    }
+
+    @Test
+    fun testClockTimesAndShortCuesAreNotCharacters() {
+        assertTrue(ScriptParser.extractCharacters("Submit by Oct 30 at 10:00 AM").isEmpty())
+        assertFalse(ScriptParser.isMyCue("AN", "Anaya"))
+    }
 }

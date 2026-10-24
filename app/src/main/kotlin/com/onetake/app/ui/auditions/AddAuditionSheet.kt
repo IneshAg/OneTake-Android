@@ -96,7 +96,6 @@ import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
-import com.onetake.app.models.ScriptLine
 import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.otTime
 import com.onetake.app.ocr.OcrManager
@@ -108,7 +107,7 @@ import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.SheetHeader
-import com.onetake.app.ui.system.clipboardCastingNotice
+import com.onetake.app.ui.system.clipboardText
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.theme.OT
 import kotlinx.coroutines.delay
@@ -142,32 +141,15 @@ private data class AddDraft(
     val rawScriptText: String = "",
 ) {
     fun makeAudition(hasHeadshot: Boolean = false): Audition {
-        val parsedScene = if (rawScriptText.isNotBlank()) {
-            ScriptParser.parse(rawScriptText, myCharacter = role.ifBlank { "Me" }, sceneTitle = "Scene 1")
-        } else null
-
-        val sceneCount = maxOf(1, scenes)
-        val finalScenes = if (parsedScene != null && parsedScene.lines.isNotEmpty()) {
-            listOf(parsedScene)
-        } else if (rawScriptText.isNotBlank()) {
-            listOf(ScriptParser.parse(rawScriptText, myCharacter = role.ifBlank { "Me" }, sceneTitle = "Scene 1"))
-        } else {
-            (1..sceneCount).map { i ->
-                ScriptScene(
-                    number = i,
-                    title = "Scene $i",
-                    heading = "INT. AUDITION ROOM - DAY",
-                    lines = listOf(
-                        ScriptLine(
-                            character = role.ifBlank { "ME" }.uppercase(),
-                            text = "Audition scene lines.",
-                            isMine = true,
-                        )
-                    ),
-                    estimatedSeconds = 60,
-                )
-            }
-        }
+        // Use the pasted/scanned text as the scene only when it actually reads like sides — one of
+        // the lines is yours, or there are at least two speakers. Notice prose would otherwise
+        // become a fake "monologue" for the role.
+        val hasCues = rawScriptText.isNotBlank() && ScriptParser.extractCharacters(rawScriptText).isNotEmpty()
+        // One scene per slugline / "SCENE 2" header in the sides.
+        val parsedScenes = if (!hasCues) emptyList() else
+            ScriptParser.parseScenes(rawScriptText, myCharacter = role.ifBlank { "Me" })
+                .filter { scene -> scene.lines.any { it.isMine } || scene.lines.distinctBy { it.character }.size >= 2 }
+        val finalScenes = parsedScenes.ifEmpty { (1..maxOf(1, scenes)).map { ScriptScene.placeholder(it, role) } }
 
         val pieces = mutableListOf(
             Piece(kind = PieceKind.Headshot, title = "Headshot", detail = "Front", isDone = hasHeadshot),
@@ -193,74 +175,16 @@ private data class AddDraft(
     }
 }
 
+/** Notice → draft. The rules live in [NoticeParser] (pure, unit-tested). */
 private fun addParseNotice(text: String): AddDraft {
-    val clean = text.trim()
-    if (clean.isBlank()) return AddDraft()
-
-    val lower = clean.lowercase()
-    val characters = ScriptParser.extractCharacters(clean)
-
-    // Look for role indications like "role: X", "for X in", "seeking X"
-    var detectedRole = ""
-    val roleRegexes = listOf(
-        Regex("""(?i)\brole(?:\s+of)?:\s*([A-Za-z0-9'\s]+)"""),
-        Regex("""(?i)\bfor\s+([A-Z][a-zA-Z0-9'\s]+)\s+in\b"""),
-        Regex("""(?i)\bseeking\s+([A-Z][a-zA-Z0-9'\s]+)\b"""),
-    )
-    for (regex in roleRegexes) {
-        val match = regex.find(clean)
-        if (match != null) {
-            detectedRole = match.groupValues[1].trim().take(30)
-            break
-        }
-    }
-    if (detectedRole.isBlank() && characters.isNotEmpty()) {
-        detectedRole = characters.first().take(30)
-    }
-
-    // Look for project indications like "in PROJECT", "project: PROJECT"
-    var detectedProject = ""
-    val projectRegexes = listOf(
-        Regex("""(?i)\bproject:\s*([A-Za-z0-9'\s]+)"""),
-        Regex("""(?i)\bin\s+([A-Z][A-Z0-9'\s]{2,})\b"""),
-        Regex("""(?i)\bfilm:\s*([A-Za-z0-9'\s]+)"""),
-        Regex("""(?i)\bseries:\s*([A-Za-z0-9'\s]+)"""),
-    )
-    for (regex in projectRegexes) {
-        val match = regex.find(clean)
-        if (match != null) {
-            detectedProject = match.groupValues[1].trim().take(40)
-            break
-        }
-    }
-    if (detectedProject.isBlank()) {
-        detectedProject = clean.lines().firstOrNull { line ->
-            val l = line.trim()
-            l.isNotBlank() && !l.contains(":") && l.length < 50
-        }?.trim()?.take(40) ?: "Untitled Audition"
-    }
-
-    val asks = mutableListOf<String>()
-    if ("slate" in lower) asks += "Slate first"
-    if ("landscape" in lower) asks += "Landscape"
-    if ("full-length" in lower || "full length" in lower) asks += "Full length"
-    if ("under 3" in lower) asks += "Under 3 min"
-    if ("actors access" in lower) asks += "Actors Access"
-    if ("casting networks" in lower) asks += "Casting Networks"
-
-    val destination = when {
-        "casting networks" in lower -> Destination.CastingNetworks
-        "spotlight" in lower -> Destination.Spotlight
-        "email" in lower || "link" in lower -> Destination.EmailOrLink
-        else -> Destination.ActorsAccess
-    }
-
+    val f = NoticeParser.parse(text)
     return AddDraft(
-        project = detectedProject,
-        role = detectedRole,
-        asks = asks,
-        destination = destination,
-        rawScriptText = clean,
+        project = f.project,
+        role = f.role,
+        due = f.due,
+        asks = f.asks,
+        destination = f.destination,
+        rawScriptText = f.scriptText,
     )
 }
 
@@ -276,7 +200,6 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     var path by remember { mutableStateOf(listOf<AddStep>()) }
     var notice by remember { mutableStateOf("") }
     var draft by remember { mutableStateOf(AddDraft()) }
-    val clip = remember { runCatching { clipboardCastingNotice(context) }.getOrNull() }
 
     fun startReading(text: String) {
         if (text.isBlank()) {
@@ -290,6 +213,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
 
     val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
+            notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = OcrManager.recognizeTextFromUri(context, uri)
@@ -305,6 +229,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     }
     val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
         if (bitmap != null) {
+            notice = ""
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = OcrManager.recognizeTextFromBitmap(bitmap)
@@ -320,6 +245,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     }
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
+            notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = OcrManager.recognizeTextFromUri(context, uri)
@@ -333,6 +259,28 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
             }
         }
     }
+    // A notice shared from another app (MainActivity → AppStore.incomingShare): its text plus whatever
+    // the attached images or PDFs say, read on the phone like a photo or file.
+    LaunchedEffect(store.incomingShare) {
+        val share = store.incomingShare ?: return@LaunchedEffect
+        store.incomingShare = null
+        notice = ""
+        path = listOf(AddStep.Reading)
+        val parts = buildList {
+            share.text?.let { add(it) }
+            share.uris.forEach { uri ->
+                OcrManager.recognizeTextFromUri(context, uri).getOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
+            }
+        }
+        val text = parts.joinToString("\n\n").trim()
+        if (text.isBlank()) {
+            path = listOf(AddStep.CouldNotRead)
+        } else {
+            notice = text
+            draft = addParseNotice(text)
+        }
+    }
+
     val pickPhoto: () -> Unit = {
         photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
@@ -365,11 +313,8 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
         BackHandler(enabled = path.isNotEmpty()) { path = path.dropLast(1) }
         when (step) {
             null -> AddCaptureStep(
-                clip = clip,
                 onClose = onDismiss,
-                onPaste = {
-                    if (clip != null) startReading(clip)
-                },
+                onPaste = { startReading(runCatching { clipboardText(context) }.getOrNull().orEmpty()) },
                 onPhoto = pickPhoto,
                 onScan = scan,
                 onFile = { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "application/rtf", "text/rtf")) },
@@ -417,7 +362,8 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
             )
             AddStep.CouldNotRead -> AddErrorStep(
                 onCancel = onDismiss,
-                onRetry = { path = listOf(AddStep.Reading) },
+                // Back to capture: re-reading the same text would just fail the same way again.
+                onRetry = { path = emptyList() },
                 onScan = scan,
                 onType = {
                     draft = AddDraft()
@@ -432,7 +378,6 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
 
 @Composable
 private fun AddCaptureStep(
-    clip: String?,
     onClose: () -> Unit,
     onPaste: () -> Unit,
     onPhoto: () -> Unit,
@@ -441,7 +386,6 @@ private fun AddCaptureStep(
     onType: () -> Unit,
 ) {
     val c = OT.colors
-    val parsed = remember(clip) { clip?.let { addParseNotice(it) } }
     Column(
         Modifier
             .fillMaxWidth()
@@ -460,38 +404,26 @@ private fun AddCaptureStep(
             CircleIconButton(Icons.Filled.Close, "Close", onClick = onClose)
         }
 
-        if (clip != null && parsed != null) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(c.accentSoft)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(
-                        Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(c.accentSoft),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Filled.ContentPaste, null, tint = c.accent, modifier = Modifier.size(20.dp)) }
-                    Column {
-                        Text("On your clipboard", style = OT.type.headline, color = c.labelPrimary)
-                        Text(
-                            if (parsed.project.isNotEmpty()) parsed.project else "Looks like a casting notice",
-                            style = OT.type.footnote,
-                            color = c.labelTertiary,
-                        )
-                    }
+        // The clipboard is only read when Paste is tapped.
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(c.accentSoft)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(
+                    Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(c.accentSoft),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Filled.ContentPaste, null, tint = c.accent, modifier = Modifier.size(20.dp)) }
+                Column {
+                    Text("Copied the notice?", style = OT.type.headline, color = c.labelPrimary)
+                    Text("Paste the email or message — OneTake reads it here", style = OT.type.footnote, color = c.labelTertiary)
                 }
-                Text(
-                    "“${clip.take(110)}…”",
-                    style = OT.type.callout,
-                    color = c.labelSecondary,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                PrimaryButton("Paste and set up", onClick = onPaste)
             }
+            PrimaryButton("Paste and set up", onClick = onPaste)
         }
 
         SectionLabel("Or bring it in")
@@ -505,7 +437,7 @@ private fun AddCaptureStep(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Filled.Share, null, tint = c.accent, modifier = Modifier.size(14.dp))
-                Text("Faster: Share from Mail or WhatsApp to OneTake", style = OT.type.footnote, color = c.accent)
+                Text("Faster: in Mail or WhatsApp, Share → OneTake", style = OT.type.footnote, color = c.accent)
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Filled.Lock, null, tint = c.labelTertiary, modifier = Modifier.size(14.dp))
@@ -546,11 +478,18 @@ private fun AddReadingStep(notice: String, onCancel: () -> Unit, onDone: (AddDra
         "Project" to parsed.project.ifEmpty { "not in the notice" },
         "Your role" to parsed.role.ifEmpty { "not in the notice" },
         "Due" to (parsed.due?.format(addDueLong) ?: "no date given"),
-        "Sides" to "${parsed.scenes} scenes",
-        "What they asked for" to "${parsed.asks.size + 1} things",
+        "Sides" to if (parsed.scenes == 1) "1 scene" else "${parsed.scenes} scenes",
+        "What they asked for" to when (parsed.asks.size) {
+            0 -> "nothing specific"
+            1 -> "1 thing"
+            else -> "${parsed.asks.size} things"
+        },
     )
 
     LaunchedEffect(notice) {
+        // Blank while a scan/photo is still being recognised: keep showing "reading…" and wait —
+        // the effect restarts once the recognised text arrives.
+        if (notice.isBlank()) return@LaunchedEffect
         for (i in 1..rows.size) {
             delay(450)
             found = i

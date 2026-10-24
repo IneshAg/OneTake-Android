@@ -2,13 +2,18 @@ package com.onetake.app.ui.system
 
 import android.content.Context
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
+import kotlin.coroutines.resume
 import java.util.UUID
 
 interface RehearsalSpeechEngine {
@@ -20,6 +25,13 @@ interface RehearsalSpeechEngine {
 class TtsReaderEngine(context: Context) : RehearsalSpeechEngine {
     private var tts: TextToSpeech? = null
     private var isInitialized = false
+    /** 0–1 speech volume (Profile → Reader volume while shooting). */
+    var volume: Float = 1f
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** The utterance whose completion [currentOnDone] belongs to. A late callback from an earlier
+     *  (stopped or replaced) utterance must not fire the current line's callback. Main thread only. */
+    private var currentUtteranceId: String? = null
     private var currentOnDone: (() -> Unit)? = null
 
     init {
@@ -40,25 +52,25 @@ class TtsReaderEngine(context: Context) : RehearsalSpeechEngine {
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
 
-            override fun onDone(utteranceId: String?) {
-                val callback = currentOnDone
-                currentOnDone = null
-                callback?.invoke()
-            }
+            override fun onDone(utteranceId: String?) = finished(utteranceId)
 
             @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) {
-                val callback = currentOnDone
-                currentOnDone = null
-                callback?.invoke()
-            }
+            override fun onError(utteranceId: String?) = finished(utteranceId)
 
-            override fun onError(utteranceId: String?, errorCode: Int) {
-                val callback = currentOnDone
-                currentOnDone = null
-                callback?.invoke()
-            }
+            override fun onError(utteranceId: String?, errorCode: Int) = finished(utteranceId)
         })
+    }
+
+    /** TTS reports progress on its own binder thread; hop to main (callers touch Compose state and
+     *  advance lines) and only complete the utterance that's still current. */
+    private fun finished(utteranceId: String?) {
+        mainHandler.post {
+            if (utteranceId == null || utteranceId != currentUtteranceId) return@post
+            val callback = currentOnDone
+            currentOnDone = null
+            currentUtteranceId = null
+            callback?.invoke()
+        }
     }
 
     override fun speak(text: String, onDone: () -> Unit) {
@@ -67,22 +79,22 @@ class TtsReaderEngine(context: Context) : RehearsalSpeechEngine {
             return
         }
         stop()
-        currentOnDone = onDone
         val engine = tts
         if (engine != null && isInitialized) {
             val utteranceId = UUID.randomUUID().toString()
-            val params = Bundle()
+            currentUtteranceId = utteranceId
+            currentOnDone = onDone
+            val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume) }
             engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
         } else {
-            // TTS not available or not ready, invoke callback
-            val callback = currentOnDone
-            currentOnDone = null
-            callback?.invoke()
+            // TTS not available or not ready
+            onDone()
         }
     }
 
     override fun stop() {
         tts?.stop()
+        currentUtteranceId = null
         currentOnDone = null
     }
 
@@ -93,6 +105,15 @@ class TtsReaderEngine(context: Context) : RehearsalSpeechEngine {
         tts?.shutdown()
         tts = null
         isInitialized = false
+    }
+}
+
+/** Speaks [text] and suspends until it has actually finished (or [timeoutMs] passes, in case the
+ *  engine never reports back) — so callers advance after the line, not on a guessed timer that
+ *  cuts long lines off mid-sentence. */
+suspend fun RehearsalSpeechEngine.speakAndAwait(text: String, timeoutMs: Long) {
+    withTimeoutOrNull(timeoutMs) {
+        suspendCancellableCoroutine { cont -> speak(text) { if (cont.isActive) cont.resume(Unit) } }
     }
 }
 

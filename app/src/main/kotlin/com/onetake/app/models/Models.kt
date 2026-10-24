@@ -44,7 +44,19 @@ data class ScriptScene(
     val heading: String,
     val lines: List<ScriptLine>,
     val estimatedSeconds: Int,
-)
+) {
+    companion object {
+        /** Stand-in scene for an audition added without sides, so Prepare/Shoot have something
+         *  to show until real pages are added. One definition instead of four copies. */
+        fun placeholder(number: Int, role: String) = ScriptScene(
+            number = number,
+            title = "Scene $number",
+            heading = "INT. AUDITION ROOM - DAY",
+            lines = listOf(ScriptLine(character = role.ifBlank { "ME" }.uppercase(), text = "Audition scene lines.", isMine = true)),
+            estimatedSeconds = 60,
+        )
+    }
+}
 
 enum class AuditionStatus { Due, Ready, Sent }
 
@@ -52,7 +64,8 @@ enum class Destination(val label: String, val spec: String) {
     ActorsAccess("Actors Access", "H.264 .mp4 · 1080p · under 500 MB"),
     CastingNetworks("Casting Networks", "H.264 .mp4 · 1080p · up to 300 MB"),
     Spotlight("Spotlight", "H.264 .mp4 · 1080p"),
-    EmailOrLink("Email or link", "Private link · 30 days"),
+    // There's no link hosting on Android: the tape goes through the share sheet (mail, messaging, Drive…).
+    EmailOrLink("Email or link", "Through your share sheet · mail, messaging or Drive"),
 }
 
 data class Audition(
@@ -76,6 +89,8 @@ data class Audition(
     val fullLengthVideoUri: String? = null,
     /** The packaged deliverable, once MediaExporter has actually composed one. */
     val exportedFileUri: String? = null,
+    /** Direction from casting (e.g. a callback adjustment), shown on Prepare before every take. */
+    val notes: String = "",
 ) {
     val readyCount: Int get() = pieces.count { it.isDone }
     val totalCount: Int get() = pieces.size
@@ -84,7 +99,7 @@ data class Audition(
     /** The single "Next:" line used on Home and on audition rows. */
     val nextAction: String
         get() {
-            if (status == AuditionStatus.Sent) return "Sent · link active"
+            if (status == AuditionStatus.Sent) return "Sent"
             val next = nextPiece ?: return "Watch it once, then send"
             return when (next.kind) {
                 PieceKind.Headshot -> "Take your headshot"

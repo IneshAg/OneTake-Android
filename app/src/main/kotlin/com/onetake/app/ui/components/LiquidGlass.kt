@@ -25,8 +25,6 @@ import com.onetake.app.ui.components.backdrop.effects.blur
 import com.onetake.app.ui.components.backdrop.effects.colorControls
 import com.onetake.app.ui.components.backdrop.effects.lens
 import com.onetake.app.ui.components.backdrop.highlight.Highlight
-import com.onetake.app.ui.components.backdrop.highlight.HighlightElement
-import com.onetake.app.ui.components.backdrop.internal.ShapeProvider
 import com.onetake.app.ui.components.backdrop.shadow.Shadow
 
 /** Whether liquid glass is enabled. */
@@ -84,40 +82,6 @@ fun glassContentColor(): Color =
 @Composable
 fun glassIndicatorColor(): Color =
     if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) Color.White else Color.Black
-
-/**
- * A lightweight visual match for liquid glass over a stable background.
- */
-@Composable
-fun Modifier.lightweightLiquidGlass(
-    shape: CornerBasedShape,
-    fallbackColor: Color,
-): Modifier {
-    val useGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
-    val glassTint = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
-        Color(0xFFFAFAFA)
-    } else {
-        Color(0xFF121212)
-    }
-    val shapeProvider = ShapeProvider { shape }
-
-    return clip(shape)
-        .background(
-            color = if (useGlass) glassTint.copy(alpha = SURFACE_OPACITY) else fallbackColor,
-            shape = shape,
-        )
-        .then(
-            if (useGlass) {
-                HighlightElement(
-                    shapeProvider = shapeProvider,
-                    highlight = { Highlight.Default },
-                )
-            } else {
-                Modifier
-            },
-        )
-        .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
-}
 
 /**
  * Renders this composable as a liquid glass surface sampling [LocalAppBackdrop]:

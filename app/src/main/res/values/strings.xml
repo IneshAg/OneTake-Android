@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">OneTake</string>
+    <string name="widget_next_audition">Next audition</string>
+    <string name="widget_next_audition_description">Your soonest self-tape: time left and what\'s next.</string>
 </resources>

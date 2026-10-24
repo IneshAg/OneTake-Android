@@ -4,6 +4,14 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Release builds take their version from the git tag (.github/workflows/release.yml sets
+// VERSION_NAME); everything else builds as 0.1.0.
+val appVersionName = System.getenv("VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.1.0"
+/** 1.2.3 → 10203, so each release's versionCode is higher than the one before. */
+val appVersionCode = appVersionName.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+    .let { it.getOrElse(0) { 0 } * 10_000 + it.getOrElse(1) { 0 } * 100 + it.getOrElse(2) { 0 } }
+    .coerceAtLeast(1)
+
 android {
     namespace = "com.onetake.app"
     compileSdk = 35
@@ -12,8 +20,8 @@ android {
         applicationId = "com.onetake.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -21,9 +29,26 @@ android {
         }
     }
 
+    signingConfigs {
+        // Only when a key is provided (release.yml decodes it from repository secrets); without one,
+        // assembleRelease produces an unsigned APK.
+        System.getenv("ONETAKE_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }?.let { path ->
+            create("release") {
+                storeFile = file(path)
+                storePassword = System.getenv("ONETAKE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ONETAKE_KEY_ALIAS")
+                keyPassword = System.getenv("ONETAKE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8: shrinks and optimises the release APK. CI builds the release variant on every push,
+            // so a missing keep rule shows up as a failed build rather than in a published APK.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -39,6 +64,11 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    testOptions {
+        // AppStore is an AndroidViewModel; its JVM tests build it with a stub Application, which
+        // throws "Stub!" unless android.jar methods return defaults.
+        unitTests.isReturnDefaultValues = true
     }
     packaging {
         resources {
@@ -69,6 +99,11 @@ dependencies {
 
     // ML Kit OCR
     implementation(libs.mlkit.text.recognition)
+    // On-device face detection for Tape check's framing checks
+    implementation(libs.mlkit.face.detection)
+
+    // Home-screen widget (Next audition)
+    implementation(libs.androidx.glance.appwidget)
 
     testImplementation(libs.junit)
 

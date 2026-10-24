@@ -261,14 +261,14 @@ fun ProfileSheet(
 
                         Column {
                             Text(
-                                text = slate.name,
+                                text = slate.name.ifBlank { "Add your name" },
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "${slate.height} · ${slate.basedIn}",
+                                text = listOf(slate.height, slate.basedIn).filter { it.isNotBlank() }.joinToString(" · "),
                                 fontSize = 13.sp,
                                 color = Color(0xFF86868B),
                             )
@@ -299,6 +299,35 @@ fun ProfileSheet(
                 ) {
                     Text(
                         text = "Headshots & Representation",
+                        fontSize = 14.sp,
+                        color = Color.White,
+                    )
+
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = Color(0xFF86868B),
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+
+                HorizontalDivider(color = Color(0x14FFFFFF), thickness = 0.5.dp)
+
+                // The only way into recording settings, notifications and Privacy & data
+                // (including "Delete all local data") — the screen had no route pointing at it.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onDismiss()
+                            nav.push(Route.Settings)
+                        }
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Settings & privacy",
                         fontSize = 14.sp,
                         color = Color.White,
                     )

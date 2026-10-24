@@ -23,17 +23,19 @@ sealed class Route(val path: String) {
     data class AuditionDetail(val id: String) : Route("audition/$id")
     data class Prepare(val id: String, val sceneIndex: Int) : Route("prepare/$id/$sceneIndex")
     data class RunLines(val id: String, val sceneIndex: Int) : Route("runLines/$id/$sceneIndex")
-    data class Reader(val id: String) : Route("reader/$id")
-    data class RecordReader(val id: String) : Route("recordReader/$id")
-    data class ShootMode(val id: String) : Route("shootMode/$id")
-    data class MultiDevice(val id: String) : Route("multiDevice/$id")
-    data class ShootSetup(val id: String) : Route("shootSetup/$id")
+    data class Reader(val id: String, val sceneIndex: Int = 0) : Route("reader/$id/$sceneIndex")
+    data class RecordReader(val id: String, val sceneIndex: Int = 0) : Route("recordReader/$id/$sceneIndex")
+    /** `scene` is the scene the camera should open on; -1 lets it pick the next one still to shoot. */
+    data class ShootMode(val id: String, val scene: Int = -1) : Route("shootMode/$id/$scene")
+    data class ShootSetup(val id: String, val scene: Int = -1) : Route("shootSetup/$id/$scene")
     data class Takes(val id: String) : Route("takes/$id")
     data class TapeCheck(val id: String) : Route("tapeCheck/$id")
     data class Package(val id: String) : Route("package/$id")
     data class Headshots(val auditionId: String? = null) : Route(if (auditionId != null) "headshots/$auditionId" else "headshots") {
         companion object : Route("headshots")
     }
+    /** Recording settings, notifications and Privacy & data (ProfileScreen). */
+    data object Settings : Route("settings")
     data object EditSlate : Route("editSlate")
     data object Privacy : Route("privacy")
     data object Notifications : Route("notifications")
@@ -45,16 +47,15 @@ sealed class Route(val path: String) {
         const val PREPARE = "prepare/{id}/{scene}"
         const val RUN_LINES = "runLines/{id}/{scene}"
         const val AUDIO_WALK = "audioWalk/{id}/{scene}"
-        const val READER = "reader/{id}"
-        const val RECORD_READER = "recordReader/{id}"
-        const val SHOOT_MODE = "shootMode/{id}"
-        const val MULTI_DEVICE = "multiDevice/{id}"
-        const val SHOOT_SETUP = "shootSetup/{id}"
+        const val READER = "reader/{id}/{scene}"
+        const val RECORD_READER = "recordReader/{id}/{scene}"
+        const val SHOOT_MODE = "shootMode/{id}/{scene}"
+        const val SHOOT_SETUP = "shootSetup/{id}/{scene}"
         const val TAKES = "takes/{id}"
         const val TAPE_CHECK = "tapeCheck/{id}"
         const val PACKAGE = "package/{id}"
         const val HEADSHOTS_AUDITION = "headshots/{id}"
-        const val CAMERA_SHOOT = "camera/shoot/{id}"
+        const val CAMERA_SHOOT = "camera/shoot/{id}/{scene}"
         const val CAMERA_HEADSHOT = "camera/headshot"
         const val CAMERA_PRACTICE = "camera/practice"
     }
@@ -62,7 +63,8 @@ sealed class Route(val path: String) {
 
 /** Full-screen camera flows. They hide the tab bar and are always dark, like the system Camera. */
 sealed class CameraFlow(val path: String) {
-    data class Shoot(val auditionId: String) : CameraFlow("camera/shoot/$auditionId")
+    /** `scene` -1 opens on the next scene still to shoot. */
+    data class Shoot(val auditionId: String, val scene: Int = -1) : CameraFlow("camera/shoot/$auditionId/$scene")
     data object Headshot : CameraFlow("camera/headshot")
     data object PracticeTake : CameraFlow("camera/practice")
 }

@@ -47,6 +47,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -97,8 +99,10 @@ import com.onetake.app.ui.system.viewFile
 import com.onetake.app.ui.theme.OT
 import java.io.File
 import java.time.LocalDateTime
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -141,6 +145,7 @@ fun PackageScreen(auditionId: String) {
     var progress by remember { mutableFloatStateOf(0f) }
     var exportError by remember { mutableStateOf<String?>(null) }
     var exportJob by remember { mutableStateOf<Job?>(null) }
+    var confirmSent by remember { mutableStateOf(false) }
 
     val a = store.audition(auditionId)
     if (a == null) {
@@ -159,15 +164,21 @@ fun PackageScreen(auditionId: String) {
         exportJob = scope.launch {
             try {
                 val file = withContext(Dispatchers.IO) {
-                    MediaExporter.export(context, a, takesForAudition, slate) { p ->
-                        scope.launch { progress = p }
-                    }
+                    MediaExporter.export(
+                        context, a, takesForAudition, slate,
+                        isCancelled = { !isActive },
+                        includeSlate = store.slateAtStart,
+                    ) { p -> scope.launch { progress = p } }
                 }
                 store.setExportedFile(a.id, Uri.fromFile(file).toString())
                 haptics.success()
                 shareFile(context, file, "OneTake self-tape — ${a.project} (${a.role})")
-                store.markSent(a.id)
-                phase = PkgPhase.Sent
+                // The share sheet can't tell us whether anything was actually sent, so ask once
+                // the actor is back rather than marking it Sent the moment the sheet opens.
+                phase = PkgPhase.Review
+                confirmSent = true
+            } catch (e: CancellationException) {
+                throw e // Cancel goes back to Review (cancelExport) — not to "Couldn't export".
             } catch (e: Exception) {
                 exportError = e.message ?: "Something went wrong composing your tape."
                 phase = PkgPhase.Failed
@@ -197,6 +208,30 @@ fun PackageScreen(auditionId: String) {
             PkgPhase.Failed -> PkgSendFailed(message = exportError, onBack = { cancelExport() }, onRetry = { send() })
             PkgPhase.Sent -> PkgSent(a, onDone = done)
         }
+    }
+
+    if (confirmSent) {
+        AlertDialog(
+            onDismissRequest = { confirmSent = false },
+            title = { Text("Did your tape go out?", style = OT.type.headline) },
+            text = {
+                Text(
+                    "Mark ${a.project} as sent once you've delivered it. If you backed out of the share sheet, you can send it again from here.",
+                    style = OT.type.callout,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmSent = false
+                    store.markSent(a.id)
+                    phase = PkgPhase.Sent
+                }) { Text("Yes, it's sent", color = OT.colors.accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmSent = false }) { Text("Not yet", color = OT.colors.labelPrimary) }
+            },
+            containerColor = OT.colors.surfaceRaised,
+        )
     }
 }
 

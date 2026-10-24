@@ -1,5 +1,13 @@
 package com.onetake.app.ui.profile
 
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.core.content.ContextCompat
+import android.os.Build
+import android.content.pm.PackageManager
+import android.Manifest
+import android.widget.Toast
+import com.onetake.app.ui.system.ReaderFiles
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,10 +55,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -74,7 +85,6 @@ import com.onetake.app.CameraFlow
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
-import com.onetake.app.TabBarClearance
 import com.onetake.app.models.PieceKind
 import com.onetake.app.ui.camera.CameraBackground
 import com.onetake.app.ui.camera.rememberCameraController
@@ -105,16 +115,9 @@ fun ProfileScreen() {
     val c = OT.colors
     val slate = store.slate
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(c.bgCanvas)
-            .verticalScroll(rememberScrollState())
-            .statusBarsPadding()
-            .padding(horizontal = OT.dims.gutter)
-            .padding(top = 8.dp, bottom = TabBarClearance),
-    ) {
-        LargeTitle("Profile")
+    // Pushed from the profile sheet (Route.Settings) — not a tab root, so it gets a back bar.
+    PushedScreen {
+        LargeTitle("Settings")
         Spacer(Modifier.height(12.dp))
 
         // Slate card: headshot, name, details → Edit slate
@@ -129,14 +132,15 @@ fun ProfileScreen() {
             HeadshotImage(Modifier.size(64.dp).clip(CircleShape), contentDescription = "Your headshot")
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(slate.name, style = OT.type.title, color = c.labelPrimary, modifier = Modifier.weight(1f, fill = false), maxLines = 1)
+                    Text(slate.name.ifBlank { "Add your name" }, style = OT.type.title, color = c.labelPrimary, modifier = Modifier.weight(1f, fill = false), maxLines = 1)
                     Box(
                         Modifier.size(28.dp).clip(CircleShape).background(c.accentSoft),
                         contentAlignment = Alignment.Center,
                     ) { Icon(Icons.Filled.Edit, "Edit slate", tint = c.accent, modifier = Modifier.size(15.dp)) }
                 }
                 Text(
-                    "${slate.height} · ${slate.basedIn} · ${slate.representation.ifEmpty { "Self-represented" }}",
+                    listOf(slate.height, slate.basedIn, slate.representation.ifEmpty { "Self-represented" })
+                .filter { it.isNotBlank() }.joinToString(" · "),
                     style = OT.type.footnote,
                     color = c.labelTertiary,
                 )
@@ -156,14 +160,6 @@ fun ProfileScreen() {
             options = listOf("Same as me", "Quieter", "Much quieter"),
             onSelect = { store.readerVolume = it },
         )
-        ToggleRow(title = "Clean up room noise", checked = store.cleanNoise, onCheckedChange = { store.cleanNoise = it })
-        ProfilePickerRow(
-            title = "Export",
-            value = store.exportSpec,
-            options = listOf("1080p, landscape", "4K, landscape", "1080p, portrait"),
-            onSelect = { store.exportSpec = it },
-            showDivider = false,
-        )
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("Appearance")
@@ -177,18 +173,9 @@ fun ProfileScreen() {
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("More")
-        ListRow(title = "Multi-Device", onClick = {
-            store.auditions.firstOrNull()?.let { nav.push(Route.MultiDevice(it.id)) }
-        })
         ListRow(title = "Notifications", onClick = { nav.push(Route.Notifications) })
         ListRow(title = "Privacy & data", onClick = { nav.push(Route.Privacy) })
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = 52.dp)
-                .clickable(role = Role.Button) { store.isOnboarded = false },
-            contentAlignment = Alignment.CenterStart,
-        ) { Text("Sign out", style = OT.type.body, color = c.danger) }
+        // No accounts exist (everything stays on this phone), so there's nothing to sign out of.
     }
 }
 
@@ -372,7 +359,6 @@ fun PrivacyScreen() {
     val store = LocalAppStore.current
     val context = LocalContext.current
     val c = OT.colors
-    val uriHandler = LocalUriHandler.current
     var confirmDelete by remember { mutableStateOf(false) }
 
     var takesBytes by remember { mutableStateOf(0L) }
@@ -380,27 +366,31 @@ fun PrivacyScreen() {
     var scriptsBytes by remember { mutableStateOf(0L) }
     var readerBytes by remember { mutableStateOf(0L) }
 
-    fun refreshSizes() {
-        // Real recordings now live under filesDir in audition-*/practice-* subfolders (moved out
-        // of cacheDir once they're kept — see MediaStore.persist), plus the exports folder.
-        val mediaDirs = context.filesDir.listFiles { f ->
-            f.isDirectory && (f.name.startsWith("audition-") || f.name.startsWith("practice-") || f.name == "exports")
-        } ?: emptyArray()
-        takesBytes = mediaDirs.sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
+    /** Bumped after "Delete all local data" so the sizes are measured again. */
+    var wipes by remember { mutableIntStateOf(0) }
 
-        val headshotsDir = File(context.filesDir, "headshots")
-        val headshotFiles = headshotsDir.listFiles() ?: emptyArray()
-        headshotsBytes = headshotFiles.sumOf { it.length() }
-
-        // Reader lines are flat files directly under filesDir (ReaderFiles.file), not a subfolder.
-        val readerFiles = context.filesDir.listFiles { f -> f.isFile && f.name.startsWith("reader-line-") } ?: emptyArray()
-        readerBytes = readerFiles.sumOf { it.length() }
-
+    LaunchedEffect(store.takes.size, store.headshotsTaken, store.auditions.size, wipes) {
         scriptsBytes = (store.auditions.sumOf { it.scenes.sumOf { s -> s.lines.sumOf { l -> l.text.length } } } * 2L)
-    }
+        // Walking every recording folder is disk I/O, so it's done off the main thread.
+        val (takes, headshots, reader) = withContext(Dispatchers.IO) {
+            // Real recordings now live under filesDir in audition-*/practice-* subfolders (moved out
+            // of cacheDir once they're kept — see MediaStore.persist), plus the exports folder.
+            val mediaDirs = context.filesDir.listFiles { f ->
+                f.isDirectory && (f.name.startsWith("audition-") || f.name.startsWith("practice-") || f.name == "exports")
+            } ?: emptyArray()
+            val media = mediaDirs.sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
 
-    LaunchedEffect(store.takes.size, store.headshotsTaken, store.auditions.size) {
-        refreshSizes()
+            val photos = (File(context.filesDir, "headshots").listFiles() ?: emptyArray()).sumOf { it.length() }
+
+            // Reader lines live under reader/<scene id>/, plus any flat files left by older builds.
+            val legacyReader = context.filesDir.listFiles { f -> f.isFile && f.name.startsWith(ReaderFiles.LEGACY_PREFIX) } ?: emptyArray()
+            val voice = legacyReader.sumOf { it.length() } +
+                File(context.filesDir, ReaderFiles.DIR).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            Triple(media, photos, voice)
+        }
+        takesBytes = takes
+        headshotsBytes = headshots
+        readerBytes = reader
     }
 
     val totalBytes = takesBytes + headshotsBytes + scriptsBytes + readerBytes
@@ -439,20 +429,16 @@ fun PrivacyScreen() {
         ListRow(title = "Reader recordings", detail = "Your own voice, per line", value = formatStorageSize(readerBytes), showChevron = false, showDivider = false)
 
         Spacer(Modifier.height(20.dp))
+        // Everything stays on this phone: there are no private links or synced sessions, and the
+        // "Privacy Policy" link pointed at example.com — so neither is claimed here.
         SectionLabel("Sent tapes")
-        ListRow(title = "Private links", detail = "Expire 30 days after you send them", showChevron = false)
         ListRow(
-            title = "Multi-Device sessions",
-            detail = "Direct between your own devices on the same Wi-Fi. Nothing goes through a server.",
+            title = "Where your tapes go",
+            detail = "Only where you share them from the share sheet. OneTake has no server.",
             showChevron = false,
             showDivider = false,
         )
         Spacer(Modifier.height(8.dp))
-        Box(
-            Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                .clickable(role = Role.Button) { uriHandler.openUri("https://example.com/privacy") },
-            contentAlignment = Alignment.CenterStart,
-        ) { Text("Privacy Policy", style = OT.type.headline, color = c.accent) }
         Box(
             Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) { confirmDelete = true },
             contentAlignment = Alignment.CenterStart,
@@ -476,16 +462,12 @@ fun PrivacyScreen() {
                             f.isDirectory && (f.name.startsWith("audition-") || f.name.startsWith("practice-") || f.name == "exports")
                         }?.forEach { it.deleteRecursively() }
                         File(context.filesDir, "headshots").listFiles()?.forEach { it.delete() }
-                        context.filesDir.listFiles { f -> f.isFile && f.name.startsWith("reader-line-") }?.forEach { it.delete() }
+                        context.filesDir.listFiles { f -> f.isFile && f.name.startsWith(ReaderFiles.LEGACY_PREFIX) }?.forEach { it.delete() }
+                        File(context.filesDir, ReaderFiles.DIR).deleteRecursively()
                         context.cacheDir.listFiles { f -> f.name.startsWith("take-") }?.forEach { it.delete() }
                     }
-                    store.takes = emptyList()
-                    store.practice = store.practice.map { it.copy(takesRecorded = 0) }
-                    store.auditions.forEach { a ->
-                        store.update(a.id) { it.copy(slateVideoUri = null, fullLengthVideoUri = null, exportedFileUri = null) }
-                    }
-                    store.clearHeadshots()
-                    refreshSizes()
+                    store.resetAfterMediaWipe()
+                    wipes++
                     confirmDelete = false
                 }) { Text("Delete", color = c.danger) }
             },
@@ -502,11 +484,22 @@ fun PrivacyScreen() {
 @Composable
 fun NotificationSettingsScreen() {
     val store = LocalAppStore.current
+    val context = LocalContext.current
     val c = OT.colors
     val rosterShape = RoundedCornerShape(24.dp)
+    // Android 13+ needs permission to post; ask when a reminder is switched on.
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    fun enable(set: (Boolean) -> Unit): (Boolean) -> Unit = { on ->
+        set(on)
+        if (on && Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     PushedScreen(title = "Notifications") {
         Text(
-            "Only what needs you. Each audition alerts once per change — never the same thing twice.",
+            "Reminders come from this phone — nothing is sent to a server.",
             style = OT.type.callout,
             color = c.labelSecondary,
         )
@@ -519,34 +512,8 @@ fun NotificationSettingsScreen() {
                 .background(OT.colors.surfaceCard)
                 .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape),
         ) {
-            ToggleRow("Morning it’s due", store.notifyMorning, { store.notifyMorning = it }, detail = "8:00 AM on the due date")
-            ToggleRow("Two hours before", store.notifyTwoHours, { store.notifyTwoHours = it }, detail = "Only if it isn’t sent yet", showDivider = false)
-        }
-
-        Spacer(Modifier.height(20.dp))
-        SectionLabel("From casting", Modifier.padding(start = 4.dp, bottom = 8.dp))
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(rosterShape)
-                .background(OT.colors.surfaceCard)
-                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape),
-        ) {
-            ToggleRow("Callbacks and new sides", store.notifyCallbacks, { store.notifyCallbacks = it }, detail = "When a notice you added changes")
-            ToggleRow("Messages", store.notifyMessages, { store.notifyMessages = it }, detail = "Replies to your tape", showDivider = false)
-        }
-
-        Spacer(Modifier.height(20.dp))
-        SectionLabel("Your tapes", Modifier.padding(start = 4.dp, bottom = 8.dp))
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(rosterShape)
-                .background(OT.colors.surfaceCard)
-                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape),
-        ) {
-            ToggleRow("Delivered or failed", store.notifyDelivery, { store.notifyDelivery = it }, detail = "Confirmation from Actors Access, or a retry")
-            ToggleRow("Practice nudges", store.notifyPractice, { store.notifyPractice = it }, detail = "A short run when nothing is due", showDivider = false)
+            ToggleRow("Morning it’s due", store.notifyMorning, enable { store.notifyMorning = it }, detail = "8:00 AM on the due date")
+            ToggleRow("Two hours before", store.notifyTwoHours, enable { store.notifyTwoHours = it }, detail = "Only if it isn’t sent yet", showDivider = false)
         }
     }
 }
@@ -561,9 +528,9 @@ fun HeadshotsScreen(auditionId: String? = null) {
     val taken = store.headshotsTaken
     val targetAudition = auditionId?.let { store.audition(it) } ?: store.active.firstOrNull() ?: store.auditions.firstOrNull()
     val project = targetAudition?.project ?: "your audition"
-    val hasFront = store.hasHeadshot("front") || taken >= 1
-    val hasLeft = store.hasHeadshot("left") || taken >= 2
-    val hasRight = store.hasHeadshot("right") || taken >= 3
+    val hasFront = store.hasHeadshot("front")
+    val hasLeft = store.hasHeadshot("left")
+    val hasRight = store.hasHeadshot("right")
 
     fun onProceed() {
         if (targetAudition != null) {
@@ -653,7 +620,7 @@ fun HeadshotsScreen(auditionId: String? = null) {
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Saved in 4:5, 2:3 and 1:1. Front and both profiles are attached to $project.",
+                    "Front and both profiles are saved on this phone and attached to $project.",
                     style = OT.type.callout,
                     color = c.labelSecondary,
                 )
@@ -788,6 +755,7 @@ fun HeadshotFlowScreen() {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val camera = rememberCameraController()
+    val context = LocalContext.current
     val haptics = rememberHaptics()
     var angle by rememberSaveable { mutableStateOf(HeadshotAngle.Front) }
     var front by remember { mutableStateOf(true) }
@@ -848,10 +816,12 @@ fun HeadshotFlowScreen() {
                                 haptics.impact()
                                 camera.capturePhoto { uri ->
                                     capturing = false
-                                    if (uri != null) {
-                                        store.saveHeadshot(angle.name.lowercase(), uri.toString())
+                                    if (uri == null) {
+                                        // Nothing was saved: stay on this angle, tick nothing off.
+                                        Toast.makeText(context, "Couldn't take that photo. Try again.", Toast.LENGTH_SHORT).show()
+                                        return@capturePhoto
                                     }
-                                    store.headshotsTaken = maxOf(store.headshotsTaken, angle.ordinal + 1)
+                                    store.saveHeadshot(angle.name.lowercase(), uri.toString())
                                     store.auditions.forEach { a ->
                                         if (a.pieces.any { it.kind == PieceKind.Headshot && !it.isDone }) {
                                             store.markDone(PieceKind.Headshot, a.id)

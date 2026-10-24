@@ -1,5 +1,14 @@
 package com.onetake.app.ui.takes
 
+import com.onetake.app.ui.components.ImageLoading
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextField
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.Stable
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -23,7 +32,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,7 +43,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -50,6 +57,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -85,7 +93,7 @@ import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
 import com.onetake.app.models.Take
-import com.onetake.app.models.TapeFinding
+import com.onetake.app.data.TapeChecker
 import com.onetake.app.models.formatDuration
 import androidx.compose.ui.viewinterop.AndroidView
 import com.onetake.app.ui.components.GLASS_EDGE_COLOR
@@ -123,12 +131,18 @@ fun TakesScreen(auditionId: String) {
     var notesOpen by remember { mutableStateOf(false) }
     var comparing by remember { mutableStateOf(false) }
     var isPlaying by remember(selected) { mutableStateOf(false) }
+    var trimming by remember { mutableStateOf<Take?>(null) }
 
-    // Scoped to this audition — otherwise every audition's takes show up mixed together.
-    val takes = store.takes.filter { it.auditionId == auditionId }
+    // Scoped to this audition — otherwise every audition's takes show up mixed together — and to one
+    // scene at a time, since each scene has its own circled take.
+    val scenes = store.audition(auditionId)?.scenes.orEmpty()
+    var sceneChoice by remember { mutableStateOf<Int?>(null) }
+    val auditionTakes = store.takes.filter { it.auditionId == auditionId }
+    val sceneIndex = sceneChoice ?: auditionTakes.lastOrNull()?.sceneIndex ?: 0
+    val takes = auditionTakes.filter { (it.sceneIndex ?: 0) == sceneIndex }
     val circled = takes.firstOrNull { it.isCircled }
     val current = takes.firstOrNull { it.id == (selected ?: circled?.id) } ?: takes.lastOrNull()
-    val sceneTitle = store.audition(auditionId)?.scenes?.firstOrNull()?.title ?: "Scene 1"
+    val sceneTitle = scenes.getOrNull(sceneIndex)?.title ?: "Scene ${sceneIndex + 1}"
 
     if (comparing) {
         BackHandler { comparing = false }
@@ -144,11 +158,18 @@ fun TakesScreen(auditionId: String) {
 
     Column(Modifier.fillMaxSize().background(c.bgCanvas)) {
         TkHeader(title = "Your takes", subtitle = sceneTitle, onBack = { nav.back() }) {
-            TkToolCapsule {
-                TkToolButton("Trim", onClick = { /* Trim not yet available — same as iOS */ }) {
-                    Icon(Icons.Filled.ContentCut, null, tint = c.labelPrimary, modifier = Modifier.size(22.dp))
+            val canTrim = current?.fileUri != null
+            if (canTrim || takes.size >= 2) {
+                TkToolCapsule {
+                    if (canTrim) {
+                        TkToolButton("Trim take ${current?.number}", onClick = { trimming = current }) {
+                            Icon(Icons.Filled.ContentCut, null, tint = c.labelPrimary, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    if (takes.size >= 2) {
+                        TkToolButton("Compare", onClick = { comparing = true }) { TkCompareGlyph(c.labelPrimary) }
+                    }
                 }
-                TkToolButton("Compare", onClick = { comparing = true }) { TkCompareGlyph(c.labelPrimary) }
             }
         }
 
@@ -161,13 +182,33 @@ fun TakesScreen(auditionId: String) {
                 .padding(top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (scenes.size > 1) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    scenes.forEachIndexed { i, s ->
+                        val on = i == sceneIndex
+                        Box(
+                            Modifier
+                                .heightIn(min = 40.dp)
+                                .clip(CircleShape)
+                                .background(if (on) c.accent else c.fillField)
+                                .clickable(role = Role.Tab) { sceneChoice = i; selected = null; haptics.tick() }
+                                .padding(horizontal = 14.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(s.title, style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = if (on) c.labelOnAccent else c.labelPrimary)
+                        }
+                    }
+                }
+            }
+            val player = remember(current?.id) { TkPlayerState() }
             TkPlayerCard(
                 modifier = Modifier.fillMaxWidth().height(260.dp),
+                state = player,
                 fileUri = current?.fileUri,
                 isPlaying = isPlaying,
                 onTogglePlay = { isPlaying = !isPlaying },
             )
-            TkPlaybackBar()
+            if (current?.fileUri != null) TkPlaybackBar(player)
 
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -185,7 +226,8 @@ fun TakesScreen(auditionId: String) {
 
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Take ${circled?.number ?: 0} is circled — that's your send.",
+                    if (circled != null) "Take ${circled.number} is circled — that's your send."
+                    else "No take circled yet — long-press one to make it your send.",
                     style = OT.type.footnote,
                     color = c.labelSecondary,
                     modifier = Modifier.weight(1f),
@@ -220,7 +262,7 @@ fun TakesScreen(auditionId: String) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("Notes to self", style = OT.type.body, color = c.labelPrimary)
                         Text(
-                            "Never sent · " + (current?.notes?.joinToString(" · ") ?: ""),
+                            "Never sent" + (current?.notes?.takeIf { it.isNotEmpty() }?.joinToString(" · ", prefix = " · ") ?: ""),
                             style = OT.type.footnote,
                             color = c.labelTertiary,
                             maxLines = 1,
@@ -234,11 +276,44 @@ fun TakesScreen(auditionId: String) {
                         modifier = Modifier.size(22.dp),
                     )
                 }
-                if (notesOpen) {
+                if (notesOpen && current != null) {
+                    var draft by remember(current.id) { mutableStateOf("") }
+                    fun addNote() {
+                        val note = draft.trim()
+                        if (note.isNotEmpty()) store.updateTake(current.id) { it.copy(notes = it.notes + note) }
+                        draft = ""
+                    }
                     Column(Modifier.fillMaxWidth().padding(start = 32.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        (current?.notes ?: emptyList()).forEach { note ->
-                            Text("• $note", style = OT.type.callout, color = c.labelPrimary)
+                        current.notes.forEachIndexed { i, note ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("• $note", style = OT.type.callout, color = c.labelPrimary, modifier = Modifier.weight(1f))
+                                Text(
+                                    "Remove",
+                                    style = OT.type.footnote,
+                                    color = c.labelTertiary,
+                                    modifier = Modifier
+                                        .clickable(role = Role.Button) {
+                                            store.updateTake(current.id) { t -> t.copy(notes = t.notes.filterIndexed { j, _ -> j != i }) }
+                                        }
+                                        .padding(8.dp),
+                                )
+                            }
                         }
+                        // Notes show up on Tape check as things worth a look before sending.
+                        OutlinedTextField(
+                            value = draft,
+                            onValueChange = { draft = it },
+                            placeholder = { Text("e.g. rushed the last line", style = OT.type.callout) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { addNote() }),
+                            trailingIcon = {
+                                if (draft.isNotBlank()) {
+                                    Text("Add", color = c.accent, modifier = Modifier.clickable(role = Role.Button) { addNote() }.padding(8.dp))
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }
@@ -255,12 +330,15 @@ fun TakesScreen(auditionId: String) {
         ) {
             SecondaryButton("Go again", onClick = { showOneMore = true }, modifier = Modifier.width(130.dp))
             PrimaryButton(
-                "Send take ${circled?.number ?: 0}",
+                if (circled != null) "Send take ${circled.number}" else "Check & send",
                 onClick = { nav.push(Route.TapeCheck(auditionId)) },
                 modifier = Modifier.weight(1f),
+                enabled = takes.isNotEmpty(),
             )
         }
     }
+
+    trimming?.let { take -> TkTrimSheet(take) { trimming = null } }
 
     if (showOneMore) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -292,8 +370,8 @@ fun TakesScreen(auditionId: String) {
                     color = c.labelSecondary,
                     textAlign = TextAlign.Center,
                 )
-                PrimaryButton("Record take ${takes.size + 1}", onClick = {
-                    dismiss { nav.openCamera(CameraFlow.Shoot(auditionId)) }
+                PrimaryButton("Record take ${store.nextTakeNumber(auditionId, sceneIndex)}", onClick = {
+                    dismiss { nav.openCamera(CameraFlow.Shoot(auditionId, sceneIndex)) }
                 })
                 SecondaryButton("Not now", onClick = { dismiss {} })
             }
@@ -373,9 +451,26 @@ private fun TkCompareGlyph(color: Color) {
 
 // MARK: - Player card (VideoView when take.fileUri is present, headshot placeholder otherwise)
 
+/** The VideoView behind a [TkPlayerCard], so [TkPlaybackBar] can show and seek real playback time. */
+@Stable
+private class TkPlayerState {
+    var view: android.widget.VideoView? = null
+    var positionMs by mutableIntStateOf(0)
+    var durationMs by mutableIntStateOf(0)
+
+    fun seekTo(fraction: Float) {
+        val v = view ?: return
+        if (durationMs <= 0) return
+        val ms = (durationMs * fraction.coerceIn(0f, 1f)).toInt()
+        v.seekTo(ms)
+        positionMs = ms
+    }
+}
+
 @Composable
 private fun TkPlayerCard(
     modifier: Modifier = Modifier,
+    state: TkPlayerState,
     fileUri: String? = null,
     isPlaying: Boolean = false,
     onTogglePlay: () -> Unit = {},
@@ -391,101 +486,103 @@ private fun TkPlayerCard(
         contentAlignment = Alignment.Center,
     ) {
         if (hasVideo) {
-            AndroidView(
-                factory = { context ->
-                    android.widget.VideoView(context).apply {
+            // Keyed on the file: the path is only set in factory, so picking another take must
+            // build a new view — otherwise the first take kept playing whatever was selected.
+            key(fileUri) {
+                AndroidView(
+                    factory = { context ->
+                        android.widget.VideoView(context).apply {
+                            state.view = this
+                            state.positionMs = 0
+                            state.durationMs = 0
+                            setOnPreparedListener { mp ->
+                                mp.isLooping = true
+                                state.durationMs = mp.duration
+                            }
+                            runCatching { setVideoPath(fileUri) }
+                        }
+                    },
+                    update = { videoView ->
                         runCatching {
-                            setVideoPath(fileUri)
-                            setOnPreparedListener { mp -> mp.isLooping = true }
+                            if (isPlaying) {
+                                if (!videoView.isPlaying) videoView.start()
+                            } else {
+                                if (videoView.isPlaying) videoView.pause()
+                            }
                         }
-                    }
-                },
-                update = { videoView ->
-                    runCatching {
-                        if (isPlaying) {
-                            if (!videoView.isPlaying) videoView.start()
-                        } else {
-                            if (videoView.isPlaying) videoView.pause()
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
+                    },
+                    onRelease = { videoView ->
+                        videoView.stopPlayback()
+                        if (state.view === videoView) state.view = null
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            LaunchedEffect(isPlaying, fileUri) {
+                while (isPlaying) {
+                    state.view?.let { state.positionMs = it.currentPosition }
+                    delay(200)
+                }
+            }
         } else {
             Box(Modifier.fillMaxSize().background(Color(0xFF16161A)), contentAlignment = Alignment.Center) {
                 Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.25f), modifier = Modifier.size(56.dp))
             }
         }
 
-        Box(
-            Modifier
-                .size(64.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.55f))
-                .border(0.5.dp, Color.White.copy(alpha = 0.35f), CircleShape)
-                .clickable(role = Role.Button, onClick = onTogglePlay)
-                .semantics { contentDescription = if (isPlaying) "Pause" else "Play" },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(32.dp),
-            )
+        if (hasVideo) {
+            Box(
+                Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .border(0.5.dp, Color.White.copy(alpha = 0.35f), CircleShape)
+                    .clickable(role = Role.Button, onClick = onTogglePlay)
+                    .semantics { contentDescription = if (isPlaying) "Pause" else "Play" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp),
+                )
+            }
         }
     }
 }
 
-// MARK: - v2/Playback Bar (scrubber with "your lines" markers)
+// MARK: - v2/Playback Bar — real position of the take above; tap or drag to seek
 
 @Composable
-private fun TkPlaybackBar(
-    onDark: Boolean = false,
-    startLabel: String = "0:00",
-    endLabel: String = "1:30",
-    centerLabel: String? = "your lines · tap to jump",
-) {
+private fun TkPlaybackBar(state: TkPlayerState, onDark: Boolean = false) {
     val c = OT.colors
-    var position by remember { mutableFloatStateOf(0.35f) }
+    val position = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f
     val fill = if (onDark) Color.White else c.labelPrimary
     val track = if (onDark) Color.White.copy(alpha = 0.22f) else c.fillQuiet
-    val marker = if (onDark) Color.White.copy(alpha = 0.7f) else c.accent
-    val markers = listOf(0.1f, 0.42f, 0.78f)
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Canvas(
             Modifier
                 .fillMaxWidth()
                 .height(28.dp)
                 .semantics { contentDescription = "Playback position ${(position * 100).toInt()} percent" }
-                .pointerInput(Unit) {
-                    detectTapGestures { o -> position = (o.x / size.width).coerceIn(0f, 1f) }
+                .pointerInput(state) {
+                    detectTapGestures { o -> state.seekTo(o.x / size.width) }
                 }
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures { change, _ ->
-                        position = (change.position.x / size.width).coerceIn(0f, 1f)
-                    }
+                .pointerInput(state) {
+                    detectHorizontalDragGestures { change, _ -> state.seekTo(change.position.x / size.width) }
                 },
         ) {
             val h = 4.dp.toPx()
             val y = size.height / 2 - h / 2
             drawRoundRect(track, Offset(0f, y), Size(size.width, h), CornerRadius(h / 2))
             drawRoundRect(fill, Offset(0f, y), Size(size.width * position, h), CornerRadius(h / 2))
-            val mw = 2.5.dp.toPx()
-            val mh = 12.dp.toPx()
-            markers.forEach { m ->
-                drawRoundRect(marker, Offset(size.width * m - mw / 2, size.height / 2 - mh / 2), Size(mw, mh), CornerRadius(mw / 2))
-            }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             val lbl = if (onDark) OT.camera.label2 else c.labelTertiary
-            Text(startLabel, style = OT.type.caption, color = lbl)
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                if (centerLabel != null) {
-                    Text(centerLabel, style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = if (onDark) OT.camera.label2 else c.accent)
-                }
-            }
-            Text(endLabel, style = OT.type.caption, color = lbl)
+            Text(formatDuration(state.positionMs / 1000), style = OT.type.caption, color = lbl)
+            Spacer(Modifier.weight(1f))
+            Text(formatDuration(state.durationMs / 1000), style = OT.type.caption, color = lbl)
         }
     }
 }
@@ -497,16 +594,9 @@ private fun TkPlaybackBar(
 private fun TkVideoThumbnail(fileUri: String?, modifier: Modifier = Modifier, iconSize: Dp = 28.dp) {
     val context = LocalContext.current
     val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, fileUri) {
+        // Scaled to display size and cached (ImageLoading) — a full 4K frame per thumbnail was ~33 MB.
         value = if (fileUri == null) null else withContext(Dispatchers.IO) {
-            runCatching {
-                val retriever = android.media.MediaMetadataRetriever()
-                try {
-                    retriever.setDataSource(context, Uri.parse(fileUri))
-                    retriever.frameAtTime
-                } finally {
-                    retriever.release()
-                }
-            }.getOrNull()
+            ImageLoading.videoFrame(context.applicationContext, fileUri)
         }
     }
     Box(modifier, contentAlignment = Alignment.Center) {
@@ -595,7 +685,6 @@ private fun TkCompareView(
     val circled = takes.firstOrNull { it.isCircled }
     val left = circled ?: current ?: takes.firstOrNull()
     val right = (if (current != null && current.id != left?.id) current else takes.lastOrNull { it.id != left?.id }) ?: left
-    var listen by remember { mutableIntStateOf(0) }
     val pair = listOfNotNull(left, right)
     val compareSubtitle = if (left != null && right != null && left.id != right.id) "Take ${left.number} vs Take ${right.number}" else "Compare takes"
 
@@ -611,7 +700,7 @@ private fun TkCompareView(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                pair.forEachIndexed { i, t ->
+                pair.forEach { t ->
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Box(
                             Modifier
@@ -619,7 +708,7 @@ private fun TkCompareView(
                                 .aspectRatio(0.75f)
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(Color(0xFF222228))
-                                .border(2.5.dp, if (i == listen) c.accent else Color.Transparent, RoundedCornerShape(16.dp)),
+                                .border(2.5.dp, if (t.isCircled) c.accent else Color.Transparent, RoundedCornerShape(16.dp)),
                             contentAlignment = Alignment.Center,
                         ) {
                             TkVideoThumbnail(fileUri = t.fileUri, modifier = Modifier.matchParentSize(), iconSize = 48.dp)
@@ -637,40 +726,9 @@ private fun TkCompareView(
                 }
             }
 
-            TkPlaybackBar(onDark = true, startLabel = "00:00", endLabel = "01:30", centerLabel = null)
-            Text("Both play in sync · your lines · tap to jump", style = OT.type.caption, color = cam.label2)
-
-            SectionLabel("Listen to", color = cam.label2)
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color.White.copy(alpha = 0.10f))
-                    .padding(3.dp),
-            ) {
-                pair.forEachIndexed { i, t ->
-                    val on = i == listen
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .heightIn(min = 40.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (on) Color.White else Color.Transparent)
-                            .clickable(role = Role.Tab) { listen = i },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            "Take ${t.number}",
-                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                            color = if (on) Color.Black else Color.White,
-                        )
-                    }
-                }
-            }
-
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Take ${circled?.number ?: 0} is circled. That's your send.",
+                    if (circled != null) "Take ${circled.number} is circled. That's your send." else "No take circled yet.",
                     style = OT.type.footnote,
                     color = cam.label2,
                     modifier = Modifier.weight(1f),
@@ -697,18 +755,8 @@ private fun TkCompareView(
                 .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(
-                Modifier
-                    .weight(1f)
-                    .heightIn(min = 52.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.14f))
-                    .border(1.dp, cam.stroke, CircleShape)
-                    .clickable(role = Role.Button) { /* Trim not yet available — same as iOS */ },
-                contentAlignment = Alignment.Center,
-            ) { Text("Trim", style = OT.type.headline, color = Color.White) }
             PrimaryButton(
-                "Send take ${circled?.number ?: 0}",
+                if (circled != null) "Send take ${circled.number}" else "Check & send",
                 onClick = onSend,
                 modifier = Modifier.weight(1f),
                 tint = Color(0xFF5B3E73),
@@ -725,25 +773,25 @@ private fun TkCompareView(
 fun TapeCheckScreen(auditionId: String) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
+    val context = LocalContext.current
     val c = OT.colors
-    val findings = remember(store.takes, auditionId) {
-        store.takes.filter { it.auditionId == auditionId }.flatMap { take ->
-            take.notes.map { note ->
-                TapeFinding(
-                    category = "Take ${take.number}",
-                    title = note,
-                    where = "Take ${take.number} · ${formatDuration(take.durationSeconds)}",
-                    advice = "Review Take ${take.number} playback before sending."
-                )
-            }
+    val audition = store.audition(auditionId)
+    val auditionTakes = store.takes.filter { it.auditionId == auditionId }
+    // Real checks over the recorded files (metadata reads → IO), re-run when anything changes.
+    val checks by produceState<List<TapeChecker.Check>?>(null, audition, auditionTakes, store.headshots, store.slate) {
+        value = if (audition == null) emptyList() else withContext(Dispatchers.IO) {
+            TapeChecker.run(context.applicationContext, audition, auditionTakes, store.headshots, store.slate)
         }
     }
-    var finding by remember { mutableStateOf<TapeFinding?>(null) }
+    // Notes the actor left on takes are worth a look too.
+    val noteChecks = auditionTakes.flatMap { take ->
+        take.notes.map { note -> TapeChecker.Check("Take ${take.number}: $note", false, "Your note · ${formatDuration(take.durationSeconds)}", take.fileUri) }
+    }
+    var open by remember { mutableStateOf<TapeChecker.Check?>(null) }
     var passedOpen by remember { mutableStateOf(false) }
-    val project = store.audition(auditionId)?.project
 
     Column(Modifier.fillMaxSize().background(c.bgCanvas)) {
-        TkHeader(title = "Tape check", subtitle = project, onBack = { nav.back() })
+        TkHeader(title = "Tape check", subtitle = audition?.project, onBack = { nav.back() })
 
         Column(
             Modifier
@@ -753,94 +801,93 @@ fun TapeCheckScreen(auditionId: String) {
                 .padding(horizontal = OT.dims.gutter)
                 .padding(top = 8.dp, bottom = 24.dp),
         ) {
-            val audition = store.audition(auditionId)
-            val requiredScenes = audition?.scenes?.size ?: 1
-            val auditionTakes = store.takes.filter { it.auditionId == auditionId }
-            val circledTakesCount = audition?.scenes?.indices?.count { i -> auditionTakes.any { it.sceneIndex == i && it.isCircled } }
-                ?: auditionTakes.count { it.isCircled }
-            val hasHeadshot = if (store.headshotsTaken > 0) 1 else 0
-            val hasSlate = if (store.slate.name.isNotBlank()) 1 else 0
-            val totalChecks = maxOf(1, 2 + requiredScenes)
-            val doneChecks = minOf(totalChecks, hasHeadshot + hasSlate + circledTakesCount)
-
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                ReadinessDial(done = doneChecks, total = totalChecks, size = 84.dp, lineWidth = 8.dp)
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Ready to send", style = OT.type.title, color = c.labelPrimary)
-                    Text(
-                        "${findings.size} things are worth a look. Nothing stops you sending.",
-                        style = OT.type.callout,
-                        color = c.labelSecondary,
-                    )
+            val results = checks
+            if (results == null) {
+                Text("Checking your recordings…", style = OT.type.callout, color = c.labelSecondary)
+            } else {
+                val passed = results.filter { it.passed }
+                val toLook = results.filterNot { it.passed } + noteChecks
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    ReadinessDial(done = passed.size, total = maxOf(1, results.size), size = 84.dp, lineWidth = 8.dp)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(if (toLook.isEmpty()) "Ready to send" else "Almost there", style = OT.type.title, color = c.labelPrimary)
+                        Text(
+                            when (toLook.size) {
+                                0 -> "Everything checks out."
+                                1 -> "1 thing is worth a look. Nothing stops you sending."
+                                else -> "${toLook.size} things are worth a look. Nothing stops you sending."
+                            },
+                            style = OT.type.callout,
+                            color = c.labelSecondary,
+                        )
+                    }
                 }
-            }
-            Spacer(Modifier.height(24.dp))
-            SectionLabel("Worth a look")
-            Spacer(Modifier.height(4.dp))
-
-            findings.forEach { f ->
-                TkFindingRow(
-                    category = f.category,
-                    categoryColor = c.warning,
-                    title = f.title,
-                    detail = f.where,
-                    onClick = { finding = f },
-                    leading = {
-                        Box(
-                            Modifier.size(64.dp, 40.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF222228)),
-                            contentAlignment = Alignment.Center,
+                if (toLook.isNotEmpty()) {
+                    Spacer(Modifier.height(24.dp))
+                    SectionLabel("Worth a look")
+                    Spacer(Modifier.height(4.dp))
+                    toLook.forEach { check ->
+                        TkFindingRow(
+                            category = if (check in noteChecks) "Note" else "Check",
+                            categoryColor = c.warning,
+                            title = check.title,
+                            detail = check.detail,
+                            onClick = { open = check },
+                            leading = {
+                                Box(
+                                    Modifier.size(64.dp, 40.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF222228)),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (check.fileUri != null) {
+                                        TkVideoThumbnail(fileUri = check.fileUri, modifier = Modifier.matchParentSize(), iconSize = 20.dp)
+                                    } else {
+                                        Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
+                if (passed.isNotEmpty()) {
+                    Column(Modifier.padding(top = 8.dp)) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 56.dp)
+                                .clickable(role = Role.Button) { passedOpen = !passedOpen },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(20.dp))
+                            Icon(Icons.Filled.CheckCircle, null, tint = c.success, modifier = Modifier.size(20.dp))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    if (passed.size == 1) "1 check passed" else "${passed.size} checks passed",
+                                    style = OT.type.body,
+                                    color = c.labelPrimary,
+                                )
+                                if (!passedOpen) {
+                                    Text(
+                                        passed.joinToString(", ") { it.title },
+                                        style = OT.type.footnote,
+                                        color = c.labelSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            Icon(
+                                if (passedOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = if (passedOpen) "Hide checks" else "Show checks",
+                                tint = c.labelSecondary,
+                                modifier = Modifier.size(22.dp),
+                            )
                         }
-                    },
-                )
-            }
-
-            // Optional clean-up (Figma 19b) — maps to the "Clean up room noise" setting.
-            TkFindingRow(
-                category = "Optional",
-                categoryColor = c.accent,
-                title = "Clean up room hum",
-                detail = if (store.cleanNoise) "On · your voice untouched · original kept" else "Your voice untouched · original kept",
-                onClick = { store.cleanNoise = !store.cleanNoise },
-                leading = {
-                    Box(
-                        Modifier.size(64.dp, 40.dp).clip(RoundedCornerShape(8.dp)).background(c.accentSoft),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Filled.AutoAwesome, null, tint = c.accent, modifier = Modifier.size(20.dp)) }
-                },
-                trailing = {
-                    if (store.cleanNoise) Icon(Icons.Filled.Check, "On", tint = c.accent, modifier = Modifier.size(20.dp))
-                    else Spacer(Modifier.size(20.dp))
-                },
-            )
-
-            // N checks passed (disclosure)
-            Column(Modifier.padding(top = 8.dp)) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 56.dp)
-                        .clickable(role = Role.Button) { passedOpen = !passedOpen },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Icon(Icons.Filled.CheckCircle, null, tint = c.success, modifier = Modifier.size(20.dp))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("11 checks passed", style = OT.type.body, color = c.labelPrimary)
-                        if (!passedOpen) {
-                            Text(TK_PASSED, style = OT.type.footnote, color = c.labelSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (passedOpen) {
+                            Column(Modifier.padding(start = 32.dp, top = 2.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                passed.forEach { Text("${it.title} · ${it.detail}", style = OT.type.footnote, color = c.labelSecondary) }
+                            }
                         }
                     }
-                    Icon(
-                        if (passedOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (passedOpen) "Hide checks" else "Show checks",
-                        tint = c.labelSecondary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                if (passedOpen) {
-                    Text(TK_PASSED, style = OT.type.footnote, color = c.labelSecondary, modifier = Modifier.padding(start = 32.dp, top = 2.dp))
                 }
             }
         }
@@ -854,19 +901,18 @@ fun TapeCheckScreen(auditionId: String) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             PrimaryButton("Continue to package", onClick = { nav.push(Route.Package(auditionId)) })
-            PlainButton("Watch the ${findings.size} moments", onClick = { finding = findings.firstOrNull() })
         }
     }
 
-    val f = finding
-    if (f != null) {
+    val check = open
+    if (check != null) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val scope = rememberCoroutineScope()
         val close: () -> Unit = {
-            scope.launch { sheetState.hide() }.invokeOnCompletion { finding = null }
+            scope.launch { sheetState.hide() }.invokeOnCompletion { open = null }
         }
         ModalBottomSheet(
-            onDismissRequest = { finding = null },
+            onDismissRequest = { open = null },
             sheetState = sheetState,
             containerColor = c.surfaceCard,
         ) {
@@ -878,40 +924,32 @@ fun TapeCheckScreen(auditionId: String) {
                     .navigationBarsPadding(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                val parts = f.where.split(" · ")
-                val shortWhere = parts.take(2).joinToString(" · ")
                 Row(verticalAlignment = Alignment.Top) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Box(Modifier.size(6.dp).clip(CircleShape).background(c.warning))
-                            Text(
-                                "${f.category} · $shortWhere",
-                                style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                                color = c.warning,
-                            )
-                        }
-                        Text(f.title, style = OT.type.title.copy(fontSize = OT.type.title.fontSize * 0.8f, lineHeight = OT.type.title.lineHeight * 0.85f), color = c.labelPrimary)
-                    }
+                    Text(
+                        check.title,
+                        style = OT.type.title.copy(fontSize = OT.type.title.fontSize * 0.8f, lineHeight = OT.type.title.lineHeight * 0.85f),
+                        color = c.labelPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
                     CircleIconButton(Icons.Filled.Close, "Close", onClick = close, size = 40.dp)
                 }
-                TkPlayerCard(Modifier.fillMaxWidth().height(180.dp))
-                Text(f.advice, style = OT.type.callout, color = c.labelSecondary)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SecondaryButton(
-                        "Watch ${parts.getOrNull(1) ?: "0:41"}",
-                        onClick = { /* jumps the player to the moment */ },
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Filled.PlayArrow,
+                if (check.fileUri != null) {
+                    var playing by remember(check.fileUri) { mutableStateOf(false) }
+                    val player = remember(check.fileUri) { TkPlayerState() }
+                    TkPlayerCard(
+                        Modifier.fillMaxWidth().height(180.dp),
+                        state = player,
+                        fileUri = check.fileUri,
+                        isPlaying = playing,
+                        onTogglePlay = { playing = !playing },
                     )
-                    SecondaryButton("I meant it", onClick = close, modifier = Modifier.weight(1f))
                 }
+                Text(check.detail, style = OT.type.callout, color = c.labelSecondary)
+                SecondaryButton("Got it", onClick = close)
             }
         }
     }
 }
-
-private const val TK_PASSED =
-    "Framing, light, slate, format, length, file name, audio sync, eyeline (scene 2), reader level (scene 1), background, focus"
 
 @Composable
 private fun TkFindingRow(
@@ -948,3 +986,149 @@ private fun TkFindingRow(
         OTDivider(startIndent = 76.dp)
     }
 }
+
+// MARK: - Trim
+
+/** Drag the ends to cut the walk-in and walk-out; the take's file is replaced by the cut (see
+ *  [com.onetake.app.data.TakeTrimmer]), so playback, Tape check and the package all use it. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
+    val store = LocalAppStore.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
+    val c = OT.colors
+    val source = remember(take.fileUri) { take.fileUri?.let(Uri::parse) }
+    val durationMs by produceState(0L, source) {
+        value = withContext(Dispatchers.IO) { source?.let { tkDurationMs(context, it) } ?: 0L }
+    }
+    var range by remember(durationMs) { mutableStateOf(0f..durationMs.toFloat()) }
+    var saving by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    fun save() {
+        val src = source ?: return
+        val start = range.start.toLong()
+        val end = range.endInclusive.toLong()
+        saving = true
+        failed = false
+        scope.launch {
+            val original = src.path?.let { java.io.File(it) }
+            val dir = original?.parentFile ?: context.filesDir
+            // A new name, so anything keyed on the file (thumbnails, Tape check) sees the change.
+            val dest = java.io.File(dir, "take-${take.number}-trim-${java.util.UUID.randomUUID().toString().take(8)}.mp4")
+            val trimmed = withContext(Dispatchers.IO) {
+                com.onetake.app.data.TakeTrimmer.trim(context.applicationContext, src, start, end, dest)
+            }
+            saving = false
+            if (trimmed == null) {
+                failed = true
+                haptics.warning()
+                return@launch
+            }
+            store.updateTake(take.id) {
+                it.copy(fileUri = Uri.fromFile(trimmed.file).toString(), durationSeconds = (trimmed.durationMs / 1000).toInt())
+            }
+            original?.takeIf { it != trimmed.file }?.delete()
+            haptics.success()
+            onClose()
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = { if (!saving) onClose() },
+        sheetState = sheetState,
+        containerColor = c.bgCanvas,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = OT.dims.gutter).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("Trim take ${take.number}", style = OT.type.title, color = c.labelPrimary)
+            Text(
+                "Drag the ends to cut the walk-in and the walk-out. The trimmed take replaces this one.",
+                style = OT.type.footnote,
+                color = c.labelTertiary,
+            )
+            if (durationMs <= 0L) {
+                Text("Reading the take…", style = OT.type.callout, color = c.labelSecondary)
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TkTrimFrame(source, range.start.toLong(), Modifier.weight(1f))
+                    TkTrimFrame(source, range.endInclusive.toLong(), Modifier.weight(1f))
+                }
+                RangeSlider(
+                    value = range,
+                    onValueChange = { range = it },
+                    valueRange = 0f..durationMs.toFloat(),
+                    enabled = !saving,
+                )
+                Row(Modifier.fillMaxWidth()) {
+                    Text("Start ${tkClock(range.start.toLong())}", style = OT.type.footnote, color = c.labelSecondary)
+                    Spacer(Modifier.weight(1f))
+                    Text("${tkClock((range.endInclusive - range.start).toLong())} kept", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                    Spacer(Modifier.weight(1f))
+                    Text("End ${tkClock(range.endInclusive.toLong())}", style = OT.type.footnote, color = c.labelSecondary)
+                }
+            }
+            if (failed) {
+                Text("Couldn't trim this take. The original is untouched.", style = OT.type.footnote, color = c.danger)
+            }
+            PrimaryButton(
+                if (saving) "Trimming…" else "Save trim",
+                onClick = ::save,
+                enabled = !saving && durationMs > 0L && range.endInclusive - range.start >= 1000f,
+            )
+            PlainButton("Cancel", onClick = { if (!saving) onClose() })
+        }
+    }
+}
+
+/** A frame from the take at [atMs], for seeing where a cut lands. */
+@Composable
+private fun TkTrimFrame(source: Uri?, atMs: Long, modifier: Modifier) {
+    val context = LocalContext.current
+    // Rounded so dragging doesn't decode a frame for every pixel moved.
+    val key = atMs / 250
+    val frame by produceState<android.graphics.Bitmap?>(null, source, key) {
+        value = withContext(Dispatchers.IO) {
+            source?.let { uri ->
+                runCatching {
+                    android.media.MediaMetadataRetriever().run {
+                        try {
+                            setDataSource(context, uri)
+                            com.onetake.app.data.TapeAnalysis.frameAt(this, key * 250_000, maxSide = 480)
+                        } finally {
+                            release()
+                        }
+                    }
+                }.getOrNull()
+            }
+        }
+    }
+    Box(modifier.height(90.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF222228)), contentAlignment = Alignment.Center) {
+        frame?.let {
+            androidx.compose.foundation.Image(
+                it.asImageBitmap(),
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } ?: Icon(Icons.Filled.Movie, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(24.dp))
+    }
+}
+
+private fun tkDurationMs(context: android.content.Context, uri: Uri): Long = runCatching {
+    android.media.MediaMetadataRetriever().run {
+        try {
+            setDataSource(context, uri)
+            extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        } finally {
+            release()
+        }
+    }
+}.getOrDefault(0L)
+
+private fun tkClock(ms: Long): String = (ms / 1000).let { "%d:%02d".format(it / 60, it % 60) }

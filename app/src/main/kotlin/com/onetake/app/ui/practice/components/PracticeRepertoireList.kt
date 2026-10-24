@@ -113,7 +113,7 @@ fun PracticeRepertoireList(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Drop a PDF or paste dialogue sides to assign AI reader",
+                                text = "Scan or paste sides — a voice reads the other parts",
                                 fontSize = 13.sp,
                                 color = Color(0xFF86868B),
                             )

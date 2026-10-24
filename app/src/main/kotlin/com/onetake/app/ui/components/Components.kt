@@ -344,23 +344,6 @@ fun PlainButton(
     ) { Text(text, style = style, color = color) }
 }
 
-/** Small capsule action ("Resume", "Edit"). */
-@Composable
-fun PillButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, filled: Boolean = false) {
-    val c = OT.colors
-    Box(
-        modifier
-            .heightIn(min = 32.dp)
-            .clip(CircleShape)
-            .background(if (filled) c.accent else c.accentSoft)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold), color = if (filled) c.labelOnAccent else c.accent)
-    }
-}
-
 /** Round icon button used in screen headers (back, ···, +). White circle with soft shadow in light mode. */
 @Composable
 fun CircleIconButton(
@@ -496,42 +479,6 @@ fun Chevron(modifier: Modifier = Modifier, tint: Color = OT.colors.labelTertiary
     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = tint, modifier = modifier.size(22.dp))
 }
 
-/** v2/Schedule Row — eyebrow + value column (76 wide), title + detail, chevron. 66 tall. */
-@Composable
-fun ScheduleRow(
-    eyebrow: String,
-    value: String,
-    title: String,
-    detail: String,
-    modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
-    eyebrowColor: Color = OT.colors.labelTertiary,
-    valueColor: Color = OT.colors.labelPrimary,
-    trailing: (@Composable () -> Unit)? = null,
-    showChevron: Boolean = true,
-) {
-    val c = OT.colors
-    Row(
-        modifier
-            .fillMaxWidth()
-            .heightIn(min = OT.dims.rowHeight)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Column(Modifier.width(76.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(eyebrow, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = eyebrowColor, maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = 0.3.sp)
-            Text(value, style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold), color = valueColor, maxLines = 1)
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = OT.type.body, color = c.labelPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(detail, style = OT.type.footnote, color = c.labelTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        trailing?.invoke()
-        if (showChevron) Chevron()
-    }
-}
-
 /** Plain list row (Call Sheet style): optional leading icon, title/detail, trailing value, chevron, hairline below. */
 @Composable
 fun ListRow(
@@ -611,28 +558,6 @@ fun ToggleRow(
     )
 }
 
-/** iOS inset-grouped section → rounded card of rows with a header/footer outside it. */
-@Composable
-fun GroupedSection(
-    modifier: Modifier = Modifier,
-    header: String? = null,
-    footer: String? = null,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (header != null) SectionLabel(header, Modifier.padding(start = 16.dp, top = 8.dp))
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(OT.colors.surfaceCard)
-                .padding(horizontal = 16.dp),
-            content = content,
-        )
-        if (footer != null) Text(footer, style = OT.type.footnote, color = OT.colors.labelTertiary, modifier = Modifier.padding(horizontal = 16.dp))
-    }
-}
-
 /** IconRow — 40dp tinted tile + title/detail + chevron (Add audition, Shoot setup, error states). */
 @Composable
 fun IconRow(
@@ -661,29 +586,6 @@ fun IconRow(
             Text(detail, style = OT.type.footnote, color = c.labelTertiary)
         }
         Chevron()
-    }
-}
-
-// MARK: - Inline status (v2/Inline Status)
-
-enum class InlineStatusKind { Saving, Processing, Uploading, Delivered, Failed, Offline }
-
-@Composable
-fun InlineStatus(kind: InlineStatusKind, text: String, modifier: Modifier = Modifier) {
-    val c = OT.colors
-    Row(
-        modifier.clip(CircleShape).background(c.fillQuiet).padding(horizontal = 12.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        when (kind) {
-            InlineStatusKind.Saving, InlineStatusKind.Processing, InlineStatusKind.Uploading ->
-                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = c.labelSecondary)
-            InlineStatusKind.Delivered -> Icon(Icons.Filled.CheckCircle, null, tint = c.success, modifier = Modifier.size(14.dp))
-            InlineStatusKind.Failed -> Icon(Icons.Filled.Error, null, tint = c.danger, modifier = Modifier.size(14.dp))
-            InlineStatusKind.Offline -> Icon(Icons.Filled.WifiOff, null, tint = c.warning, modifier = Modifier.size(14.dp))
-        }
-        Text(text, style = OT.type.footnote, color = c.labelSecondary)
     }
 }
 
@@ -735,20 +637,9 @@ fun rememberBitmapFromUri(uriString: String?): ImageBitmap? {
     if (uriString.isNullOrBlank()) return null
     var bitmap by remember(uriString) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(uriString) {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val uri = Uri.parse(uriString)
-                val stream = if (uri.scheme == "file" || uri.scheme == null) {
-                    val file = File(uri.path ?: uriString)
-                    if (file.exists()) file.inputStream() else null
-                } else {
-                    context.contentResolver.openInputStream(uri)
-                }
-                stream?.use {
-                    BitmapFactory.decodeStream(it)?.asImageBitmap()
-                }
-            }.getOrNull()
-        }?.let { bitmap = it }
+        // Downsampled + EXIF-rotated + cached (see ImageLoading) — not a full-resolution decode.
+        withContext(Dispatchers.IO) { ImageLoading.photo(context.applicationContext, uriString)?.asImageBitmap() }
+            ?.let { bitmap = it }
     }
     return bitmap
 }

@@ -1,6 +1,7 @@
 package com.onetake.app.data
 
 import android.content.Context
+import android.net.Uri
 import com.onetake.app.models.Audition
 import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
@@ -28,6 +29,11 @@ data class PersistedState(
     val slate: SlateInfo = SlateInfo(),
     val isOnboarded: Boolean = false,
     val headshots: Map<String, String> = emptyMap(),
+    val slateAtStart: Boolean = true,
+    val readerVolume: String = "Quieter",
+    val liquidGlass: Boolean = true,
+    val notifyMorning: Boolean = true,
+    val notifyTwoHours: Boolean = true,
 )
 
 /** Hand-rolled org.json (de)serialization — no JSON library dependency exists in this project
@@ -37,38 +43,95 @@ object Persistence {
     private const val FILE_NAME = "state.json"
     private val isoFmt = DateTimeFormatter.ISO_LOCAL_DATE_TIME
 
-    private fun stateFile(context: Context): File = File(context.filesDir, FILE_NAME)
+    /** Null when there's no files dir (plain-JVM unit tests) — never fall back to a relative path. */
+    private fun stateFile(context: Context): File? = context.filesDir?.let { File(it, FILE_NAME) }
 
+    /**
+     * Returns null only when there is nothing usable on disk. A record that fails to parse is
+     * skipped rather than failing the whole load — otherwise one bad field would start the app
+     * empty and the next save would overwrite every audition with nothing. If the file can't be
+     * read at all it's moved aside (state.corrupt-<time>.json) instead of being silently replaced.
+     */
     fun load(context: Context): PersistedState? {
-        return try {
-            val file = stateFile(context)
-            if (!file.exists()) return null
-            val root = JSONObject(file.readText())
-            PersistedState(
-                auditions = root.optJSONArray("auditions")?.toAuditionList() ?: emptyList(),
-                takes = root.optJSONArray("takes")?.toTakeList() ?: emptyList(),
-                practice = root.optJSONArray("practice")?.toPracticeList() ?: emptyList(),
-                slate = root.optJSONObject("slate")?.toSlateInfo() ?: SlateInfo(),
-                isOnboarded = root.optBoolean("isOnboarded", false),
-                headshots = root.optJSONObject("headshots")?.toStringMap() ?: emptyMap(),
-            )
+        val file = stateFile(context) ?: return null
+        if (!file.exists()) return null
+        val root = try {
+            JSONObject(file.readText())
         } catch (_: Exception) {
-            null
+            runCatching { file.renameTo(File(file.parentFile, "state.corrupt-${System.currentTimeMillis()}.json")) }
+            return null
         }
+        val state = PersistedState(
+            auditions = root.optJSONArray("auditions")?.mapObjects { it.toAudition() } ?: emptyList(),
+            takes = root.optJSONArray("takes")?.mapObjects { it.toTake() } ?: emptyList(),
+            practice = root.optJSONArray("practice")?.mapObjects { it.toPracticePiece() } ?: emptyList(),
+            slate = root.optJSONObject("slate")?.let { runCatching { it.toSlateInfo() }.getOrNull() } ?: SlateInfo(),
+            isOnboarded = root.optBoolean("isOnboarded", false),
+            headshots = root.optJSONObject("headshots")?.let { runCatching { it.toStringMap() }.getOrNull() } ?: emptyMap(),
+            slateAtStart = root.optBoolean("slateAtStart", true),
+            readerVolume = root.optString("readerVolume", null) ?: "Quieter",
+            liquidGlass = root.optBoolean("liquidGlass", true),
+            notifyMorning = root.optBoolean("notifyMorning", true),
+            notifyTwoHours = root.optBoolean("notifyTwoHours", true),
+        )
+        return rebaseMedia(state, context.filesDir)
     }
 
+    /** Parses every object in the array, dropping (not failing on) any one that won't parse. */
+    private fun <T> JSONArray.mapObjects(parse: (JSONObject) -> T): List<T> =
+        (0 until length()).mapNotNull { i -> runCatching { parse(getJSONObject(i)) }.getOrNull() }
+
+    /**
+     * Media URIs are stored as absolute file:// paths. After a backup restore (another device or
+     * user profile) the app's files dir can live at a different path, so re-point any URI that
+     * was under a files dir at the same relative location under the current one.
+     */
+    private fun rebaseMedia(state: PersistedState, filesDir: File?): PersistedState {
+        if (filesDir == null) return state
+        fun rebase(uri: String?): String? {
+            if (uri == null || !uri.startsWith("file:")) return uri
+            val path = Uri.parse(uri).path ?: return uri
+            if (path.startsWith(filesDir.absolutePath + "/")) return uri
+            val marker = path.indexOf("/files/")
+            if (marker < 0) return uri
+            return Uri.fromFile(File(filesDir, path.substring(marker + "/files/".length))).toString()
+        }
+        return state.copy(
+            auditions = state.auditions.map {
+                it.copy(
+                    slateVideoUri = rebase(it.slateVideoUri),
+                    fullLengthVideoUri = rebase(it.fullLengthVideoUri),
+                    exportedFileUri = rebase(it.exportedFileUri),
+                )
+            },
+            takes = state.takes.map { it.copy(fileUri = rebase(it.fileUri)) },
+            headshots = state.headshots.mapValues { (_, v) -> rebase(v) ?: v },
+        )
+    }
+
+    /** Synchronized: every save goes through the same temp file. */
+    @Synchronized
     fun save(context: Context, state: PersistedState) {
         try {
             val root = JSONObject()
-            root.put("auditions", state.auditions.toJsonArray())
-            root.put("takes", state.takes.toJsonArray())
-            root.put("practice", state.practice.toJsonArray())
+            root.put("auditions", state.auditions.auditionsToJson())
+            root.put("takes", state.takes.takesToJson())
+            root.put("practice", state.practice.practiceToJson())
             root.put("slate", state.slate.toJson())
             root.put("isOnboarded", state.isOnboarded)
             root.put("headshots", JSONObject(state.headshots))
-            val tmp = File(context.filesDir, "$FILE_NAME.tmp")
+            root.put("slateAtStart", state.slateAtStart)
+            root.put("readerVolume", state.readerVolume)
+            root.put("liquidGlass", state.liquidGlass)
+            root.put("notifyMorning", state.notifyMorning)
+            root.put("notifyTwoHours", state.notifyTwoHours)
+            val target = stateFile(context) ?: return
+            val tmp = File(target.parentFile, "$FILE_NAME.tmp")
             tmp.writeText(root.toString())
-            tmp.renameTo(stateFile(context))
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
         } catch (_: Exception) {
             // Best-effort — a failed save shouldn't crash the app; the in-memory state is
             // still correct for this session, just not persisted this time.
@@ -95,6 +158,7 @@ object Persistence {
         slateVideoUri?.let { put("slateVideoUri", it) }
         fullLengthVideoUri?.let { put("fullLengthVideoUri", it) }
         exportedFileUri?.let { put("exportedFileUri", it) }
+        if (notes.isNotEmpty()) put("notes", notes)
     }
 
     private fun JSONObject.toAudition(): Audition = Audition(
@@ -115,10 +179,10 @@ object Persistence {
         slateVideoUri = optString("slateVideoUri", null),
         fullLengthVideoUri = optString("fullLengthVideoUri", null),
         exportedFileUri = optString("exportedFileUri", null),
+        notes = optString("notes", null).orEmpty(),
     )
 
-    private fun List<Audition>.toJsonArray() = JSONArray(map { it.toJson() })
-    private fun JSONArray.toAuditionList(): List<Audition> = List(length()) { getJSONObject(it).toAudition() }
+    private fun List<Audition>.auditionsToJson() = JSONArray(map { it.toJson() })
 
     // --- Piece / ScriptScene / ScriptLine ---
 
@@ -188,8 +252,7 @@ object Persistence {
         sceneIndex = if (has("sceneIndex") && !isNull("sceneIndex")) getInt("sceneIndex") else null,
     )
 
-    private fun List<Take>.toJsonArray() = JSONArray(map { it.toJson() })
-    private fun JSONArray.toTakeList(): List<Take> = List(length()) { getJSONObject(it).toTake() }
+    private fun List<Take>.takesToJson() = JSONArray(map { it.toJson() })
 
     // --- PracticePiece ---
 
@@ -212,8 +275,7 @@ object Persistence {
         sceneIndex = if (has("sceneIndex") && !isNull("sceneIndex")) getInt("sceneIndex") else null,
     )
 
-    private fun List<PracticePiece>.toJsonArray() = JSONArray(map { it.toJson() })
-    private fun JSONArray.toPracticeList(): List<PracticePiece> = List(length()) { getJSONObject(it).toPracticePiece() }
+    private fun List<PracticePiece>.practiceToJson() = JSONArray(map { it.toJson() })
 
     // --- SlateInfo ---
 

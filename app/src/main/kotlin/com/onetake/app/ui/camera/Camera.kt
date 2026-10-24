@@ -83,10 +83,15 @@ class CameraController(private val context: Context) {
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
     private var provider: ProcessCameraProvider? = null
+    /** Who gets the finished file of the recording being stopped. Held here, not in a composable
+     *  effect, so the file still lands if the screen closes before CameraX finalizes it. */
+    private var onFinalized: ((Uri?) -> Unit)? = null
 
     private fun createVideoCapture(): VideoCapture<Recorder> {
+        // 1080p is what self-tape sites ask for (and what the destinations' specs say). 4K first
+        // made files ~4x larger, slowed export, and could break limits like Actors Access's 500 MB.
         val qualitySelector = QualitySelector.fromOrderedList(
-            listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD, Quality.LOWEST),
+            listOf(Quality.FHD, Quality.HD, Quality.SD),
             FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD),
         )
         val recorder = Recorder.Builder().setQualitySelector(qualitySelector).build()
@@ -146,33 +151,65 @@ class CameraController(private val context: Context) {
         }, ContextCompat.getMainExecutor(context))
     }
 
+    /** Why the last [startRecording] didn't start, for the screen to show ([RecordStartErrorDialog]);
+     *  null once it's been seen or a recording did start. */
+    var startError by mutableStateOf<String?>(null)
+        private set
+
+    fun clearStartError() { startError = null }
+
+    /** Starts a real recording and returns true. With nothing to record with (camera not bound yet,
+     *  or this device can't bind video) it returns false and sets [startError] — it used to run the
+     *  timer anyway, so the actor performed a whole take that was never saved. */
     @SuppressLint("MissingPermission")
-    fun startRecording() {
+    fun startRecording(): Boolean {
         val vc = videoCapture
         if (state != State.Ready || vc == null) {
-            // No camera or video capture not supported on this device/emulator:
-            // still run the timer so the flow can be tested.
-            state = State.Recording
-            elapsed = 0f
-            return
+            startError = when {
+                state == State.Failed -> "The camera couldn't start on this device."
+                state == State.Ready -> "This camera can't record video on this device, only photos."
+                else -> "The camera isn't ready yet. Give it a second and try again."
+            }
+            return false
         }
         val file = File(context.cacheDir, "take-${System.currentTimeMillis()}.mp4")
-        val pending = vc.output.prepareRecording(context, FileOutputOptions.Builder(file).build())
-        val withAudio = if (granted(context, Manifest.permission.RECORD_AUDIO)) pending.withAudioEnabled() else pending
-        recording = withAudio.start(ContextCompat.getMainExecutor(context)) { event ->
-            if (event is VideoRecordEvent.Finalize) {
-                lastRecording = if (event.hasError()) null else event.outputResults.outputUri
-                state = State.Ready
+        val started = runCatching {
+            val pending = vc.output.prepareRecording(context, FileOutputOptions.Builder(file).build())
+            val withAudio = if (granted(context, Manifest.permission.RECORD_AUDIO)) pending.withAudioEnabled() else pending
+            withAudio.start(ContextCompat.getMainExecutor(context)) { event ->
+                if (event is VideoRecordEvent.Finalize) {
+                    val uri = if (event.hasError()) null else event.outputResults.outputUri
+                    lastRecording = uri
+                    state = State.Ready
+                    val callback = onFinalized
+                    onFinalized = null
+                    callback?.invoke(uri)
+                }
             }
         }
+        recording = started.getOrElse {
+            android.util.Log.e("CameraController", "Recording failed to start", it)
+            startError = "The recording couldn't start. Try again, or close and reopen the camera."
+            return false
+        }
+        startError = null
         state = State.Recording
         elapsed = 0f
+        return true
     }
 
-    fun stopRecording() {
+    /** Stops the current recording. [onFinalized] runs once the file is fully written (null if
+     *  nothing real was recorded), even if the calling screen has gone by then. */
+    fun stopRecording(onFinalized: ((Uri?) -> Unit)? = null) {
         val r = recording
         recording = null
-        if (r != null) r.stop() else state = if (provider != null) State.Ready else State.Idle
+        if (r != null) {
+            this.onFinalized = onFinalized
+            r.stop()
+        } else {
+            state = if (provider != null) State.Ready else State.Idle
+            onFinalized?.invoke(null)
+        }
     }
 
     fun capturePhoto(onResult: (Uri?) -> Unit) {
@@ -180,25 +217,9 @@ class CameraController(private val context: Context) {
         val file = File(dir, "headshot-${System.currentTimeMillis()}.jpg")
         val p = provider
         if (p == null || state != State.Ready) {
-            // Camera hardware not ready or unavailable (e.g. headless emulator).
-            // Generate a real user silhouette image so photo capture completes cleanly.
-            runCatching {
-                val bitmap = android.graphics.Bitmap.createBitmap(720, 960, android.graphics.Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(bitmap)
-                canvas.drawColor(android.graphics.Color.rgb(0x18, 0x18, 0x1C))
-                val paint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.rgb(0x3E, 0x3E, 0x48)
-                    isAntiAlias = true
-                    style = android.graphics.Paint.Style.FILL
-                }
-                canvas.drawCircle(360f, 380f, 150f, paint)
-                val oval = android.graphics.RectF(140f, 540f, 580f, 1000f)
-                canvas.drawRoundRect(oval, 120f, 120f, paint)
-                file.outputStream().use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
-                }
-                onResult(Uri.fromFile(file))
-            }.onFailure { onResult(null) }
+            // Camera not ready or unavailable: report failure rather than saving a placeholder
+            // image as if it were the actor's real headshot.
+            onResult(null)
             return
         }
         imageCapture.takePicture(
@@ -321,4 +342,18 @@ fun CameraBackground(
             }
         }
     }
+}
+
+/** Tells the actor when a take didn't start, instead of a silent timer over nothing. */
+@Composable
+fun RecordStartErrorDialog(controller: CameraController) {
+    val message = controller.startError ?: return
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { controller.clearStartError() },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = { controller.clearStartError() }) { Text("OK") }
+        },
+        title = { Text("Not recording") },
+        text = { Text(message) },
+    )
 }

@@ -57,14 +57,14 @@ fun AuditionsScreen(
     // Filter computation
     val filteredSlates = remember(slates, currentFilter) {
         val now = LocalDateTime.now()
+        // "Up next" is the soonest due, not the most recently added; sent tapes newest first.
+        val open = slates.filter { it.status != AuditionStatus.Sent }.sortedBy { it.due }
+        val sent = slates.filter { it.status == AuditionStatus.Sent }.sortedByDescending { it.sentDate ?: it.due }
         when (currentFilter) {
-            AuditionFilter.ACTIVE -> slates.filter { it.status != AuditionStatus.Sent }
-            AuditionFilter.DUE_THIS_WEEK -> slates.filter { slate ->
-                val days = Duration.between(now, slate.due).toDays()
-                days in 0..7
-            }
-            AuditionFilter.SENT -> slates.filter { it.status == AuditionStatus.Sent }
-            AuditionFilter.ALL -> slates
+            AuditionFilter.ACTIVE -> open
+            AuditionFilter.DUE_THIS_WEEK -> open.filter { Duration.between(now, it.due).toDays() in 0..7 }
+            AuditionFilter.SENT -> sent
+            AuditionFilter.ALL -> open + sent
         }
     }
 
@@ -137,9 +137,7 @@ fun AuditionsScreen(
             }
         }
 
-        // Add Audition Modal Sheet
-        if (nav.isAddAuditionVisible) {
-            AddAuditionSheet(onDismiss = { nav.isAddAuditionVisible = false })
-        }
+        // (The Add Audition sheet is shown once, by the app root — drawing it here as well stacked
+        // two sheets on top of each other.)
     }
 }

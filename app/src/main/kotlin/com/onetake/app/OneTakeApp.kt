@@ -72,7 +72,6 @@ import com.onetake.app.ui.auditions.AddAuditionSheet
 import com.onetake.app.ui.auditions.AuditionDetailScreen
 import com.onetake.app.ui.auditions.AuditionsScreen
 import com.onetake.app.ui.search.SearchScreen
-import com.onetake.app.ui.home.HomeScreen
 import com.onetake.app.ui.onboarding.OnboardingFlow
 import com.onetake.app.ui.packageview.PackageScreen
 import com.onetake.app.ui.practice.AudioWalkScreen
@@ -89,7 +88,6 @@ import com.onetake.app.ui.profile.HeadshotsScreen
 import com.onetake.app.ui.profile.NotificationSettingsScreen
 import com.onetake.app.ui.profile.PrivacyScreen
 import com.onetake.app.ui.profile.ProfileScreen
-import com.onetake.app.ui.shoot.MultiDeviceScreen
 import com.onetake.app.ui.shoot.ShootFlowScreen
 import com.onetake.app.ui.shoot.ShootModeScreen
 import com.onetake.app.ui.shoot.ShootSetupScreen
@@ -128,6 +126,20 @@ private fun RootTabs(
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
     LaunchedEffect(route) { navigator.syncTab(route) }
+    // Something shared to OneTake opens Add audition, which reads it (only once onboarded — this
+    // screen doesn't exist before then, so the share waits).
+    LaunchedEffect(store.incomingShare) {
+        if (store.incomingShare != null) navigator.showAddAudition()
+    }
+    // A tap on the home-screen widget opens that audition.
+    LaunchedEffect(store.openAuditionRequest) {
+        val id = store.openAuditionRequest ?: return@LaunchedEffect
+        store.openAuditionRequest = null
+        if (store.audition(id) != null) {
+            navigator.resetTo(AppTab.Auditions)
+            navigator.push(Route.AuditionDetail(id))
+        }
+    }
     val showBar = AppTab.entries.any { it.route == route }
     var isProfileSheetVisible by remember { mutableStateOf(false) }
 
@@ -166,18 +178,16 @@ private fun RootTabs(
                     PracticeScreen(onOpenProfile = { isProfileSheetVisible = true })
                 }
                 tabRoot(AppTab.Search) { SearchScreen() }
-                composable("home") { HomeScreen() }
-                composable("profile") { ProfileScreen() }
+                composable(Route.Settings.path) { ProfileScreen() }
 
                 withId(Route.Pattern.AUDITION) { AuditionDetailScreen(it) }
                 withIdScene(Route.Pattern.PREPARE) { id, s -> PrepareScreen(id, s) }
                 withIdScene(Route.Pattern.RUN_LINES) { id, s -> RunLinesScreen(id, s) }
                 withIdScene(Route.Pattern.AUDIO_WALK) { id, s -> AudioWalkScreen(id, s) }
-                withId(Route.Pattern.READER) { ReaderScreen(it) }
-                withId(Route.Pattern.RECORD_READER) { RecordReaderScreen(it) }
-                withId(Route.Pattern.SHOOT_MODE) { ShootModeScreen(it) }
-                withId(Route.Pattern.MULTI_DEVICE) { MultiDeviceScreen(it) }
-                withId(Route.Pattern.SHOOT_SETUP) { ShootSetupScreen(it) }
+                withIdScene(Route.Pattern.READER) { id, s -> ReaderScreen(id, s) }
+                withIdScene(Route.Pattern.RECORD_READER) { id, s -> RecordReaderScreen(id, s) }
+                withIdScene(Route.Pattern.SHOOT_MODE) { id, s -> ShootModeScreen(id, s) }
+                withIdScene(Route.Pattern.SHOOT_SETUP) { id, s -> ShootSetupScreen(id, s) }
                 withId(Route.Pattern.TAKES) { TakesScreen(it) }
                 withId(Route.Pattern.TAPE_CHECK) { TapeCheckScreen(it) }
                 withId(Route.Pattern.PACKAGE) { PackageScreen(it) }
@@ -189,7 +199,9 @@ private fun RootTabs(
                 composable(Route.PracticeSetup.path) { PracticeSetupScreen() }
 
                 // Full-screen camera flows slide up like a modal.
-                cameraRoute(Route.Pattern.CAMERA_SHOOT, withId = true) { ShootFlowScreen(it.idArg()) }
+                cameraRoute(Route.Pattern.CAMERA_SHOOT, withId = true, withScene = true) {
+                    ShootFlowScreen(it.idArg(), initialScene = it.arguments?.getInt("scene")?.takeIf { s -> s >= 0 })
+                }
                 cameraRoute(Route.Pattern.CAMERA_HEADSHOT) { HeadshotFlowScreen() }
                 cameraRoute(Route.Pattern.CAMERA_PRACTICE) { PracticeTakeScreen() }
             }
@@ -254,11 +266,15 @@ private fun NavGraphBuilder.withIdScene(pattern: String, content: @Composable (S
 private fun NavGraphBuilder.cameraRoute(
     pattern: String,
     withId: Boolean = false,
+    withScene: Boolean = false,
     content: @Composable (NavBackStackEntry) -> Unit,
 ) {
     composable(
         pattern,
-        arguments = if (withId) listOf(navArgument("id") { type = NavType.StringType }) else emptyList(),
+        arguments = buildList {
+            if (withId) add(navArgument("id") { type = NavType.StringType })
+            if (withScene) add(navArgument("scene") { type = NavType.IntType })
+        },
         enterTransition = { slideInVertically(tween(320)) { it } },
         exitTransition = { fadeOut(tween(200)) },
         popEnterTransition = { fadeIn(tween(200)) },

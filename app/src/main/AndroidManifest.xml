@@ -10,10 +10,10 @@
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Re-arms local deadline reminders after a reboot (alarms don't survive one). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <queries>
         <intent>
@@ -21,23 +21,69 @@
         </intent>
     </queries>
 
+    <!-- No cloud backup: takes, headshots and reader recordings are meant to stay on this phone
+         until the actor sends them, and Auto Backup would copy them to Google Drive. (Photos and
+         files are picked through the system Photo Picker / document picker, so no media
+         permissions are needed.) -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.OneTake">
+        <!-- singleTask: a share while OneTake is open goes to the running activity (onNewIntent)
+             instead of a second one with its own AppStore writing the same state file. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.OneTake"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "Share → OneTake" for casting notices and sides: text, photos/scans and PDFs. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
         </activity>
+
+        <!-- Home-screen "Next audition" widget (widget/NextAuditionWidget.kt). -->
+        <receiver
+            android:name=".widget.NextAuditionWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_next_audition">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/next_audition_widget_info" />
+        </receiver>
+
+        <!-- Local deadline reminders (data/DeadlineReminders.kt). -->
+        <receiver
+            android:name=".data.ReminderReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".data.RemindersBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Lets the exported tape (and, later, other recorded files) be handed to the Android
              share sheet / a video viewer without exposing raw file:// URIs (blocked on API 24+). -->

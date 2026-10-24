@@ -113,6 +113,7 @@ import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.ToggleRow
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.ReaderFiles
+import com.onetake.app.ui.system.playAndAwait
 import com.onetake.app.ui.system.ReaderTrackPlayer
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.system.rememberReaderPlayer
@@ -172,8 +173,8 @@ internal fun prepAudioMillis(file: File): Long? {
 }
 
 /** Plays a recorded reader line; a corrupt/empty file (e.g. a too-short recording) must not crash the screen. */
-internal fun prepPlay(player: ReaderTrackPlayer, lineIndex: Int) {
-    runCatching { player.play(lineIndex) }
+internal fun prepPlay(player: ReaderTrackPlayer, sceneId: String, readerIndex: Int) {
+    runCatching { player.play(sceneId, readerIndex) }
 }
 
 internal fun prepCapitalized(name: String): String = name.lowercase().replaceFirstChar { it.titlecase() }
@@ -320,19 +321,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
 
     val fallbackScene = remember(a?.id, a?.role, sceneIndex) {
         if (a != null) {
-            ScriptScene(
-                number = sceneIndex + 1,
-                title = "Scene ${sceneIndex + 1}",
-                heading = "INT. AUDITION ROOM - DAY",
-                lines = listOf(
-                    ScriptLine(
-                        character = a.role.ifBlank { "ME" }.uppercase(),
-                        text = "Audition scene lines.",
-                        isMine = true,
-                    )
-                ),
-                estimatedSeconds = 60,
-            )
+            ScriptScene.placeholder(sceneIndex + 1, a.role)
         } else null
     }
 
@@ -364,7 +353,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
     val readerName = prepReaderName(scene)
     val mineLines = scene.lines.filter { it.isMine }
     val mineCount = mineLines.size
-    val learned = minOf(1, mineCount)
+    val learned = store.practiceProgress(auditionId, sceneIndex)?.linesLearned?.coerceAtMost(mineCount) ?: 0
     val visible = if (editing) scene.lines else scene.lines.filter { PrepPrefs.hidden[it.id] != true }
 
     Box(
@@ -397,6 +386,20 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
                     color = c.labelPrimary,
                     modifier = Modifier.semantics { heading() },
                 )
+                // Casting's adjustment (from a callback) — seen before every take.
+                a?.notes?.takeIf { it.isNotBlank() }?.let { note ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(c.accentSoft)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("FROM CASTING", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
+                        Text(note, style = OT.type.callout, color = c.labelPrimary)
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         repeat(mineCount) { i ->
@@ -418,7 +421,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
                         Modifier
                             .heightIn(min = 48.dp)
                             .clip(CircleShape)
-                            .clickable(role = Role.Button) { if (a != null) nav.push(Route.Reader(a.id)) }
+                            .clickable(role = Role.Button) { if (a != null) nav.push(Route.Reader(a.id, sceneIndex)) }
                             .padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -522,7 +525,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
             }
             PrepCapsule("Run lines", Icons.Filled.PlayArrow, onClick = { nav.push(Route.RunLines(auditionId, sceneIndex)) })
             PrepCapsule("Record", Icons.Filled.RadioButtonChecked, filled = true, onClick = {
-                if (a != null) nav.push(Route.ShootMode(a.id)) else nav.openCamera(CameraFlow.PracticeTake)
+                if (a != null) nav.push(Route.ShootMode(a.id, sceneIndex)) else nav.openCamera(CameraFlow.PracticeTake)
             })
         }
     }
@@ -883,19 +886,7 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         ?: a?.scenes?.firstOrNull()
         ?: practicePiece?.scene
         ?: if (a != null) {
-            ScriptScene(
-                number = sceneIndex + 1,
-                title = "Scene ${sceneIndex + 1}",
-                heading = "INT. AUDITION ROOM - DAY",
-                lines = listOf(
-                    ScriptLine(
-                        character = a.role.ifBlank { "ME" }.uppercase(),
-                        text = "Audition scene lines.",
-                        isMine = true,
-                    )
-                ),
-                estimatedSeconds = 60,
-            )
+            ScriptScene.placeholder(sceneIndex + 1, a.role)
         } else null
     val lines = if (scene != null) prepRehearsalLines(scene) else emptyList()
     if ((a == null && practicePiece == null) || scene == null || lines.isEmpty()) {
@@ -939,6 +930,9 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
             finished = true
             endedAt = System.currentTimeMillis()
             haptics.success()
+            // A complete run (not a pause) is what "lines learned" means: yours, said unprompted.
+            val mine = lines.indices.filter { lines[it].isMine }
+            store.recordRun(auditionId, sceneIndex, learned = mine.count { it !in needed }, total = mine.size)
         }
     }
 
@@ -964,10 +958,13 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         if (!current.isMine) {
             follower.stop()
             val ri = prepReaderLineIndex(scene, current)
-            player.playOrSynthesize(ri, current.text, tts)
-            val fileMs = prepAudioMillis(ReaderFiles.file(context, ri)) ?: 0L
-            val spokenMs = maxOf(fileMs, LineLearningMode.calculateSpokenPacingMillis(prepWords(current.text).size))
-            delay(spokenMs)
+            val fileMs = prepAudioMillis(ReaderFiles.file(context, scene.id, ri)) ?: 0L
+            val pacingMs = maxOf(fileMs, LineLearningMode.calculateSpokenPacingMillis(prepWords(current.text).size))
+            // Move on when the reader has actually finished (TTS often runs longer than the
+            // estimate), keeping the estimated pacing as a floor when nothing could be played.
+            val started = System.currentTimeMillis()
+            player.playAndAwait(scene.id, ri, current.text, tts, timeoutMs = pacingMs * 3 + 2_000)
+            delay((pacingMs - (System.currentTimeMillis() - started)).coerceAtLeast(250))
             advance()
         } else if (mode == PrepLineMode.AudioGap) {
             val words = prepWords(current.text).size
@@ -1110,7 +1107,7 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
                     }
                 }
                 Spacer(Modifier.height(24.dp))
-                if (!line.isMine && !ReaderFiles.file(context, prepReaderLineIndex(scene, line)).exists()) {
+                if (!line.isMine && !ReaderFiles.file(context, scene.id, prepReaderLineIndex(scene, line)).exists()) {
                     Text(
                         "You haven’t recorded this line yet. Record $readerName yourself to hear it here.",
                         style = OT.type.footnote,

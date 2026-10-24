@@ -10,8 +10,6 @@
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Re-arms local deadline reminders after a reboot (alarms don't survive one). -->
@@ -23,8 +21,12 @@
         </intent>
     </queries>
 
+    <!-- No cloud backup: takes, headshots and reader recordings are meant to stay on this phone
+         until the actor sends them, and Auto Backup would copy them to Google Drive. (Photos and
+         files are picked through the system Photo Picker / document picker, so no media
+         permissions are needed.) -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

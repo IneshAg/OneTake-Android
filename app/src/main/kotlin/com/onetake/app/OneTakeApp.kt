@@ -131,6 +131,15 @@ private fun RootTabs(
     LaunchedEffect(store.incomingShare) {
         if (store.incomingShare != null) navigator.showAddAudition()
     }
+    // A tap on the home-screen widget opens that audition.
+    LaunchedEffect(store.openAuditionRequest) {
+        val id = store.openAuditionRequest ?: return@LaunchedEffect
+        store.openAuditionRequest = null
+        if (store.audition(id) != null) {
+            navigator.resetTo(AppTab.Auditions)
+            navigator.push(Route.AuditionDetail(id))
+        }
+    }
     val showBar = AppTab.entries.any { it.route == route }
     var isProfileSheetVisible by remember { mutableStateOf(false) }
 

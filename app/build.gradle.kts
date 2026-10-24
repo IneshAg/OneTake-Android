@@ -100,6 +100,9 @@ dependencies {
     // ML Kit OCR
     implementation(libs.mlkit.text.recognition)
 
+    // Home-screen widget (Next audition)
+    implementation(libs.androidx.glance.appwidget)
+
     testImplementation(libs.junit)
 
     debugImplementation(libs.androidx.ui.tooling)

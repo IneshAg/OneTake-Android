@@ -109,6 +109,8 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         get() = notifyTwoHoursState.value
         set(value) { notifyTwoHoursState.value = value; persist() }
     private val liquidGlassState = mutableStateOf(true)
+    /** An audition to open, from the home-screen widget. Not persisted. */
+    var openAuditionRequest by mutableStateOf<String?>(null)
     /** A notice shared from another app, waiting for Add audition to read it. Not persisted. */
     var incomingShare by mutableStateOf<com.onetake.app.data.SharedNotice?>(null)
     var liquidGlass: Boolean
@@ -147,8 +149,10 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         saveJob = saveScope.launch {
             delay(300)
             Persistence.save(context, snapshot)
-            // Due dates, sends and the toggles all change which reminders should exist.
+            // Due dates, sends and the toggles all change which reminders should exist, and what
+            // the home-screen widget shows.
             runCatching { DeadlineReminders.reschedule(context, snapshot) }
+            com.onetake.app.widget.NextAuditionWidget.refresh(context)
         }
     }
 

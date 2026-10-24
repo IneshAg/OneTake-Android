@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import com.onetake.app.data.SharedNotice
 import com.onetake.app.ui.theme.OneTakeTheme
 import com.onetake.app.ui.theme.StudioFinish
+import com.onetake.app.widget.NextAuditionWidget
 
 class MainActivity : ComponentActivity() {
 
@@ -21,7 +22,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Only on a fresh start: after recreation the share was already taken.
-        if (savedInstanceState == null) acceptShare(intent)
+        if (savedInstanceState == null) handle(intent)
         enableEdgeToEdge()
         setContent {
             // Saveable: survives activity recreation (e.g. a dark-mode switch) instead of resetting.
@@ -40,10 +41,14 @@ class MainActivity : ComponentActivity() {
      *  second activity with its own AppStore writing the same state file. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        acceptShare(intent)
+        handle(intent)
     }
 
-    private fun acceptShare(intent: Intent?) {
+    /** A share from another app, or a tap on the home-screen widget. */
+    private fun handle(intent: Intent?) {
         SharedNotice.from(intent)?.let { store.incomingShare = it }
+        if (intent?.action == NextAuditionWidget.ACTION_OPEN_AUDITION) {
+            store.openAuditionRequest = intent.getStringExtra(NextAuditionWidget.EXTRA_AUDITION_ID)
+        }
     }
 }

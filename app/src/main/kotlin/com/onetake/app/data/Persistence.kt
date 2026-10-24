@@ -102,9 +102,9 @@ object Persistence {
     fun save(context: Context, state: PersistedState) {
         try {
             val root = JSONObject()
-            root.put("auditions", state.auditions.toJsonArray())
-            root.put("takes", state.takes.toJsonArray())
-            root.put("practice", state.practice.toJsonArray())
+            root.put("auditions", state.auditions.auditionsToJson())
+            root.put("takes", state.takes.takesToJson())
+            root.put("practice", state.practice.practiceToJson())
             root.put("slate", state.slate.toJson())
             root.put("isOnboarded", state.isOnboarded)
             root.put("headshots", JSONObject(state.headshots))
@@ -163,7 +163,7 @@ object Persistence {
         exportedFileUri = optString("exportedFileUri", null),
     )
 
-    private fun List<Audition>.toJsonArray() = JSONArray(map { it.toJson() })
+    private fun List<Audition>.auditionsToJson() = JSONArray(map { it.toJson() })
 
     // --- Piece / ScriptScene / ScriptLine ---
 
@@ -233,7 +233,7 @@ object Persistence {
         sceneIndex = if (has("sceneIndex") && !isNull("sceneIndex")) getInt("sceneIndex") else null,
     )
 
-    private fun List<Take>.toJsonArray() = JSONArray(map { it.toJson() })
+    private fun List<Take>.takesToJson() = JSONArray(map { it.toJson() })
 
     // --- PracticePiece ---
 
@@ -256,7 +256,7 @@ object Persistence {
         sceneIndex = if (has("sceneIndex") && !isNull("sceneIndex")) getInt("sceneIndex") else null,
     )
 
-    private fun List<PracticePiece>.toJsonArray() = JSONArray(map { it.toJson() })
+    private fun List<PracticePiece>.practiceToJson() = JSONArray(map { it.toJson() })
 
     // --- SlateInfo ---
 

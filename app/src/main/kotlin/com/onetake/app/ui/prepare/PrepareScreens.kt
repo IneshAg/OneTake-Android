@@ -320,19 +320,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
 
     val fallbackScene = remember(a?.id, a?.role, sceneIndex) {
         if (a != null) {
-            ScriptScene(
-                number = sceneIndex + 1,
-                title = "Scene ${sceneIndex + 1}",
-                heading = "INT. AUDITION ROOM - DAY",
-                lines = listOf(
-                    ScriptLine(
-                        character = a.role.ifBlank { "ME" }.uppercase(),
-                        text = "Audition scene lines.",
-                        isMine = true,
-                    )
-                ),
-                estimatedSeconds = 60,
-            )
+            ScriptScene.placeholder(sceneIndex + 1, a.role)
         } else null
     }
 
@@ -364,7 +352,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
     val readerName = prepReaderName(scene)
     val mineLines = scene.lines.filter { it.isMine }
     val mineCount = mineLines.size
-    val learned = minOf(1, mineCount)
+    val learned = store.practiceProgress(auditionId, sceneIndex)?.linesLearned?.coerceAtMost(mineCount) ?: 0
     val visible = if (editing) scene.lines else scene.lines.filter { PrepPrefs.hidden[it.id] != true }
 
     Box(
@@ -883,19 +871,7 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         ?: a?.scenes?.firstOrNull()
         ?: practicePiece?.scene
         ?: if (a != null) {
-            ScriptScene(
-                number = sceneIndex + 1,
-                title = "Scene ${sceneIndex + 1}",
-                heading = "INT. AUDITION ROOM - DAY",
-                lines = listOf(
-                    ScriptLine(
-                        character = a.role.ifBlank { "ME" }.uppercase(),
-                        text = "Audition scene lines.",
-                        isMine = true,
-                    )
-                ),
-                estimatedSeconds = 60,
-            )
+            ScriptScene.placeholder(sceneIndex + 1, a.role)
         } else null
     val lines = if (scene != null) prepRehearsalLines(scene) else emptyList()
     if ((a == null && practicePiece == null) || scene == null || lines.isEmpty()) {
@@ -939,6 +915,9 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
             finished = true
             endedAt = System.currentTimeMillis()
             haptics.success()
+            // A complete run (not a pause) is what "lines learned" means: yours, said unprompted.
+            val mine = lines.indices.filter { lines[it].isMine }
+            store.recordRun(auditionId, sceneIndex, learned = mine.count { it !in needed }, total = mine.size)
         }
     }
 

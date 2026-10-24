@@ -266,6 +266,21 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         return piece
     }
 
+    /** The practice piece Run Lines / Prepare track progress on: [ownerId] is a practice piece id
+     *  (opened from Practice) or an audition id (that audition's scene). Null if neither exists. */
+    fun practiceProgress(ownerId: String, sceneIndex: Int): PracticePiece? =
+        practice.firstOrNull { it.id == ownerId }
+            ?: practice.firstOrNull { it.auditionId == ownerId && it.sceneIndex == sceneIndex }
+
+    /** Records a completed run: [learned] of your lines said without asking for help. */
+    fun recordRun(ownerId: String, sceneIndex: Int, learned: Int, total: Int) {
+        val piece = practiceProgress(ownerId, sceneIndex)
+            ?: if (audition(ownerId) != null) practicePiece(ownerId, sceneIndex) else return
+        practice = practice.map {
+            if (it.id == piece.id) it.copy(linesLearned = learned.coerceIn(0, total), linesTotal = total) else it
+        }
+    }
+
     fun saveHeadshot(angle: String, uri: String) {
         val updated = headshots.toMutableMap()
         updated[angle.lowercase()] = uri

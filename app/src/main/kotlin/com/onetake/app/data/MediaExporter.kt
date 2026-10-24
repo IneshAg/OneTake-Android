@@ -50,12 +50,13 @@ object MediaExporter {
         takes: List<Take>,
         slate: SlateInfo,
         isCancelled: () -> Boolean = { false },
+        includeSlate: Boolean = true,
         onProgress: (Float) -> Unit = {},
     ): File {
         // Only this audition's takes, whatever the caller passed.
         val ownTakes = takes.filter { it.auditionId == audition.id }
         val clipUris = buildList {
-            audition.slateVideoUri?.let { add(it) }
+            if (includeSlate) audition.slateVideoUri?.let { add(it) }
             audition.fullLengthVideoUri?.let { add(it) }
             audition.scenes.indices.forEach { i ->
                 val sceneTakes = ownTakes.filter { it.sceneIndex == i && it.fileUri != null }

@@ -114,6 +114,8 @@ object ReaderFiles {
 /** Plays the reader lines the actor recorded in "Record Maya". Falls back to TTS if provided and unrecorded. */
 class ReaderTrackPlayer(private val context: Context) {
     private var player: MediaPlayer? = null
+    /** 0–1, applied to every recording played (Profile → Reader volume while shooting). */
+    var volume: Float = 1f
 
     fun play(sceneId: String, readerIndex: Int) {
         val f = ReaderFiles.file(context, sceneId, readerIndex)
@@ -124,6 +126,7 @@ class ReaderTrackPlayer(private val context: Context) {
             mp.setDataSource(f.absolutePath)
             mp.setOnCompletionListener { it.release(); if (player === it) player = null }
             mp.prepare()
+            mp.setVolume(volume, volume)
             mp.start()
             player = mp
         }.onFailure { mp.release() } // empty/corrupt recording → stay silent instead of crashing
@@ -148,6 +151,7 @@ class ReaderTrackPlayer(private val context: Context) {
                     onDone()
                 }
                 mp.prepare()
+                mp.setVolume(volume, volume)
                 mp.start()
                 player = mp
             }.onFailure {

@@ -74,11 +74,23 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         get() = practiceState.value
         set(value) { practiceState.value = value; persist() }
 
-    // Settings (iOS @AppStorage equivalents) — not yet persisted to the state file; local-session only.
-    var slateAtStart by mutableStateOf(true)
-    var cleanNoise by mutableStateOf(true)
-    var readerVolume by mutableStateOf("Quieter")
-    var exportSpec by mutableStateOf("1080p, landscape")
+    // Settings that change behaviour — persisted with everything else.
+    private val slateAtStartState = mutableStateOf(true)
+    /** Whether the exported tape opens with the slate clip. */
+    var slateAtStart: Boolean
+        get() = slateAtStartState.value
+        set(value) { slateAtStartState.value = value; persist() }
+    private val readerVolumeState = mutableStateOf("Quieter")
+    /** "Same as me" / "Quieter" / "Much quieter" — the reader's level under your takes. */
+    var readerVolume: String
+        get() = readerVolumeState.value
+        set(value) { readerVolumeState.value = value; persist() }
+    val readerVolumeLevel: Float
+        get() = when (readerVolume) {
+            "Same as me" -> 1f
+            "Much quieter" -> 0.35f
+            else -> 0.6f
+        }
     var headshotsTaken by mutableIntStateOf(0)
     private val headshotsState = mutableStateOf<Map<String, String>>(emptyMap())
     var headshots: Map<String, String>
@@ -90,7 +102,10 @@ class AppStore(application: Application) : AndroidViewModel(application) {
     var notifyMessages by mutableStateOf(true)
     var notifyDelivery by mutableStateOf(true)
     var notifyPractice by mutableStateOf(false)
-    var liquidGlass by mutableStateOf(true)
+    private val liquidGlassState = mutableStateOf(true)
+    var liquidGlass: Boolean
+        get() = liquidGlassState.value
+        set(value) { liquidGlassState.value = value; persist() }
 
     init {
         val saved = Persistence.load(context)
@@ -102,6 +117,9 @@ class AppStore(application: Application) : AndroidViewModel(application) {
             isOnboarded = saved.isOnboarded
             headshots = saved.headshots
             headshotsTaken = saved.headshots.size
+            slateAtStart = saved.slateAtStart
+            readerVolume = saved.readerVolume
+            liquidGlass = saved.liquidGlass
         }
         isLoading = false
     }
@@ -113,6 +131,7 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         val snapshot = PersistedState(
             auditions = auditions, takes = takes, practice = practice,
             slate = slate, isOnboarded = isOnboarded, headshots = headshots,
+            slateAtStart = slateAtStart, readerVolume = readerVolume, liquidGlass = liquidGlass,
         )
         saveJob = saveScope.launch {
             delay(300)

@@ -25,6 +25,8 @@ interface RehearsalSpeechEngine {
 class TtsReaderEngine(context: Context) : RehearsalSpeechEngine {
     private var tts: TextToSpeech? = null
     private var isInitialized = false
+    /** 0–1 speech volume (Profile → Reader volume while shooting). */
+    var volume: Float = 1f
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /** The utterance whose completion [currentOnDone] belongs to. A late callback from an earlier
@@ -82,7 +84,8 @@ class TtsReaderEngine(context: Context) : RehearsalSpeechEngine {
             val utteranceId = UUID.randomUUID().toString()
             currentUtteranceId = utteranceId
             currentOnDone = onDone
-            engine.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), utteranceId)
+            val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume) }
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
         } else {
             // TTS not available or not ready
             onDone()

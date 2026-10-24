@@ -167,6 +167,7 @@ fun PackageScreen(auditionId: String) {
                     MediaExporter.export(
                         context, a, takesForAudition, slate,
                         isCancelled = { !isActive },
+                        includeSlate = store.slateAtStart,
                     ) { p -> scope.launch { progress = p } }
                 }
                 store.setExportedFile(a.id, Uri.fromFile(file).toString())

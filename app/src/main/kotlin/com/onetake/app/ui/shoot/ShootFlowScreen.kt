@@ -210,8 +210,11 @@ fun ShootFlowScreen(auditionId: String) {
         store.markDone(PieceKind.Scene, auditionId, title)
     }
 
-    // Reader: the actor's own recorded voice or TTS for the other character's lines.
+    // Reader: the actor's own recorded voice or TTS for the other character's lines, at the
+    // Profile → Reader volume level so casting hears the actor first.
     LaunchedEffect(lineIndex, recording, stage) {
+        reader.volume = store.readerVolumeLevel
+        tts.volume = store.readerVolumeLevel
         val line = lines.getOrNull(lineIndex)
         runCatching {
             if (stage == ShootStage.Scene && recording && scene != null && line != null && !line.isMine) {

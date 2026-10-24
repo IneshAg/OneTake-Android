@@ -158,14 +158,6 @@ fun ProfileScreen() {
             options = listOf("Same as me", "Quieter", "Much quieter"),
             onSelect = { store.readerVolume = it },
         )
-        ToggleRow(title = "Clean up room noise", checked = store.cleanNoise, onCheckedChange = { store.cleanNoise = it })
-        ProfilePickerRow(
-            title = "Export",
-            value = store.exportSpec,
-            options = listOf("1080p, landscape", "4K, landscape", "1080p, portrait"),
-            onSelect = { store.exportSpec = it },
-            showDivider = false,
-        )
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("Appearance")

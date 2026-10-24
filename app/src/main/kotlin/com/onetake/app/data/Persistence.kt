@@ -29,6 +29,9 @@ data class PersistedState(
     val slate: SlateInfo = SlateInfo(),
     val isOnboarded: Boolean = false,
     val headshots: Map<String, String> = emptyMap(),
+    val slateAtStart: Boolean = true,
+    val readerVolume: String = "Quieter",
+    val liquidGlass: Boolean = true,
 )
 
 /** Hand-rolled org.json (de)serialization — no JSON library dependency exists in this project
@@ -63,6 +66,9 @@ object Persistence {
             slate = root.optJSONObject("slate")?.let { runCatching { it.toSlateInfo() }.getOrNull() } ?: SlateInfo(),
             isOnboarded = root.optBoolean("isOnboarded", false),
             headshots = root.optJSONObject("headshots")?.let { runCatching { it.toStringMap() }.getOrNull() } ?: emptyMap(),
+            slateAtStart = root.optBoolean("slateAtStart", true),
+            readerVolume = root.optString("readerVolume", null) ?: "Quieter",
+            liquidGlass = root.optBoolean("liquidGlass", true),
         )
         return rebaseMedia(state, context.filesDir)
     }
@@ -108,6 +114,9 @@ object Persistence {
             root.put("slate", state.slate.toJson())
             root.put("isOnboarded", state.isOnboarded)
             root.put("headshots", JSONObject(state.headshots))
+            root.put("slateAtStart", state.slateAtStart)
+            root.put("readerVolume", state.readerVolume)
+            root.put("liquidGlass", state.liquidGlass)
             val target = stateFile(context) ?: return
             val tmp = File(target.parentFile, "$FILE_NAME.tmp")
             tmp.writeText(root.toString())

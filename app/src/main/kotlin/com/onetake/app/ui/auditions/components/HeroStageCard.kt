@@ -1,5 +1,6 @@
 package com.onetake.app.ui.auditions.components
 
+import com.onetake.app.models.AuditionStatus
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -98,7 +99,7 @@ fun HeroStageCard(
                 .padding(22.dp)
         ) {
             Text(
-                text = "UP NEXT · IMMEDIATE FOCUS",
+                text = if (slate.status == AuditionStatus.Sent) "SENT" else "UP NEXT · IMMEDIATE FOCUS",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 0.1.sp,

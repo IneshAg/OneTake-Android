@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.AndroidViewModel
+import com.onetake.app.data.DeadlineReminders
 import com.onetake.app.data.Persistence
 import com.onetake.app.data.PersistedState
 import com.onetake.app.models.Audition
@@ -96,12 +97,15 @@ class AppStore(application: Application) : AndroidViewModel(application) {
     var headshots: Map<String, String>
         get() = headshotsState.value
         set(value) { headshotsState.value = value; persist() }
-    var notifyMorning by mutableStateOf(true)
-    var notifyTwoHours by mutableStateOf(true)
-    var notifyCallbacks by mutableStateOf(true)
-    var notifyMessages by mutableStateOf(true)
-    var notifyDelivery by mutableStateOf(true)
-    var notifyPractice by mutableStateOf(false)
+    // Local deadline reminders (DeadlineReminders) — persisted, rescheduled on every save.
+    private val notifyMorningState = mutableStateOf(true)
+    var notifyMorning: Boolean
+        get() = notifyMorningState.value
+        set(value) { notifyMorningState.value = value; persist() }
+    private val notifyTwoHoursState = mutableStateOf(true)
+    var notifyTwoHours: Boolean
+        get() = notifyTwoHoursState.value
+        set(value) { notifyTwoHoursState.value = value; persist() }
     private val liquidGlassState = mutableStateOf(true)
     var liquidGlass: Boolean
         get() = liquidGlassState.value
@@ -120,6 +124,8 @@ class AppStore(application: Application) : AndroidViewModel(application) {
             slateAtStart = saved.slateAtStart
             readerVolume = saved.readerVolume
             liquidGlass = saved.liquidGlass
+            notifyMorning = saved.notifyMorning
+            notifyTwoHours = saved.notifyTwoHours
         }
         isLoading = false
     }
@@ -132,10 +138,13 @@ class AppStore(application: Application) : AndroidViewModel(application) {
             auditions = auditions, takes = takes, practice = practice,
             slate = slate, isOnboarded = isOnboarded, headshots = headshots,
             slateAtStart = slateAtStart, readerVolume = readerVolume, liquidGlass = liquidGlass,
+            notifyMorning = notifyMorning, notifyTwoHours = notifyTwoHours,
         )
         saveJob = saveScope.launch {
             delay(300)
             Persistence.save(context, snapshot)
+            // Due dates, sends and the toggles all change which reminders should exist.
+            runCatching { DeadlineReminders.reschedule(context, snapshot) }
         }
     }
 

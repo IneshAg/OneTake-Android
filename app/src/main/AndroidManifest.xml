@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Re-arms local deadline reminders after a reboot (alarms don't survive one). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <queries>
         <intent>
@@ -38,6 +40,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Local deadline reminders (data/DeadlineReminders.kt). -->
+        <receiver
+            android:name=".data.ReminderReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".data.RemindersBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Lets the exported tape (and, later, other recorded files) be handed to the Android
              share sheet / a video viewer without exposing raw file:// URIs (blocked on API 24+). -->

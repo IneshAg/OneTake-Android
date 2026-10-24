@@ -1,5 +1,11 @@
 package com.onetake.app.ui.profile
 
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.core.content.ContextCompat
+import android.os.Build
+import android.content.pm.PackageManager
+import android.Manifest
 import android.widget.Toast
 import com.onetake.app.ui.system.ReaderFiles
 import androidx.compose.foundation.Canvas
@@ -131,14 +137,15 @@ fun ProfileScreen() {
             HeadshotImage(Modifier.size(64.dp).clip(CircleShape), contentDescription = "Your headshot")
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(slate.name, style = OT.type.title, color = c.labelPrimary, modifier = Modifier.weight(1f, fill = false), maxLines = 1)
+                    Text(slate.name.ifBlank { "Add your name" }, style = OT.type.title, color = c.labelPrimary, modifier = Modifier.weight(1f, fill = false), maxLines = 1)
                     Box(
                         Modifier.size(28.dp).clip(CircleShape).background(c.accentSoft),
                         contentAlignment = Alignment.Center,
                     ) { Icon(Icons.Filled.Edit, "Edit slate", tint = c.accent, modifier = Modifier.size(15.dp)) }
                 }
                 Text(
-                    "${slate.height} · ${slate.basedIn} · ${slate.representation.ifEmpty { "Self-represented" }}",
+                    listOf(slate.height, slate.basedIn, slate.representation.ifEmpty { "Self-represented" })
+                .filter { it.isNotBlank() }.joinToString(" · "),
                     style = OT.type.footnote,
                     color = c.labelTertiary,
                 )
@@ -363,7 +370,6 @@ fun PrivacyScreen() {
     val store = LocalAppStore.current
     val context = LocalContext.current
     val c = OT.colors
-    val uriHandler = LocalUriHandler.current
     var confirmDelete by remember { mutableStateOf(false) }
 
     var takesBytes by remember { mutableStateOf(0L) }
@@ -431,20 +437,16 @@ fun PrivacyScreen() {
         ListRow(title = "Reader recordings", detail = "Your own voice, per line", value = formatStorageSize(readerBytes), showChevron = false, showDivider = false)
 
         Spacer(Modifier.height(20.dp))
+        // Everything stays on this phone: there are no private links or synced sessions, and the
+        // "Privacy Policy" link pointed at example.com — so neither is claimed here.
         SectionLabel("Sent tapes")
-        ListRow(title = "Private links", detail = "Expire 30 days after you send them", showChevron = false)
         ListRow(
-            title = "Multi-Device sessions",
-            detail = "Direct between your own devices on the same Wi-Fi. Nothing goes through a server.",
+            title = "Where your tapes go",
+            detail = "Only where you share them from the share sheet. OneTake has no server.",
             showChevron = false,
             showDivider = false,
         )
         Spacer(Modifier.height(8.dp))
-        Box(
-            Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                .clickable(role = Role.Button) { uriHandler.openUri("https://example.com/privacy") },
-            contentAlignment = Alignment.CenterStart,
-        ) { Text("Privacy Policy", style = OT.type.headline, color = c.accent) }
         Box(
             Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) { confirmDelete = true },
             contentAlignment = Alignment.CenterStart,
@@ -490,11 +492,22 @@ fun PrivacyScreen() {
 @Composable
 fun NotificationSettingsScreen() {
     val store = LocalAppStore.current
+    val context = LocalContext.current
     val c = OT.colors
     val rosterShape = RoundedCornerShape(24.dp)
+    // Android 13+ needs permission to post; ask when a reminder is switched on.
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    fun enable(set: (Boolean) -> Unit): (Boolean) -> Unit = { on ->
+        set(on)
+        if (on && Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     PushedScreen(title = "Notifications") {
         Text(
-            "Only what needs you. Each audition alerts once per change — never the same thing twice.",
+            "Reminders come from this phone — nothing is sent to a server.",
             style = OT.type.callout,
             color = c.labelSecondary,
         )
@@ -507,34 +520,8 @@ fun NotificationSettingsScreen() {
                 .background(OT.colors.surfaceCard)
                 .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape),
         ) {
-            ToggleRow("Morning it’s due", store.notifyMorning, { store.notifyMorning = it }, detail = "8:00 AM on the due date")
-            ToggleRow("Two hours before", store.notifyTwoHours, { store.notifyTwoHours = it }, detail = "Only if it isn’t sent yet", showDivider = false)
-        }
-
-        Spacer(Modifier.height(20.dp))
-        SectionLabel("From casting", Modifier.padding(start = 4.dp, bottom = 8.dp))
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(rosterShape)
-                .background(OT.colors.surfaceCard)
-                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape),
-        ) {
-            ToggleRow("Callbacks and new sides", store.notifyCallbacks, { store.notifyCallbacks = it }, detail = "When a notice you added changes")
-            ToggleRow("Messages", store.notifyMessages, { store.notifyMessages = it }, detail = "Replies to your tape", showDivider = false)
-        }
-
-        Spacer(Modifier.height(20.dp))
-        SectionLabel("Your tapes", Modifier.padding(start = 4.dp, bottom = 8.dp))
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(rosterShape)
-                .background(OT.colors.surfaceCard)
-                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, rosterShape),
-        ) {
-            ToggleRow("Delivered or failed", store.notifyDelivery, { store.notifyDelivery = it }, detail = "Confirmation from Actors Access, or a retry")
-            ToggleRow("Practice nudges", store.notifyPractice, { store.notifyPractice = it }, detail = "A short run when nothing is due", showDivider = false)
+            ToggleRow("Morning it’s due", store.notifyMorning, enable { store.notifyMorning = it }, detail = "8:00 AM on the due date")
+            ToggleRow("Two hours before", store.notifyTwoHours, enable { store.notifyTwoHours = it }, detail = "Only if it isn’t sent yet", showDivider = false)
         }
     }
 }
@@ -641,7 +628,7 @@ fun HeadshotsScreen(auditionId: String? = null) {
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Saved in 4:5, 2:3 and 1:1. Front and both profiles are attached to $project.",
+                    "Front and both profiles are saved on this phone and attached to $project.",
                     style = OT.type.callout,
                     color = c.labelSecondary,
                 )

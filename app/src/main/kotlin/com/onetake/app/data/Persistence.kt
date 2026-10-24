@@ -32,6 +32,8 @@ data class PersistedState(
     val slateAtStart: Boolean = true,
     val readerVolume: String = "Quieter",
     val liquidGlass: Boolean = true,
+    val notifyMorning: Boolean = true,
+    val notifyTwoHours: Boolean = true,
 )
 
 /** Hand-rolled org.json (de)serialization — no JSON library dependency exists in this project
@@ -69,6 +71,8 @@ object Persistence {
             slateAtStart = root.optBoolean("slateAtStart", true),
             readerVolume = root.optString("readerVolume", null) ?: "Quieter",
             liquidGlass = root.optBoolean("liquidGlass", true),
+            notifyMorning = root.optBoolean("notifyMorning", true),
+            notifyTwoHours = root.optBoolean("notifyTwoHours", true),
         )
         return rebaseMedia(state, context.filesDir)
     }
@@ -117,6 +121,8 @@ object Persistence {
             root.put("slateAtStart", state.slateAtStart)
             root.put("readerVolume", state.readerVolume)
             root.put("liquidGlass", state.liquidGlass)
+            root.put("notifyMorning", state.notifyMorning)
+            root.put("notifyTwoHours", state.notifyTwoHours)
             val target = stateFile(context) ?: return
             val tmp = File(target.parentFile, "$FILE_NAME.tmp")
             tmp.writeText(root.toString())

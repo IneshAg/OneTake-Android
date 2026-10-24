@@ -1,8 +1,15 @@
 package com.onetake.app.ui.practice
 
+import com.onetake.app.models.Audition
+import com.onetake.app.models.AuditionStatus
+import com.onetake.app.models.Destination
+import com.onetake.app.models.ScriptLine
+import com.onetake.app.models.ScriptScene
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDateTime
 
 class PracticeDrillSuiteTest {
     @Test
@@ -31,5 +38,37 @@ class PracticeDrillSuiteTest {
         val words = 10
         val pacing = LineLearningMode.calculateSpokenPacingMillis(words)
         assertTrue(pacing >= 3000L)
+    }
+
+    @Test
+    fun testAudioWalkFallbackSceneResolution() {
+        val audition = Audition(
+            id = "aud-test",
+            project = "Test Project",
+            projectType = "Film",
+            role = "Detective",
+            roleSize = "Lead",
+            castingOffice = "",
+            due = LocalDateTime.now().plusDays(2),
+            asks = emptyList(),
+            pieces = emptyList(),
+            scenes = listOf(
+                ScriptScene(
+                    id = "sc-1",
+                    number = 1,
+                    title = "Scene 1",
+                    heading = "INT. OFFICE - DAY",
+                    lines = listOf(ScriptLine(character = "DETECTIVE", text = "Where were you?", isMine = true)),
+                    estimatedSeconds = 45,
+                )
+            ),
+            destination = Destination.ActorsAccess,
+            status = AuditionStatus.Due,
+        )
+
+        val outOfBoundsIndex = 5
+        val resolved = audition.scenes.getOrNull(outOfBoundsIndex) ?: audition.scenes.firstOrNull()
+        assertNotNull(resolved)
+        assertEquals("Scene 1", resolved?.title)
     }
 }

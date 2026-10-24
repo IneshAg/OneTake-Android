@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
+import com.onetake.app.models.ScriptLine
+import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.formatDuration
 import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.system.KeepScreenOn
@@ -70,7 +72,24 @@ fun AudioWalkScreen(
 
     val audition = store.audition(id)
     val practicePiece = if (audition == null) store.practice.firstOrNull { it.id == id } else null
-    val scene = audition?.scenes?.getOrNull(sceneIndex) ?: practicePiece?.scene
+    val scene = audition?.scenes?.getOrNull(sceneIndex)
+        ?: audition?.scenes?.firstOrNull()
+        ?: practicePiece?.scene
+        ?: if (audition != null) {
+            ScriptScene(
+                number = sceneIndex + 1,
+                title = "Scene ${sceneIndex + 1}",
+                heading = "INT. AUDITION ROOM - DAY",
+                lines = listOf(
+                    ScriptLine(
+                        character = audition.role.ifBlank { "ME" }.uppercase(),
+                        text = "Audition scene lines.",
+                        isMine = true,
+                    )
+                ),
+                estimatedSeconds = 60,
+            )
+        } else null
 
     if (scene == null || scene.lines.isEmpty()) {
         Column(

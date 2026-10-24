@@ -33,6 +33,8 @@ sealed class Route(val path: String) {
     data class Headshots(val auditionId: String? = null) : Route(if (auditionId != null) "headshots/$auditionId" else "headshots") {
         companion object : Route("headshots")
     }
+    /** Recording settings, notifications and Privacy & data (ProfileScreen). */
+    data object Settings : Route("settings")
     data object EditSlate : Route("editSlate")
     data object Privacy : Route("privacy")
     data object Notifications : Route("notifications")

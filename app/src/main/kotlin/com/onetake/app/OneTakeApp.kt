@@ -72,7 +72,6 @@ import com.onetake.app.ui.auditions.AddAuditionSheet
 import com.onetake.app.ui.auditions.AuditionDetailScreen
 import com.onetake.app.ui.auditions.AuditionsScreen
 import com.onetake.app.ui.search.SearchScreen
-import com.onetake.app.ui.home.HomeScreen
 import com.onetake.app.ui.onboarding.OnboardingFlow
 import com.onetake.app.ui.packageview.PackageScreen
 import com.onetake.app.ui.practice.AudioWalkScreen
@@ -165,8 +164,7 @@ private fun RootTabs(
                     PracticeScreen(onOpenProfile = { isProfileSheetVisible = true })
                 }
                 tabRoot(AppTab.Search) { SearchScreen() }
-                composable("home") { HomeScreen() }
-                composable("profile") { ProfileScreen() }
+                composable(Route.Settings.path) { ProfileScreen() }
 
                 withId(Route.Pattern.AUDITION) { AuditionDetailScreen(it) }
                 withIdScene(Route.Pattern.PREPARE) { id, s -> PrepareScreen(id, s) }

@@ -82,7 +82,6 @@ import com.onetake.app.CameraFlow
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
-import com.onetake.app.TabBarClearance
 import com.onetake.app.models.PieceKind
 import com.onetake.app.ui.camera.CameraBackground
 import com.onetake.app.ui.camera.rememberCameraController
@@ -113,16 +112,9 @@ fun ProfileScreen() {
     val c = OT.colors
     val slate = store.slate
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(c.bgCanvas)
-            .verticalScroll(rememberScrollState())
-            .statusBarsPadding()
-            .padding(horizontal = OT.dims.gutter)
-            .padding(top = 8.dp, bottom = TabBarClearance),
-    ) {
-        LargeTitle("Profile")
+    // Pushed from the profile sheet (Route.Settings) — not a tab root, so it gets a back bar.
+    PushedScreen {
+        LargeTitle("Settings")
         Spacer(Modifier.height(12.dp))
 
         // Slate card: headshot, name, details → Edit slate

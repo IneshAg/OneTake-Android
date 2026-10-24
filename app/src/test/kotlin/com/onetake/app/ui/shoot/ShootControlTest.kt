@@ -7,11 +7,29 @@ import org.junit.Test
 
 class ShootControlTest {
 
-    private val recordRegex = Regex("""(?i)\b(record|recording|action|roll|rolling|start|slate)\b""")
-    private val stopRegex = Regex("""(?i)\b(stop|cut|finish|finished|done|end)\b""")
+    @Test
+    fun testDirectorCommandsDoNotFalseCutOnDialogueWords() {
+        val stopRegex = ShootVoiceCommander.STOP_REGEX
+        // Common dialogue lines that must NOT cut
+        val dialogueLines = listOf(
+            "I am done with this conversation",
+            "At the end of the road",
+            "We finished the job yesterday",
+            "Stop by the house later",
+        )
+        for (line in dialogueLines) {
+            assertFalse("Dialogue line '$line' should not trigger cut", stopRegex.containsMatchIn(line))
+        }
+        // True director cut commands must trigger
+        val directorCommands = listOf("Cut!", "and cut", "scene cut", "stop recording", "cut take", "that's a wrap")
+        for (cmd in directorCommands) {
+            assertTrue("Director command '$cmd' must trigger cut", stopRegex.containsMatchIn(cmd))
+        }
+    }
 
     @Test
     fun testVoiceCommandRecordTriggers() {
+        val recordRegex = ShootVoiceCommander.RECORD_REGEX
         // Valid phrases spoken from afar
         val triggers = listOf(
             "record",
@@ -40,16 +58,16 @@ class ShootControlTest {
 
     @Test
     fun testVoiceCommandStopTriggers() {
+        val stopRegex = ShootVoiceCommander.STOP_REGEX
         // Valid phrases spoken to cut the take
         val triggers = listOf(
             "cut",
             "Cut!",
-            "stop",
             "please stop recording",
             "and cut",
-            "finished",
-            "all done",
-            "end scene",
+            "cut take",
+            "scene cut",
+            "that's a wrap",
         )
         for (phrase in triggers) {
             assertTrue("Expected phrase '$phrase' to match stop trigger", stopRegex.containsMatchIn(phrase))

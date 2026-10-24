@@ -244,6 +244,11 @@ fun ShootFlowScreen(auditionId: String) {
         }
     }
 
+    fun finish(goTo: Route) {
+        store.markDone(PieceKind.Scene, auditionId)
+        nav.closeCamera(then = goTo)
+    }
+
     val voiceCommander = rememberShootVoiceCommander(
         onRecordTrigger = {
             if (voiceEnabled && !recording && countdown == null && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
@@ -255,10 +260,37 @@ fun ShootFlowScreen(auditionId: String) {
                 cut()
             }
         },
+        onStageTrigger = { cmd ->
+            if (voiceEnabled) {
+                when (stage) {
+                    ShootStage.Check -> {
+                        if (cmd.contains("slate")) stage = ShootStage.Slate
+                        else if (cmd.contains("shoot")) stage = ShootStage.Scene
+                    }
+                    ShootStage.Saved -> {
+                        if (cmd.contains("circle")) {
+                            val t = store.takes.firstOrNull { it.id == pendingTakeId }
+                            if (t != null) {
+                                store.circle(t)
+                                haptics.impact()
+                            }
+                        } else if (cmd.contains("go again") || cmd.contains("next take")) {
+                            stage = ShootStage.Scene
+                            takeNumber += 1
+                            lineIndex = 0
+                            haptics.impact()
+                        } else if (cmd.contains("done")) {
+                            finish(Route.AuditionDetail(auditionId))
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+        },
     )
 
     LaunchedEffect(voiceEnabled, micPermissionGranted, stage) {
-        if (voiceEnabled && micPermissionGranted && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
+        if (voiceEnabled && micPermissionGranted && (stage == ShootStage.Check || stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene || stage == ShootStage.Saved)) {
             voiceCommander.start()
         } else {
             voiceCommander.stop()
@@ -267,11 +299,6 @@ fun ShootFlowScreen(auditionId: String) {
 
     LaunchedEffect(recording) {
         voiceCommander.setRecordingMode(recording)
-    }
-
-    fun finish(goTo: Route) {
-        store.markDone(PieceKind.Scene, auditionId)
-        nav.closeCamera(then = goTo)
     }
 
     val time = camera.elapsed.toInt().let { "%02d:%02d:%02d".format(it / 3600, (it / 60) % 60, it % 60) }
@@ -424,7 +451,19 @@ fun ShootFlowScreen(auditionId: String) {
                     )
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
+            if (voiceEnabled && micPermissionGranted) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    VoiceCommandHud(
+                        isRecording = recording,
+                        isListening = voiceCommander.isListening,
+                        lastHeard = voiceCommander.lastHeard,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            } else {
+                Spacer(Modifier.height(4.dp))
+            }
 
             // Middle: overlays + countdown. Takes the remaining space so controls below are never pushed off-screen.
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -595,10 +634,11 @@ private tailrec fun Context.findShootActivity(): Activity? = when (this) {
 
 // MARK: - Voice Commander (Hands-free STT for "Record" / "Action" & "Cut" / "Stop")
 
-private class ShootVoiceCommander(
+class ShootVoiceCommander(
     private val context: Context,
     private val onRecordTrigger: () -> Unit,
     private val onCutTrigger: () -> Unit,
+    private val onStageTrigger: ((String) -> Unit)? = null,
 ) {
     val available: Boolean = runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)
     var isListening by mutableStateOf(false)
@@ -612,8 +652,11 @@ private class ShootVoiceCommander(
     private val handler = Handler(Looper.getMainLooper())
     private val relisten = Runnable { if (wanted) listen() }
 
-    private val recordRegex = Regex("""(?i)\b(record|recording|action|roll|rolling|start|slate)\b""")
-    private val stopRegex = Regex("""(?i)\b(stop|cut|finish|finished|done|end)\b""")
+    companion object {
+        val RECORD_REGEX = Regex("""(?i)\b(action|roll\s*camera|rolling|roll|start(\s*recording)?|record|take\s*\d+|slate)\b""")
+        val STOP_REGEX = Regex("""(?i)\b(cut|and\s*cut|scene\s*cut|stop\s*recording|stop\s*record|cut\s*take|that's\s*a\s*wrap|wrap)\b""")
+        val STAGE_REGEX = Regex("""(?i)\b(slate|shoot|circle|circle\s*take|go\s*again|next\s*take|done)\b""")
+    }
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
@@ -651,11 +694,14 @@ private class ShootVoiceCommander(
         val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
         for (text in matches) {
             lastHeard = text
-            if (!isRecordingMode && recordRegex.containsMatchIn(text)) {
+            if (!isRecordingMode && RECORD_REGEX.containsMatchIn(text)) {
                 onRecordTrigger()
                 break
-            } else if (isRecordingMode && stopRegex.containsMatchIn(text)) {
+            } else if (isRecordingMode && STOP_REGEX.containsMatchIn(text)) {
                 onCutTrigger()
+                break
+            } else if (!isRecordingMode && STAGE_REGEX.containsMatchIn(text)) {
+                onStageTrigger?.invoke(text.lowercase())
                 break
             }
         }
@@ -723,21 +769,77 @@ private class ShootVoiceCommander(
 private fun rememberShootVoiceCommander(
     onRecordTrigger: () -> Unit,
     onCutTrigger: () -> Unit,
+    onStageTrigger: ((String) -> Unit)? = null,
 ): ShootVoiceCommander {
     val context = LocalContext.current
     val currentOnRecord by rememberUpdatedState(onRecordTrigger)
     val currentOnCut by rememberUpdatedState(onCutTrigger)
+    val currentOnStage by rememberUpdatedState(onStageTrigger)
     val commander = remember {
         ShootVoiceCommander(
             context = context.applicationContext,
             onRecordTrigger = { currentOnRecord() },
             onCutTrigger = { currentOnCut() },
+            onStageTrigger = { cmd -> currentOnStage?.invoke(cmd) },
         )
     }
     DisposableEffect(commander) {
         onDispose { commander.destroy() }
     }
     return commander
+}
+
+@Composable
+private fun VoiceCommandHud(
+    isRecording: Boolean,
+    isListening: Boolean,
+    lastHeard: String?,
+    modifier: Modifier = Modifier,
+) {
+    var flashCommand by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(lastHeard) {
+        if (!lastHeard.isNullOrBlank()) {
+            flashCommand = lastHeard
+            delay(2000L)
+            flashCommand = null
+        }
+    }
+
+    Row(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.65f))
+            .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (isRecording) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(OT.camera.recRed)
+            )
+            Text(
+                text = if (flashCommand != null) "Heard: “$flashCommand”" else "Voice: Say “Cut” to stop",
+                style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                color = Color.White,
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Filled.Mic,
+                contentDescription = null,
+                tint = if (isListening) OT.colors.accent else Color.White.copy(alpha = 0.5f),
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = if (flashCommand != null) "Heard: “$flashCommand”" else "Voice: Say “Action” to roll",
+                style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                color = Color.White,
+            )
+        }
+    }
 }
 
 // MARK: - Record button (v2/Record Button · Ready / Tap to stop)

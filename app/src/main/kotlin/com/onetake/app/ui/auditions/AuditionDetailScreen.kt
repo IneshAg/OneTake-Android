@@ -27,7 +27,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -35,8 +34,6 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.Badge
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Portrait
 import androidx.compose.material.icons.outlined.Smartphone
@@ -82,7 +79,6 @@ import com.onetake.app.Route
 import com.onetake.app.models.Audition
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
-import com.onetake.app.models.ScriptLine
 import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.formatDuration
 import com.onetake.app.models.otDayMonth
@@ -166,8 +162,6 @@ fun AuditionDetailScreen(auditionId: String) {
                         .background(Color(0xF01A1A1E))
                         .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, RoundedCornerShape(24.dp)),
                 ) {
-                    DetailMenuItem("Revised sides", "New pages from casting", Icons.Outlined.Description) { showMenu = false }
-                    DetailMenuItem("Edit details", "Due date, role, what they want", Icons.Outlined.Edit) { showMenu = false }
                     DetailMenuItem("Start a callback", "Same role, next round", Icons.AutoMirrored.Filled.ArrowForward) {
                         showMenu = false
                         showCallback = true
@@ -606,6 +600,8 @@ private val detailChipDate = DateTimeFormatter.ofPattern("EEE, d MMM", Locale.US
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DetailCallbackSheet(a: Audition, onDismiss: () -> Unit) {
+    val store = LocalAppStore.current
+    val nav = LocalNavigator.current
     val c = OT.colors
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val today = remember { LocalDate.now() }
@@ -659,10 +655,7 @@ private fun DetailCallbackSheet(a: Audition, onDismiss: () -> Unit) {
                     DetailChip(suggested.format(detailChipDate), choice == 1) { choice = 1 }
                     DetailChip(otherDate?.format(detailChipDate) ?: "Other date", choice == 2) { showPicker = true }
                 }
-                Row {
-                    Text("By 10:00 AM · ", style = OT.type.footnote, color = c.due)
-                    Text("change time", style = OT.type.footnote, color = c.accent)
-                }
+                Text("By 10:00 AM", style = OT.type.footnote, color = c.due)
                 OTDivider()
 
                 SectionLabel("Scenes to tape")
@@ -686,16 +679,6 @@ private fun DetailCallbackSheet(a: Audition, onDismiss: () -> Unit) {
                             Text("Same pages · ≈ ${formatDuration(scene.estimatedSeconds)}", style = OT.type.footnote, color = c.labelTertiary)
                         }
                     }
-                }
-                Row(
-                    Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Box(Modifier.size(24.dp).border(1.5.dp, c.accent, CircleShape), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Add, null, tint = c.accent, modifier = Modifier.size(16.dp))
-                    }
-                    Text("New pages for the callback", style = OT.type.body, color = c.accent)
                 }
                 OTDivider()
 
@@ -739,7 +722,23 @@ private fun DetailCallbackSheet(a: Audition, onDismiss: () -> Unit) {
             }
             PrimaryButton(
                 "Create callback",
-                onClick = onDismiss,
+                onClick = {
+                    val dueDate = when (choice) {
+                        0 -> today.plusDays(1)
+                        2 -> otherDate ?: suggested
+                        else -> suggested
+                    }
+                    val callback = store.startCallback(
+                        original = a,
+                        due = dueDate.atTime(10, 0),
+                        sceneIds = selectedScenes,
+                        notes = notes,
+                        shareReader = bringReader,
+                    )
+                    onDismiss()
+                    nav.push(Route.AuditionDetail(callback.id))
+                },
+                enabled = selectedScenes.isNotEmpty(),
                 modifier = Modifier.padding(horizontal = OT.dims.gutter, vertical = 8.dp),
             )
         }

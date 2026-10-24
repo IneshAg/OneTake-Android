@@ -88,6 +88,8 @@ data class Audition(
     val fullLengthVideoUri: String? = null,
     /** The packaged deliverable, once MediaExporter has actually composed one. */
     val exportedFileUri: String? = null,
+    /** Direction from casting (e.g. a callback adjustment), shown on Prepare before every take. */
+    val notes: String = "",
 ) {
     val readyCount: Int get() = pieces.count { it.isDone }
     val totalCount: Int get() = pieces.size

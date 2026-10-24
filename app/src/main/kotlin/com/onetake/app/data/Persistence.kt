@@ -141,6 +141,7 @@ object Persistence {
         slateVideoUri?.let { put("slateVideoUri", it) }
         fullLengthVideoUri?.let { put("fullLengthVideoUri", it) }
         exportedFileUri?.let { put("exportedFileUri", it) }
+        if (notes.isNotEmpty()) put("notes", notes)
     }
 
     private fun JSONObject.toAudition(): Audition = Audition(
@@ -161,6 +162,7 @@ object Persistence {
         slateVideoUri = optString("slateVideoUri", null),
         fullLengthVideoUri = optString("fullLengthVideoUri", null),
         exportedFileUri = optString("exportedFileUri", null),
+        notes = optString("notes", null).orEmpty(),
     )
 
     private fun List<Audition>.auditionsToJson() = JSONArray(map { it.toJson() })

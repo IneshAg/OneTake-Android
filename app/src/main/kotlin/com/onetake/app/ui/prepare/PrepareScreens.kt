@@ -385,6 +385,20 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
                     color = c.labelPrimary,
                     modifier = Modifier.semantics { heading() },
                 )
+                // Casting's adjustment (from a callback) — seen before every take.
+                a?.notes?.takeIf { it.isNotBlank() }?.let { note ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(c.accentSoft)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("FROM CASTING", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
+                        Text(note, style = OT.type.callout, color = c.labelPrimary)
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         repeat(mineCount) { i ->

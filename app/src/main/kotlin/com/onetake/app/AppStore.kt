@@ -13,6 +13,7 @@ import com.onetake.app.data.PersistedState
 import com.onetake.app.models.Audition
 import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
+import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
 import com.onetake.app.models.PracticePiece
 import com.onetake.app.models.SlateInfo
@@ -27,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 import java.time.LocalDateTime
+import java.util.UUID
 
 /**
  * App state — Android twin of iOS `AppStore` (@Observable). Compose snapshot state,
@@ -143,6 +145,40 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         auditions = listOf(audition) + auditions
     }
 
+    /** Creates the next round for [original]: same role and project, the chosen scenes, a fresh
+     *  set of pieces to record, and casting's notes. With [shareReader] the scenes keep their ids,
+     *  so the reader recordings carry over; otherwise they're new scenes with no reader track. */
+    fun startCallback(
+        original: Audition,
+        due: LocalDateTime,
+        sceneIds: Set<String>,
+        notes: String,
+        shareReader: Boolean,
+    ): Audition {
+        val scenes = original.scenes.filter { it.id in sceneIds }
+            .map { if (shareReader) it else it.copy(id = UUID.randomUUID().toString()) }
+        val pieces = buildList {
+            original.pieces.firstOrNull { it.kind == PieceKind.Headshot }
+                ?.let { add(it.copy(id = UUID.randomUUID().toString(), isDone = headshots.isNotEmpty())) }
+            if (original.pieces.any { it.kind == PieceKind.Slate }) add(Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false))
+            scenes.forEach { add(Piece(kind = PieceKind.Scene, title = it.title, detail = "", isDone = false)) }
+        }
+        val callback = original.copy(
+            id = UUID.randomUUID().toString(),
+            due = due,
+            pieces = pieces,
+            scenes = scenes,
+            status = AuditionStatus.Due,
+            sentDate = null,
+            slateVideoUri = null,
+            fullLengthVideoUri = null,
+            exportedFileUri = null,
+            notes = notes.trim(),
+        )
+        add(callback)
+        return callback
+    }
+
     /** Deletes an audition along with everything recorded for it on this phone: its takes, slate,
      *  full length, export, reader recordings, and the practice pieces made from its scenes (and
      *  their practice takes). An export file another audition also points at is kept. */
@@ -154,6 +190,8 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         practice = practice.filterNot { it.auditionId == id }
 
         val ctx = context
+        // A callback can share scenes (and so reader recordings) with the round it came from.
+        val sceneIdsStillUsed = (auditions.flatMap { it.scenes } + practice.mapNotNull { it.scene }).map { it.id }.toSet()
         val exportPath = audition.exportedFileUri
             ?.takeIf { uri -> auditions.none { it.exportedFileUri == uri } }
             ?.let { runCatching { Uri.parse(it).path }.getOrNull() }
@@ -164,7 +202,8 @@ class AppStore(application: Application) : AndroidViewModel(application) {
                 File(File(dir, "exports"), id).deleteRecursively()
                 exportPath?.let { File(it).delete() }
                 ownPractice.forEach { File(dir, "practice-${it.id}").deleteRecursively() }
-                audition.scenes.forEach { ReaderFiles.sceneDir(ctx, it.id).deleteRecursively() }
+                audition.scenes.filter { it.id !in sceneIdsStillUsed }
+                    .forEach { ReaderFiles.sceneDir(ctx, it.id).deleteRecursively() }
             }
         }
     }

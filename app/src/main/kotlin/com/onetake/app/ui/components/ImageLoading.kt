@@ -7,8 +7,8 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.media.MediaMetadataRetriever
 import android.net.Uri
-import android.os.Build
 import android.util.LruCache
+import com.onetake.app.data.TapeAnalysis
 import java.io.File
 import java.io.InputStream
 
@@ -59,15 +59,7 @@ object ImageLoading {
         val r = MediaMetadataRetriever()
         return try {
             r.setDataSource(context, Uri.parse(uriString))
-            val frame = if (Build.VERSION.SDK_INT >= 27) {
-                r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, MAX_EDGE / 2, MAX_EDGE / 2)
-            } else {
-                r.frameAtTime?.let { full ->
-                    val scale = (MAX_EDGE / 2f) / maxOf(full.width, full.height)
-                    if (scale >= 1f) full else Bitmap.createScaledBitmap(full, (full.width * scale).toInt(), (full.height * scale).toInt(), true)
-                }
-            }
-            frame?.also { cache.put(key, it) }
+            TapeAnalysis.frameAt(r, 0, maxSide = MAX_EDGE / 2)?.also { cache.put(key, it) }
         } catch (_: Exception) {
             null
         } finally {

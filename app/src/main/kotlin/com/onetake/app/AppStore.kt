@@ -25,10 +25,13 @@ import com.onetake.app.ui.system.ReaderFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDateTime
 import java.util.UUID
@@ -45,11 +48,17 @@ class AppStore(application: Application) : AndroidViewModel(application) {
      *  re-trigger its own save. */
     private var isLoading = true
     private var saveJob: Job? = null
+    /** The snapshot waiting on the debounce, if any — written at once if the app closes first. */
+    @Volatile private var pendingSave: PersistedState? = null
+    /** One write at a time, in order: a cancelled save already writing finishes before the next. */
+    private val writeLock = Mutex()
+    /** What reminders and the widget were last built from (guarded by [writeLock]). */
+    private var scheduledFrom: Triple<List<Audition>, Boolean, Boolean>? = null
 
     /** Self-managed instead of `viewModelScope`: `viewModelScope` resolves to
      *  `Dispatchers.Main.immediate`, which throws `IllegalStateException` in a plain JVM unit
      *  test (no Robolectric/Main-dispatcher rule) the moment any persisted property is set.
-     *  Cancelled in `onCleared()` below. */
+     *  Not cancelled with the ViewModel, so a last save still lands (see `onCleared()`). */
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // Persisted properties keep their Compose state in an explicit MutableState so the setter can
@@ -146,18 +155,39 @@ class AppStore(application: Application) : AndroidViewModel(application) {
             slateAtStart = slateAtStart, readerVolume = readerVolume, liquidGlass = liquidGlass,
             notifyMorning = notifyMorning, notifyTwoHours = notifyTwoHours,
         )
+        pendingSave = snapshot
         saveJob = saveScope.launch {
             delay(300)
+            write(snapshot)
+        }
+    }
+
+    private suspend fun write(snapshot: PersistedState) = writeLock.withLock {
+        // Once started, a write runs to the end even if a newer edit cancels its job (the newer
+        // save waits for the lock), so the widget is never left behind the saved state.
+        withContext(NonCancellable) {
             Persistence.save(context, snapshot)
-            // Due dates, sends and the toggles all change which reminders should exist, and what
-            // the home-screen widget shows.
-            runCatching { DeadlineReminders.reschedule(context, snapshot) }
-            com.onetake.app.widget.NextAuditionWidget.refresh(context)
+            if (pendingSave === snapshot) pendingSave = null
+            // Reminders and the home-screen widget follow the auditions (due dates, sends, progress)
+            // and the reminder toggles. Most saves — takes, practice, the slate — change neither, and
+            // rescheduling every alarm and redrawing the widget for them was wasted work.
+            val inputs = Triple(snapshot.auditions, snapshot.notifyMorning, snapshot.notifyTwoHours)
+            if (inputs != scheduledFrom) {
+                scheduledFrom = inputs
+                runCatching { DeadlineReminders.reschedule(context, snapshot) }
+                com.onetake.app.widget.NextAuditionWidget.refresh(context)
+            }
         }
     }
 
     override fun onCleared() {
-        saveScope.cancel()
+        // Write whatever is still waiting on the debounce now. Cancelling the scope here dropped
+        // the last edit whenever the app was closed within 300 ms of it. Nothing else runs in the
+        // scope, so it's done once this write is.
+        pendingSave?.let { snapshot ->
+            saveJob?.cancel()
+            saveJob = saveScope.launch { write(snapshot) }
+        }
         super.onCleared()
     }
 

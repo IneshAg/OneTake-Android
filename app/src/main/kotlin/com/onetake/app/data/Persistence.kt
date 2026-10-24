@@ -109,6 +109,8 @@ object Persistence {
         )
     }
 
+    /** Synchronized: every save goes through the same temp file. */
+    @Synchronized
     fun save(context: Context, state: PersistedState) {
         try {
             val root = JSONObject()

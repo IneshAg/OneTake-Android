@@ -724,11 +724,13 @@ private fun rememberShootVoiceCommander(
     onCutTrigger: () -> Unit,
 ): ShootVoiceCommander {
     val context = LocalContext.current
+    val currentOnRecord by rememberUpdatedState(onRecordTrigger)
+    val currentOnCut by rememberUpdatedState(onCutTrigger)
     val commander = remember {
         ShootVoiceCommander(
             context = context.applicationContext,
-            onRecordTrigger = onRecordTrigger,
-            onCutTrigger = onCutTrigger,
+            onRecordTrigger = { currentOnRecord() },
+            onCutTrigger = { currentOnCut() },
         )
     }
     DisposableEffect(commander) {

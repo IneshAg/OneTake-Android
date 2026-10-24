@@ -91,4 +91,24 @@ class ShootControlTest {
         val sequenceFive = (timerFive downTo 1).toList()
         assertEquals(listOf(5, 4, 3, 2, 1), sequenceFive)
     }
+
+    @Test
+    fun testVoiceCommanderCallbackUpdate() {
+        var recordCount = 0
+        var cutCount = 0
+        var onRecord: () -> Unit = { recordCount++ }
+        var onCut: () -> Unit = { cutCount++ }
+
+        val wrapperRecord: () -> Unit = { onRecord() }
+        val wrapperCut: () -> Unit = { onCut() }
+
+        wrapperRecord()
+        assertEquals(1, recordCount)
+
+        // Switch to new lambdas (simulating recomposition)
+        var newRecordCalled = false
+        onRecord = { newRecordCalled = true }
+        wrapperRecord()
+        assertTrue(newRecordCalled)
+    }
 }

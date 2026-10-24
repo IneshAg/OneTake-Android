@@ -1,5 +1,8 @@
 package com.onetake.app.ui.system
 
+import kotlin.coroutines.resume
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.suspendCancellableCoroutine
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -166,6 +169,22 @@ class ReaderTrackPlayer(private val context: Context) {
     fun stop() {
         player?.runCatching { stop(); release() }
         player = null
+    }
+}
+
+/** Plays the recorded reader line (or speaks it) and suspends until it has finished, or until
+ *  [timeoutMs] in case neither reports completion. */
+suspend fun ReaderTrackPlayer.playAndAwait(
+    sceneId: String,
+    readerIndex: Int,
+    text: String,
+    ttsEngine: RehearsalSpeechEngine?,
+    timeoutMs: Long,
+) {
+    withTimeoutOrNull(timeoutMs) {
+        suspendCancellableCoroutine { cont ->
+            playOrSynthesize(sceneId, readerIndex, text, ttsEngine) { if (cont.isActive) cont.resume(Unit) }
+        }
     }
 }
 

@@ -10,7 +10,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
+import kotlin.coroutines.resume
 import java.util.UUID
 
 interface RehearsalSpeechEngine {
@@ -99,6 +102,15 @@ class TtsReaderEngine(context: Context) : RehearsalSpeechEngine {
         tts?.shutdown()
         tts = null
         isInitialized = false
+    }
+}
+
+/** Speaks [text] and suspends until it has actually finished (or [timeoutMs] passes, in case the
+ *  engine never reports back) — so callers advance after the line, not on a guessed timer that
+ *  cuts long lines off mid-sentence. */
+suspend fun RehearsalSpeechEngine.speakAndAwait(text: String, timeoutMs: Long) {
+    withTimeoutOrNull(timeoutMs) {
+        suspendCancellableCoroutine { cont -> speak(text) { if (cont.isActive) cont.resume(Unit) } }
     }
 }
 

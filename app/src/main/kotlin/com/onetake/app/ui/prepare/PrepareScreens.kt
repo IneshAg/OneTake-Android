@@ -113,6 +113,7 @@ import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.ToggleRow
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.ReaderFiles
+import com.onetake.app.ui.system.playAndAwait
 import com.onetake.app.ui.system.ReaderTrackPlayer
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.system.rememberReaderPlayer
@@ -957,10 +958,13 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         if (!current.isMine) {
             follower.stop()
             val ri = prepReaderLineIndex(scene, current)
-            player.playOrSynthesize(scene.id, ri, current.text, tts)
             val fileMs = prepAudioMillis(ReaderFiles.file(context, scene.id, ri)) ?: 0L
-            val spokenMs = maxOf(fileMs, LineLearningMode.calculateSpokenPacingMillis(prepWords(current.text).size))
-            delay(spokenMs)
+            val pacingMs = maxOf(fileMs, LineLearningMode.calculateSpokenPacingMillis(prepWords(current.text).size))
+            // Move on when the reader has actually finished (TTS often runs longer than the
+            // estimate), keeping the estimated pacing as a floor when nothing could be played.
+            val started = System.currentTimeMillis()
+            player.playAndAwait(scene.id, ri, current.text, tts, timeoutMs = pacingMs * 3 + 2_000)
+            delay((pacingMs - (System.currentTimeMillis() - started)).coerceAtLeast(250))
             advance()
         } else if (mode == PrepLineMode.AudioGap) {
             val words = prepWords(current.text).size

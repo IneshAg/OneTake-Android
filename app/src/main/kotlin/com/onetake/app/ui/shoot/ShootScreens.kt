@@ -270,7 +270,7 @@ fun ShootSetupScreen(auditionId: String, scene: Int = -1) {
             SetupCheckRow(
                 "Hands-free",
                 "Say “Action” / “Cut”",
-                if (status.voice) "Voice commands work on this phone" else "Speech recognition isn't available — tap to record",
+                if (status.voice) "Voice commands active" else "Speech recognition isn't available — tap to record",
                 ok = status.voice,
             )
             OTDivider()

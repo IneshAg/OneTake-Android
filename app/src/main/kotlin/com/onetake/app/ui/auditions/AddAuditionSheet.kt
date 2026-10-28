@@ -439,10 +439,6 @@ private fun AddCaptureStep(
                 Icon(Icons.Filled.Share, null, tint = c.accent, modifier = Modifier.size(14.dp))
                 Text("Faster: in Mail or WhatsApp, Share → OneTake", style = OT.type.footnote, color = c.accent)
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(Icons.Filled.Lock, null, tint = c.labelTertiary, modifier = Modifier.size(14.dp))
-                Text("Read on this phone. Nothing is uploaded.", style = OT.type.footnote, color = c.labelTertiary)
-            }
         }
     }
 }
@@ -509,7 +505,7 @@ private fun AddReadingStep(notice: String, onCancel: () -> Unit, onDone: (AddDra
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            LargeTitle("Reading the notice…", subtitle = "Usually a few seconds. Nothing leaves your phone.")
+            LargeTitle("Reading the notice…", subtitle = "Extracting details and dates.")
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -1126,7 +1122,7 @@ private fun AddErrorStep(onCancel: () -> Unit, onRetry: () -> Unit, onScan: () -
                 subtitle = "It looks like an image of a PDF with very small text. Nothing was lost — pick how to continue.",
             )
             Column {
-                IconRow(Icons.Outlined.Refresh, "Try again", "Reads it once more on this phone", onClick = onRetry)
+                IconRow(Icons.Outlined.Refresh, "Try again", "Scans the notice again", onClick = onRetry)
                 OTDivider(startIndent = 54.dp)
                 IconRow(Icons.Outlined.DocumentScanner, "Scan the pages instead", "Clearer than a screenshot", onClick = onScan)
                 OTDivider(startIndent = 54.dp)

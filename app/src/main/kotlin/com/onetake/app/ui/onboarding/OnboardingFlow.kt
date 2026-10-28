@@ -645,7 +645,7 @@ private fun OnbPermissionsStep(
         Column(Modifier.padding(top = 20.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             OnbBenefitRow(Icons.Filled.Fullscreen, "Check before you roll", "Framing, light and sound, in one glance.")
             OnbBenefitRow(Icons.Filled.GraphicEq, "Start with your voice", "Say “Action” from your mark. No running back to the phone.")
-            OnbBenefitRow(Icons.Filled.Lock, "Private until you send", "Takes stay on this phone.")
+            OnbBenefitRow(Icons.Filled.Lock, "Private until you send", "Only shared when you choose to send.")
         }
     }
 }

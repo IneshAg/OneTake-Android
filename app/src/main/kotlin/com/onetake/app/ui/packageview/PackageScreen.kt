@@ -568,12 +568,6 @@ private fun PkgSendProgress(progress: Float, onCancel: () -> Unit) {
             PkgStep("Found your recorded pieces", PkgStepState.Done)
             PkgStep("Composing one file", if (progress < 1f) PkgStepState.Active else PkgStepState.Done, detail = "$pct%")
             PkgStep("Done — opens your share sheet", if (progress >= 1f) PkgStepState.Done else PkgStepState.Todo, divider = false)
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Exported locally — nothing leaves this phone until you choose where to send it next.",
-                style = OT.type.footnote,
-                color = c.labelTertiary,
-            )
         }
         Column(
             Modifier
@@ -646,7 +640,7 @@ private fun PkgSendFailed(message: String?, onBack: () -> Unit, onRetry: () -> U
             Text("Couldn't package it", style = OT.type.largeTitle, color = c.labelPrimary, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(8.dp))
             Text(
-                message ?: "Something went wrong composing your tape. Your takes are untouched on this phone — this only affects the combined file.",
+                message ?: "Something went wrong composing your tape. Your recorded takes are safe — this only affects the export file.",
                 style = OT.type.callout,
                 color = c.labelSecondary,
             )

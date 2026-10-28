@@ -446,22 +446,7 @@ private fun PracticeSourceStep(
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            PracticeLockNote()
         }
-    }
-}
-
-@Composable
-private fun PracticeLockNote() {
-    val c = OT.colors
-    Row(
-        Modifier.clip(CircleShape).background(c.fillQuiet).padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Icon(Icons.Filled.Lock, null, tint = c.labelSecondary, modifier = Modifier.size(12.dp))
-        Text("Practice pieces and takes stay on this phone", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
     }
 }
 
@@ -552,8 +537,6 @@ private fun PracticeSceneStep(
         SectionLabel("Partner cue reader")
         PracticeReaderOption("Automated Partner (TTS)", "Speech synthesizer speaks partner lines on cue", reader == "Automated Partner (TTS)", showDivider = true) { reader = "Automated Partner (TTS)" }
         PracticeReaderOption("Nobody", "I’ll hear the cues in my head", reader == "Nobody", showDivider = false) { reader = "Nobody" }
-        Spacer(Modifier.height(12.dp))
-        PracticeLockNote()
     }
 }
 

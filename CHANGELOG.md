@@ -128,3 +128,5 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - Added tap-to-peek word unmasking in `MaskAndReveal` and visual audio gap countdown progress in `AudioGap`.
 - **Director Voice Triggers:**
   - Refined director speech triggers in `ShootFlowScreen` and hardened error recovery across all speech recognizers.
+- **Copy Cleanup (Privacy & Local Storage Disclaimers):**
+  - Purged repetitive, nagging "stays on this phone", "nothing leaves this phone", and "on this phone" disclaimers across Practice, Profile, Auditions, Shoot, Takes, and Package flows. Replaced with concise, professional UI labels.

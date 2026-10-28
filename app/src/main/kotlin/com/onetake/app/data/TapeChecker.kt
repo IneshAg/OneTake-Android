@@ -34,7 +34,7 @@ object TapeChecker {
 
         if (audition.pieces.any { it.kind == PieceKind.Headshot }) {
             val ok = headshots.values.any { exists(it) }
-            checks += Check("Headshot", ok, if (ok) "${headshots.size} of 3 angles on this phone" else "No headshot saved yet")
+            checks += Check("Headshot", ok, if (ok) "${headshots.size} of 3 angles saved" else "No headshot saved yet")
         }
         if (wantsSlate) {
             val ok = exists(audition.slateVideoUri)

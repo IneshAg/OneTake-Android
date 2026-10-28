@@ -502,7 +502,7 @@ private fun DetailDeleteSheet(project: String, onDelete: () -> Unit, onDismiss: 
                 ) {
                     Text("Delete “$project”?", style = OT.type.headline, color = c.labelPrimary, textAlign = TextAlign.Center)
                     Text(
-                        "Its slate, reader track and any takes are removed from this phone. Your headshots stay in Profile.",
+                        "Its slate, reader track, and recorded takes will be deleted. Your headshots remain in Profile.",
                         style = OT.type.footnote,
                         color = c.labelTertiary,
                         textAlign = TextAlign.Center,
@@ -987,7 +987,7 @@ private fun DetailRevisedSidesSheet(a: Audition, onDismiss: () -> Unit) {
                 }
                 DetailTextField(text, { text = it; problem = null }, "Or paste the new sides here", minHeight = 160)
                 when {
-                    reading -> Text("Reading on this phone…", style = OT.type.footnote, color = c.labelSecondary)
+                    reading -> Text("Reading sides…", style = OT.type.footnote, color = c.labelSecondary)
                     problem != null -> Text(problem.orEmpty(), style = OT.type.footnote, color = c.danger)
                     text.isNotBlank() && scenes.isEmpty() ->
                         Text("No character lines found yet — sides need a name on its own line, or NAME: line.", style = OT.type.footnote, color = c.labelTertiary)

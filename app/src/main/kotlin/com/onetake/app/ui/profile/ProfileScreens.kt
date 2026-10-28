@@ -417,11 +417,11 @@ fun PrivacyScreen() {
     PushedScreen {
         LargeTitle(
             "Privacy & data",
-            subtitle = "Your script, recordings and headshots stay on this phone until you choose to send a tape.",
+            subtitle = "Manage your scripts, recordings, and app storage.",
         )
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            SectionLabel("On this phone", Modifier.weight(1f))
+            SectionLabel("Storage", Modifier.weight(1f))
             Text(totalSizeText, style = OT.type.headline, color = c.labelPrimary)
         }
         Spacer(Modifier.height(8.dp))
@@ -517,7 +517,7 @@ fun NotificationSettingsScreen() {
     }
     PushedScreen(title = "Notifications") {
         Text(
-            "Reminders come from this phone — nothing is sent to a server.",
+            "Reminders alert you before upcoming audition deadlines.",
             style = OT.type.callout,
             color = c.labelSecondary,
         )
@@ -638,7 +638,7 @@ fun HeadshotsScreen(auditionId: String? = null) {
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Front and both profiles are saved on this phone and attached to $project.",
+                    "Front and both profiles are ready and attached to $project.",
                     style = OT.type.callout,
                     color = c.labelSecondary,
                 )

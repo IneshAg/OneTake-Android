@@ -56,6 +56,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -783,7 +784,11 @@ private class RunSpeechFollower(private val context: Context) {
                 return
             }
             handler.removeCallbacks(relisten)
-            if (wanted) handler.postDelayed(relisten, 300)
+            if (wanted) {
+                runCatching { recognizer?.destroy() }
+                recognizer = null
+                handler.postDelayed(relisten, 300)
+            }
         }
         override fun onResults(results: Bundle?) {
             base += count(results)
@@ -841,6 +846,7 @@ private fun prepRunText(
     mode: PrepLineMode,
     level: Int,
     spoken: Int,
+    revealedWords: Set<Int> = emptySet(),
     accent: Color,
     rest: Color,
 ): AnnotatedString = buildAnnotatedString {
@@ -858,10 +864,14 @@ private fun prepRunText(
         } else if (effective == PrepLineMode.Full) {
             withStyle(SpanStyle(color = rest)) { append(w + sep) }
         } else if (effective == PrepLineMode.FirstLetters) {
-            withStyle(SpanStyle(color = rest)) { append(prepFirstLetterWord(w) + sep) }
+            val token = if (i in revealedWords) w else prepFirstLetterWord(w)
+            val color = if (i in revealedWords) accent else rest
+            withStyle(SpanStyle(color = color)) { append(token + sep) }
         } else if (effective == PrepLineMode.MaskAndReveal) {
-            val masked = if (i % 2 == 0) "—" else w
-            withStyle(SpanStyle(color = rest)) { append(masked + sep) }
+            val isRevealed = i in revealedWords
+            val masked = if (isRevealed) w else if (i % 2 == 0) "—" else w
+            val color = if (isRevealed) accent else rest
+            withStyle(SpanStyle(color = color)) { append(masked + sep) }
         } else if (effective == PrepLineMode.AudioGap) {
             withStyle(SpanStyle(color = rest)) { append(w + sep) }
         } else if (!hiddenAppended) {
@@ -908,6 +918,13 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     var endedAt by remember { mutableLongStateOf(0L) }
     var showPrompter by remember { mutableStateOf(false) }
 
+    val safeIndex = index.coerceIn(0, lines.size - 1)
+    val line = lines[safeIndex]
+
+    var revealedIndices by remember(safeIndex) { mutableStateOf(setOf<Int>()) }
+    var gapRemainingMs by remember(safeIndex) { mutableLongStateOf(0L) }
+    var gapTotalMs by remember(safeIndex) { mutableLongStateOf(0L) }
+
     var micGranted by remember { mutableStateOf(prepHasMic(context)) }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { micGranted = it }
     val follower = remember { RunSpeechFollower(context.applicationContext) }
@@ -919,11 +936,9 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     }
     val speechOn = PrepPrefs.followVoice && follower.available && micGranted
 
-    val safeIndex = index.coerceIn(0, lines.size - 1)
-    val line = lines[safeIndex]
-
     fun advance() {
         level = 0
+        revealedIndices = emptySet()
         if (index + 1 < lines.size) {
             index += 1
         } else {
@@ -941,6 +956,9 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         tts.stop()
         index = from
         level = 0
+        revealedIndices = emptySet()
+        gapTotalMs = 0L
+        gapRemainingMs = 0L
         finished = false
         needed.clear()
         startedAt = System.currentTimeMillis()
@@ -969,7 +987,14 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         } else if (mode == PrepLineMode.AudioGap) {
             val words = prepWords(current.text).size
             val gapMs = LineLearningMode.calculateAudioGapMillis(words)
-            delay(gapMs)
+            gapTotalMs = gapMs
+            gapRemainingMs = gapMs
+            val started = System.currentTimeMillis()
+            while (System.currentTimeMillis() - started < gapMs && !finished) {
+                gapRemainingMs = (gapMs - (System.currentTimeMillis() - started)).coerceAtLeast(0L)
+                delay(50L)
+            }
+            gapRemainingMs = 0L
             advance()
         } else if (speechOn) {
             follower.start()
@@ -1073,21 +1098,64 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
                 val size = listOf(24, 30, 36)[PrepPrefs.textSize.coerceIn(0, 2)]
                 val runStyle = TextStyle(fontSize = size.sp, lineHeight = (size * 1.22f).sp, fontWeight = FontWeight.Bold)
                 if (line.isMine) {
-                    Text(
-                        prepRunText(
-                            text = line.text,
-                            mode = mode,
-                            level = level,
-                            spoken = if (speechOn) spoken else 0,
-                            accent = c.accent,
-                            rest = if (speechOn || mode != PrepLineMode.Full) c.labelTertiary else c.labelPrimary,
-                        ),
-                        style = runStyle,
-                    )
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = mode == PrepLineMode.MaskAndReveal || mode == PrepLineMode.FirstLetters) {
+                                val words = prepWords(line.text)
+                                val nextToReveal = words.indices.firstOrNull { it !in revealedIndices && (mode != PrepLineMode.MaskAndReveal || it % 2 == 0) }
+                                if (nextToReveal != null) {
+                                    revealedIndices = revealedIndices + nextToReveal
+                                    haptics.tick()
+                                }
+                            }
+                    ) {
+                        Text(
+                            prepRunText(
+                                text = line.text,
+                                mode = mode,
+                                level = level,
+                                spoken = if (speechOn) spoken else 0,
+                                revealedWords = revealedIndices,
+                                accent = c.accent,
+                                rest = if (speechOn || mode != PrepLineMode.Full) c.labelTertiary else c.labelPrimary,
+                            ),
+                            style = runStyle,
+                        )
+                    }
+                    if (mode == PrepLineMode.MaskAndReveal && line.isMine) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Tap line to peek masked words", style = OT.type.caption, color = c.accent)
+                    }
                 } else {
                     Text(line.text, style = runStyle, color = c.labelPrimary)
                 }
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(18.dp))
+
+                if (line.isMine && mode == PrepLineMode.AudioGap && gapTotalMs > 0) {
+                    val progress = 1f - (gapRemainingMs.toFloat() / gapTotalMs.toFloat()).coerceIn(0f, 1f)
+                    val remainingSecs = ((gapRemainingMs + 999) / 1000).toInt()
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(c.surfaceCard)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Delivery window", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
+                            Text("${remainingSecs}s remaining", style = OT.type.caption.copy(fontWeight = FontWeight.Bold), color = c.labelPrimary)
+                        }
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                            color = c.accent,
+                            trackColor = c.fillQuiet,
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
+                }
 
                 val hint = if (line.isMine) {
                     when {

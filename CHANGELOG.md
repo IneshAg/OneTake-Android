@@ -111,3 +111,20 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - **Home Screen Widget:** Added "Next audition" Android app widget displaying soonest due auditions.
   - **Sides & Notice Sharing:** Integrated Android `Share → OneTake` for receiving scripts and casting notices directly from Gmail, WhatsApp, and browser.
   - **Audition Management:** Added take trimming, multi-scene reader recording, callback creation, and local deadline reminder alarms.
+
+---
+
+### [Branch: `main`] — October 2026 (Live Dynamic Headshot Framing, Hands-Free Voice Capture, and Core Cleanups)
+
+- **Headshot Dynamic Framing & Hands-Free Capture:**
+  - Implemented real-time CameraX `ImageAnalysis` with ML Kit `FaceDetection` and Y-plane luma processing in `HeadshotFramingEngine`.
+  - Replaced misleading static "Hold still — you're centred" default with honest, live dynamic guidance ("Align your face in the oval", "Move closer", "Step back", "Raise camera", "Lower camera", "Move left", "Move right", "Face camera directly", "Keep head level", "Hold still — you’re centred").
+  - Added robust CameraX surface combination fallback for legacy/limited hardware devices, ensuring `ImageAnalysis` runs reliably during framing and swaps `ImageCapture` during high-res shutter snaps.
+  - Implemented face-centered 4:5 aspect ratio cropping with golden ratio headroom.
+  - Fixed hands-free "Say Now" speech recognition: bound to Activity context, added live permission change reactivity, decoupled capture closures via `rememberUpdatedState`, and added clean recognizer teardown/recreation on speech engine errors.
+- **Zero-Hardcoded Script Integrity:**
+  - Purged hardcoded audition dialogue and fake placeholder scenes across models and screens (`Models.kt`, `AuditionDetailScreen.kt`, `PracticeScreens.kt`).
+- **Interactive Line Learning:**
+  - Added tap-to-peek word unmasking in `MaskAndReveal` and visual audio gap countdown progress in `AudioGap`.
+- **Director Voice Triggers:**
+  - Refined director speech triggers in `ShootFlowScreen` and hardened error recovery across all speech recognizers.

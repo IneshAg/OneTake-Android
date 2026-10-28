@@ -46,13 +46,12 @@ data class ScriptScene(
     val estimatedSeconds: Int,
 ) {
     companion object {
-        /** Stand-in scene for an audition added without sides, so Prepare/Shoot have something
-         *  to show until real pages are added. One definition instead of four copies. */
-        fun placeholder(number: Int, role: String) = ScriptScene(
+        /** Stand-in scene for an audition added without sides until real pages are added. */
+        fun placeholder(number: Int, role: String = "Role") = ScriptScene(
             number = number,
             title = "Scene $number",
-            heading = "INT. AUDITION ROOM - DAY",
-            lines = listOf(ScriptLine(character = role.ifBlank { "ME" }.uppercase(), text = "Audition scene lines.", isMine = true)),
+            heading = "SCENE $number",
+            lines = emptyList(),
             estimatedSeconds = 60,
         )
     }

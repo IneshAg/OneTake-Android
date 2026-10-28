@@ -8,9 +8,12 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.FileOutputOptions
@@ -51,7 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -61,6 +64,8 @@ import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.theme.OT
 import kotlinx.coroutines.delay
 import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * CameraX capture pipeline — Android twin of iOS `CameraController` (AVFoundation).
@@ -81,11 +86,52 @@ class CameraController(private val context: Context) {
 
     private val imageCapture = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
     private var videoCapture: VideoCapture<Recorder>? = null
+    private var imageAnalysis: ImageAnalysis? = null
+    private var analyzerExecutor: ExecutorService? = null
     private var recording: Recording? = null
     private var provider: ProcessCameraProvider? = null
+
+    private var boundOwner: LifecycleOwner? = null
+    private var boundPreviewView: PreviewView? = null
+    private var boundSelector: CameraSelector? = null
+    private var boundFront: Boolean = true
+    private var boundPhotoOnly: Boolean = false
+
     /** Who gets the finished file of the recording being stopped. Held here, not in a composable
      *  effect, so the file still lands if the screen closes before CameraX finalizes it. */
     private var onFinalized: ((Uri?) -> Unit)? = null
+
+    fun setAnalyzer(analyzer: ImageAnalysis.Analyzer) {
+        val executor = analyzerExecutor ?: Executors.newSingleThreadExecutor().also { analyzerExecutor = it }
+        val selector = ResolutionSelector.Builder()
+            .setResolutionStrategy(
+                ResolutionStrategy(
+                    android.util.Size(480, 640),
+                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                )
+            )
+            .build()
+        val analysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setResolutionSelector(selector)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+            .build()
+        analysis.setAnalyzer(executor, analyzer)
+        imageAnalysis = analysis
+        rebind()
+    }
+
+    fun clearAnalyzer() {
+        imageAnalysis?.clearAnalyzer()
+        imageAnalysis = null
+        rebind()
+    }
+
+    private fun rebind() {
+        val o = boundOwner ?: return
+        val pv = boundPreviewView ?: return
+        bind(o, pv, boundFront, boundPhotoOnly)
+    }
 
     private fun createVideoCapture(): VideoCapture<Recorder> {
         // 1080p is what self-tape sites ask for (and what the destinations' specs say). 4K first
@@ -99,6 +145,11 @@ class CameraController(private val context: Context) {
     }
 
     internal fun bind(owner: LifecycleOwner, previewView: PreviewView, front: Boolean, photoOnly: Boolean = false) {
+        boundOwner = owner
+        boundPreviewView = previewView
+        boundFront = front
+        boundPhotoOnly = photoOnly
+
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             runCatching {
@@ -114,10 +165,22 @@ class CameraController(private val context: Context) {
                     p.hasCamera(backSelector) -> backSelector
                     else -> if (front) frontSelector else backSelector
                 }
+                boundSelector = selector
                 p.unbindAll()
                 if (photoOnly) {
                     videoCapture = null
-                    p.bindToLifecycle(owner, selector, preview, imageCapture)
+                    val analysis = imageAnalysis
+                    if (analysis != null) {
+                        runCatching {
+                            p.bindToLifecycle(owner, selector, preview, imageCapture, analysis)
+                        }.recoverCatching {
+                            p.bindToLifecycle(owner, selector, preview, analysis)
+                        }.recoverCatching {
+                            p.bindToLifecycle(owner, selector, preview, imageCapture)
+                        }.getOrThrow()
+                    } else {
+                        p.bindToLifecycle(owner, selector, preview, imageCapture)
+                    }
                 } else {
                     val vc = runCatching { createVideoCapture() }.getOrNull()
                     videoCapture = vc
@@ -216,23 +279,67 @@ class CameraController(private val context: Context) {
         val dir = File(context.filesDir, "headshots").apply { mkdirs() }
         val file = File(dir, "headshot-${System.currentTimeMillis()}.jpg")
         val p = provider
+        val owner = boundOwner
+        val selector = boundSelector
         if (p == null || state != State.Ready) {
             // Camera not ready or unavailable: report failure rather than saving a placeholder
             // image as if it were the actor's real headshot.
             onResult(null)
             return
         }
-        imageCapture.takePicture(
-            ImageCapture.OutputFileOptions.Builder(file).build(),
-            ContextCompat.getMainExecutor(context),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) = onResult(output.savedUri ?: Uri.fromFile(file))
-                override fun onError(exception: ImageCaptureException) {
-                    android.util.Log.e("CameraController", "capturePhoto failed", exception)
-                    onResult(null)
-                }
-            },
-        )
+
+        val takeAction = {
+            imageCapture.takePicture(
+                ImageCapture.OutputFileOptions.Builder(file).build(),
+                ContextCompat.getMainExecutor(context),
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(output: ImageCapture.OutputFileResults) = onResult(output.savedUri ?: Uri.fromFile(file))
+                    override fun onError(exception: ImageCaptureException) {
+                        android.util.Log.e("CameraController", "capturePhoto failed", exception)
+                        onResult(null)
+                    }
+                },
+            )
+        }
+
+        if (p.isBound(imageCapture)) {
+            takeAction()
+        } else if (owner != null && selector != null) {
+            // On devices with limited stream combinations where Preview + Analysis was bound,
+            // temporarily swap Analysis with ImageCapture to take the high-res shot, then restore.
+            val analysis = imageAnalysis
+            runCatching {
+                if (analysis != null) p.unbind(analysis)
+                p.bindToLifecycle(owner, selector, imageCapture)
+                imageCapture.takePicture(
+                    ImageCapture.OutputFileOptions.Builder(file).build(),
+                    ContextCompat.getMainExecutor(context),
+                    object : ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                            runCatching {
+                                p.unbind(imageCapture)
+                                if (analysis != null) p.bindToLifecycle(owner, selector, analysis)
+                            }
+                            onResult(output.savedUri ?: Uri.fromFile(file))
+                        }
+                        override fun onError(exception: ImageCaptureException) {
+                            android.util.Log.e("CameraController", "capturePhoto swap failed", exception)
+                            runCatching {
+                                p.unbind(imageCapture)
+                                if (analysis != null) p.bindToLifecycle(owner, selector, analysis)
+                            }
+                            onResult(null)
+                        }
+                    },
+                )
+            }.onFailure { e ->
+                android.util.Log.e("CameraController", "Failed to bind imageCapture for photo", e)
+                runCatching { if (analysis != null) p.bindToLifecycle(owner, selector, analysis) }
+                onResult(null)
+            }
+        } else {
+            onResult(null)
+        }
     }
 
     internal suspend fun tick() {
@@ -244,6 +351,10 @@ class CameraController(private val context: Context) {
 
     fun release() {
         recording?.stop()
+        imageAnalysis?.clearAnalyzer()
+        imageAnalysis = null
+        runCatching { analyzerExecutor?.shutdown() }
+        analyzerExecutor = null
         provider?.unbindAll()
     }
 

@@ -693,7 +693,7 @@ private tailrec fun Context.findShootActivity(): Activity? = when (this) {
 
 // MARK: - Voice Commander (Hands-free STT for "Record" / "Action" & "Cut" / "Stop")
 
-private class ShootVoiceCommander(
+internal class ShootVoiceCommander(
     private val context: Context,
     private val onRecordTrigger: () -> Unit,
     private val onCutTrigger: () -> Unit,
@@ -712,8 +712,13 @@ private class ShootVoiceCommander(
 
     // A command only counts when it's the whole utterance — a word like "done" or "start" inside a
     // line of dialogue (or the slate) must not stop or start a take.
-    private val recordRegex = Regex("""(?i)^\s*(record|action|roll|rolling)[\s.!]*$""")
-    private val stopRegex = Regex("""(?i)^\s*(cut|stop)[\s.!]*$""")
+    private val recordRegex = RECORD_REGEX
+    private val stopRegex = STOP_REGEX
+
+    companion object {
+        val RECORD_REGEX = Regex("""(?i)^\s*(record|action|roll\s*camera|rolling|roll|start(\s*recording)?)[\s.!]*$""")
+        val STOP_REGEX = Regex("""(?i)^\s*(cut|and\s*cut|scene\s*cut|stop(\s*recording)?|cut\s*take|that'?s\s*a\s*wrap)[\s.!]*$""")
+    }
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
@@ -731,6 +736,8 @@ private class ShootVoiceCommander(
             }
             handler.removeCallbacks(relisten)
             if (wanted) {
+                runCatching { recognizer?.destroy() }
+                recognizer = null
                 val delayMs = if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) 150L else 600L
                 handler.postDelayed(relisten, delayMs)
             }

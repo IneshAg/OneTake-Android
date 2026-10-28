@@ -91,4 +91,22 @@ class ShootControlTest {
         val sequenceFive = (timerFive downTo 1).toList()
         assertEquals(listOf(5, 4, 3, 2, 1), sequenceFive)
     }
+
+    @Test
+    fun testShootVoiceCommanderRegexes() {
+        // Record triggers
+        assertTrue(ShootVoiceCommander.RECORD_REGEX.containsMatchIn("Action"))
+        assertTrue(ShootVoiceCommander.RECORD_REGEX.containsMatchIn("action!"))
+        assertTrue(ShootVoiceCommander.RECORD_REGEX.containsMatchIn("roll camera"))
+        assertTrue(ShootVoiceCommander.RECORD_REGEX.containsMatchIn("Start recording"))
+        assertFalse(ShootVoiceCommander.RECORD_REGEX.containsMatchIn("I will take action tomorrow"))
+
+        // Stop triggers
+        assertTrue(ShootVoiceCommander.STOP_REGEX.containsMatchIn("cut"))
+        assertTrue(ShootVoiceCommander.STOP_REGEX.containsMatchIn("Cut!"))
+        assertTrue(ShootVoiceCommander.STOP_REGEX.containsMatchIn("and cut"))
+        assertTrue(ShootVoiceCommander.STOP_REGEX.containsMatchIn("Stop recording"))
+        assertTrue(ShootVoiceCommander.STOP_REGEX.containsMatchIn("That's a wrap"))
+        assertFalse(ShootVoiceCommander.STOP_REGEX.containsMatchIn("Don't cut me off while I'm speaking"))
+    }
 }

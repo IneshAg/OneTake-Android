@@ -143,24 +143,18 @@ fun PracticeScreen(
         // 2. Compact 2x2 Drill Suite (Option 1) - ALWAYS visible on practice tab
         CompactDrillGrid(
             onSelectMode = { mode ->
+                when (mode) {
+                    LineLearningMode.FIRST_LETTER -> PrepPrefs.mode = PrepLineMode.FirstLetters
+                    LineLearningMode.MASK_AND_REVEAL -> PrepPrefs.mode = PrepLineMode.MaskAndReveal
+                    LineLearningMode.AUDIO_GAP -> PrepPrefs.mode = PrepLineMode.AudioGap
+                    LineLearningMode.HANDS_FREE_WALK -> Unit
+                }
                 val targetId = store.practice.firstOrNull()?.id ?: store.auditions.firstOrNull()?.id
                 if (targetId != null) {
-                    when (mode) {
-                        LineLearningMode.FIRST_LETTER -> {
-                            PrepPrefs.mode = PrepLineMode.FirstLetters
-                            nav.push(Route.RunLines(targetId, 0))
-                        }
-                        LineLearningMode.MASK_AND_REVEAL -> {
-                            PrepPrefs.mode = PrepLineMode.MaskAndReveal
-                            nav.push(Route.RunLines(targetId, 0))
-                        }
-                        LineLearningMode.AUDIO_GAP -> {
-                            PrepPrefs.mode = PrepLineMode.AudioGap
-                            nav.push(Route.RunLines(targetId, 0))
-                        }
-                        LineLearningMode.HANDS_FREE_WALK -> {
-                            nav.push(Route.AudioWalk(targetId, 0))
-                        }
+                    if (mode == LineLearningMode.HANDS_FREE_WALK) {
+                        nav.push(Route.AudioWalk(targetId, 0))
+                    } else {
+                        nav.push(Route.RunLines(targetId, 0))
                     }
                 } else {
                     nav.push(Route.PracticeSetup)
@@ -361,7 +355,7 @@ private fun PracticeSourceStep(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 240.dp),
                     decorationBox = { innerTextField ->
                         if (textInput.isBlank()) {
-                            Text("Paste dialogue, scan pages, or import sides PDF...\nExample:\nSAM: Hello\nNINA: Hi", style = OT.type.body, color = c.labelTertiary)
+                            Text("Paste dialogue, scan pages, or import sides PDF…", style = OT.type.body, color = c.labelTertiary)
                         }
                         innerTextField()
                     }

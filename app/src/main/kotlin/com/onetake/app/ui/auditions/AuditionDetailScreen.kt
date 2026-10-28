@@ -378,17 +378,19 @@ private fun DetailUpNext(a: Audition, nav: Navigator) {
                     val scene = a.scenes.getOrNull(sceneIndex) ?: a.scenes.firstOrNull()
                     val sceneNum = scene?.number ?: (sceneIndex + 1)
                     val duration = scene?.estimatedSeconds ?: 60
-                    val mine = scene?.lines?.count { it.isMine } ?: 1
+                    val mine = scene?.lines?.count { it.isMine } ?: 0
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SectionLabel("Up next · scene $sceneNum of ${maxOf(1, a.scenes.size)}", Modifier.weight(1f))
                         Text("≈ ${formatDuration(duration)} · $mine lines", style = OT.type.footnote, color = c.labelTertiary)
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         DetailCardTitle(scene?.let { detailSceneName(it, next) } ?: next.title)
-                        Text(scene?.heading ?: "INT. AUDITION ROOM - DAY", style = OT.type.caption, color = c.labelTertiary)
+                        Text(scene?.heading ?: "Scene $sceneNum", style = OT.type.caption, color = c.labelTertiary)
                     }
-                    val quote = scene?.lines?.firstOrNull { it.isMine }?.text ?: "Audition scene lines."
-                    DetailQuoteLine(quote)
+                    val quote = scene?.lines?.firstOrNull { it.isMine }?.text
+                    if (quote != null) {
+                        DetailQuoteLine(quote)
+                    }
                     PrimaryButton("Prepare scene $sceneNum", onClick = { nav.push(Route.Prepare(a.id, sceneIndex)) })
                 }
                 else -> {

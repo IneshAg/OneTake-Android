@@ -25,4 +25,26 @@ class LineLearningModeTest {
         val masked = LineLearningMode.maskDialogue(dialogue, maskRatio = 1.0f)
         assertEquals("— — — — — — —", masked)
     }
+
+    @Test
+    fun testFormatMaskedWithReveals() {
+        val dialogue = "I never made that promise"
+        val pairs = LineLearningMode.formatMaskedWithReveals(dialogue, setOf(0))
+        // index 0 was revealed ("I", true)
+        assertEquals("I", pairs[0].first)
+        assertEquals(true, pairs[0].second)
+        // index 1 was odd, so unmasked ("never", false)
+        assertEquals("never", pairs[1].first)
+        assertEquals(false, pairs[1].second)
+        // index 2 was even and unrevealed, so masked ("—", false)
+        assertEquals("—", pairs[2].first)
+        assertEquals(false, pairs[2].second)
+    }
+
+    @Test
+    fun testAudioGapCalculation() {
+        val gapMs = LineLearningMode.calculateAudioGapMillis(wordCount = 10)
+        // 10 * 350 + 1500 = 5000ms
+        assertEquals(5000L, gapMs)
+    }
 }

@@ -71,7 +71,9 @@ fun AudioWalkScreen(
 
     val audition = store.audition(id)
     val practicePiece = if (audition == null) store.practice.firstOrNull { it.id == id } else null
-    val scene = audition?.scenes?.getOrNull(sceneIndex) ?: practicePiece?.scene
+    val scene = audition?.scenes?.getOrNull(sceneIndex)
+        ?: audition?.scenes?.firstOrNull()
+        ?: practicePiece?.scene
 
     if (scene == null || scene.lines.isEmpty()) {
         Column(

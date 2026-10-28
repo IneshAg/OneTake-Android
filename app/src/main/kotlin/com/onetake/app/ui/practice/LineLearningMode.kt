@@ -57,6 +57,23 @@ enum class LineLearningMode(
         }
 
         /**
+         * Masks dialogue with progressive word shielding and tap-to-reveal tokens.
+         */
+        fun formatMaskedWithReveals(text: String, revealedWordIndices: Set<Int>): List<Pair<String, Boolean>> {
+            if (text.isBlank()) return emptyList()
+            val words = text.trim().split(Regex("\\s+"))
+            return words.mapIndexed { index, word ->
+                if (index in revealedWordIndices) {
+                    word to true // Revealed word
+                } else if (index % 2 == 0) {
+                    "—" to false // Masked token
+                } else {
+                    word to false // Unmasked token
+                }
+            }
+        }
+
+        /**
          * Computes the pause duration in milliseconds allocated for the actor to deliver their line.
          * Default: ~350ms per word + 1.5s grace time.
          */

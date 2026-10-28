@@ -1,12 +1,25 @@
 package com.onetake.app.ui.profile
 
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.core.content.ContextCompat
-import android.os.Build
-import android.content.pm.PackageManager
 import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.core.content.ContextCompat
+import com.onetake.app.ui.camera.HeadshotFramingEngine
 import com.onetake.app.ui.system.ReaderFiles
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -45,6 +58,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -53,14 +68,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -757,9 +775,95 @@ fun HeadshotFlowScreen() {
     val camera = rememberCameraController()
     val context = LocalContext.current
     val haptics = rememberHaptics()
+    val scope = rememberCoroutineScope()
     var angle by rememberSaveable { mutableStateOf(HeadshotAngle.Front) }
     var front by remember { mutableStateOf(true) }
     var capturing by remember { mutableStateOf(false) }
+
+    var guidance by remember { mutableStateOf<HeadshotFramingEngine.FramingGuidance?>(null) }
+
+    // Map UI angle to Engine angle
+    val engineAngle = when (angle) {
+        HeadshotAngle.Front -> HeadshotFramingEngine.HeadshotAngle.Front
+        HeadshotAngle.Left -> HeadshotFramingEngine.HeadshotAngle.Left
+        HeadshotAngle.Right -> HeadshotFramingEngine.HeadshotAngle.Right
+    }
+
+    // Real-time camera frame analyzer using ML Kit Face Detection and Y-plane luma
+    val analyzer = remember {
+        HeadshotFramingEngine.LiveAnalyzer(
+            targetAngle = engineAngle,
+            isFrontCamera = front,
+            onGuidanceUpdate = { g -> guidance = g },
+        )
+    }
+
+    LaunchedEffect(engineAngle, front) {
+        analyzer.targetAngle = engineAngle
+        analyzer.isFrontCamera = front
+    }
+
+    LaunchedEffect(analyzer) {
+        camera.setAnalyzer(analyzer)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { camera.clearAnalyzer() }
+    }
+
+    // Voice recognition permission request if needed
+    var micPermissionGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        micPermissionGranted = granted
+    }
+    LaunchedEffect(Unit) {
+        if (!micPermissionGranted) {
+            micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    fun takeHeadshot() {
+        if (capturing) return
+        capturing = true
+        haptics.impact()
+        camera.capturePhoto { rawUri ->
+            if (rawUri == null) {
+                capturing = false
+                Toast.makeText(context, "Couldn't take that photo. Try again.", Toast.LENGTH_SHORT).show()
+                return@capturePhoto
+            }
+            scope.launch {
+                val croppedUri = HeadshotFramingEngine.processAndCropHeadshot(context, rawUri) ?: rawUri
+                capturing = false
+                store.saveHeadshot(angle.name.lowercase(), croppedUri.toString())
+                store.auditions.forEach { a ->
+                    if (a.pieces.any { it.kind == PieceKind.Headshot && !it.isDone }) {
+                        store.markDone(PieceKind.Headshot, a.id)
+                    }
+                }
+                val next = HeadshotAngle.entries.getOrNull(angle.ordinal + 1)
+                if (next != null) {
+                    haptics.tick()
+                    guidance = null
+                    angle = next
+                } else {
+                    haptics.success()
+                    nav.closeCamera()
+                }
+            }
+        }
+    }
+
+    // Hands-free "Now" voice commander
+    val voiceCommander = rememberHeadshotVoiceCommander(
+        context = context,
+        enabled = !capturing && micPermissionGranted,
+        onCaptureTrigger = { takeHeadshot() },
+    )
 
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
         CameraBackground(camera, Modifier.fillMaxSize(), front = front, photoOnly = true)
@@ -777,15 +881,22 @@ fun HeadshotFlowScreen() {
             }
 
             // Face oval, centred in the space between the top bar and the controls.
+            // Turns accent/green when the actor is centered, at the right distance, with good angle & lighting.
+            val isReady = guidance?.isCenteredAndReady == true
+            val targetOvalColor = if (isReady) OT.colors.accent else OT.camera.label.copy(alpha = 0.85f)
+            val ovalColor by animateColorAsState(targetOvalColor, animationSpec = tween(250), label = "ovalColor")
+
             Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                val ovalColor = OT.camera.label.copy(alpha = 0.85f)
                 Canvas(
                     Modifier
                         .sizeIn(maxWidth = 220.dp, maxHeight = 297.dp)
                         .fillMaxHeight()
                         .aspectRatio(200f / 270f, matchHeightConstraintsFirst = true),
                 ) {
-                    drawOval(color = ovalColor, style = Stroke(width = 1.5.dp.toPx()))
+                    drawOval(
+                        color = ovalColor,
+                        style = Stroke(width = if (isReady) 3.dp.toPx() else 1.5.dp.toPx()),
+                    )
                 }
             }
 
@@ -793,52 +904,49 @@ fun HeadshotFlowScreen() {
                 Modifier.fillMaxWidth().padding(horizontal = OT.dims.gutter),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // Live dynamic guidance headline powered by real-time ML Kit analysis
+                val headlineText = guidance?.headline ?: "Align your face in the oval"
+
                 Text(
-                    if (angle == HeadshotAngle.Front) "Hold still — you’re centred" else "Hold still — that’s your profile",
+                    text = headlineText,
                     style = OT.type.headline.copy(fontWeight = FontWeight.SemiBold),
-                    color = OT.camera.label,
+                    color = if (isReady) OT.colors.accent else OT.camera.label,
                     textAlign = TextAlign.Center,
                 )
                 Spacer(Modifier.height(8.dp))
+
+                // Live dynamic chips for light and angle
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HeadshotChip("Light", "soft and even")
-                    HeadshotChip("Angle", if (angle == HeadshotAngle.Front) "square" else "side on")
+                    HeadshotChip(
+                        title = "Light",
+                        value = guidance?.lightLabel ?: "measuring…",
+                        isGood = guidance?.isLightGood ?: false,
+                    )
+                    HeadshotChip(
+                        title = "Angle",
+                        value = guidance?.angleLabel ?: "aligning…",
+                        isGood = guidance?.isAngleGood ?: false,
+                    )
                 }
                 Spacer(Modifier.height(16.dp))
+
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Box(
                         Modifier
                             .size(78.dp)
-                            .border(4.dp, Color.White, CircleShape)
+                            .border(4.dp, if (isReady) OT.colors.accent else Color.White, CircleShape)
                             .clip(CircleShape)
-                            .clickable(enabled = !capturing, role = Role.Button) {
-                                capturing = true
-                                haptics.impact()
-                                camera.capturePhoto { uri ->
-                                    capturing = false
-                                    if (uri == null) {
-                                        // Nothing was saved: stay on this angle, tick nothing off.
-                                        Toast.makeText(context, "Couldn't take that photo. Try again.", Toast.LENGTH_SHORT).show()
-                                        return@capturePhoto
-                                    }
-                                    store.saveHeadshot(angle.name.lowercase(), uri.toString())
-                                    store.auditions.forEach { a ->
-                                        if (a.pieces.any { it.kind == PieceKind.Headshot && !it.isDone }) {
-                                            store.markDone(PieceKind.Headshot, a.id)
-                                        }
-                                    }
-                                    val next = HeadshotAngle.entries.getOrNull(angle.ordinal + 1)
-                                    if (next != null) {
-                                        angle = next
-                                    } else {
-                                        haptics.success()
-                                        nav.closeCamera()
-                                    }
-                                }
-                            }
+                            .clickable(enabled = !capturing, role = Role.Button) { takeHeadshot() }
                             .semantics { contentDescription = "Take photo" },
                         contentAlignment = Alignment.Center,
-                    ) { Box(Modifier.size(64.dp).clip(CircleShape).background(Color.White)) }
+                    ) {
+                        Box(
+                            Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(if (isReady) OT.colors.accent else Color.White),
+                        )
+                    }
                     CircleIconButton(
                         Icons.Filled.Cameraswitch,
                         "Switch camera",
@@ -848,7 +956,26 @@ fun HeadshotFlowScreen() {
                     )
                 }
                 Spacer(Modifier.height(6.dp))
-                Text("Tap, or say “Now”", style = OT.type.footnote, color = OT.camera.label2)
+
+                // Voice status badge showing "Listening: say Now" or heard feedback
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (voiceCommander.isListening) {
+                        Icon(
+                            Icons.Filled.Mic,
+                            contentDescription = "Voice listening",
+                            tint = OT.colors.accent,
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                    Text(
+                        text = voiceCommander.lastHeard ?: "Tap, or say “Now”",
+                        style = OT.type.footnote,
+                        color = if (voiceCommander.lastHeard != null) OT.colors.accent else OT.camera.label2,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -884,14 +1011,144 @@ private fun HeadshotAnglePicker(selected: HeadshotAngle, onSelect: (HeadshotAngl
 }
 
 @Composable
-private fun HeadshotChip(title: String, value: String) {
+private fun HeadshotChip(title: String, value: String, isGood: Boolean = true) {
     Row(
         Modifier.heightIn(min = 30.dp).clip(CircleShape).background(OT.camera.glass).padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Box(Modifier.size(6.dp).clip(CircleShape).background(OT.colors.success))
+        Box(Modifier.size(6.dp).clip(CircleShape).background(if (isGood) OT.colors.success else Color(0xFFFF9F0A)))
         Text(title, style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label)
-        Text(value, style = OT.type.caption, color = OT.camera.label2)
+        Text(value, style = OT.type.caption, color = if (isGood) OT.camera.label2 else Color.White)
     }
+}
+
+/**
+ * Hands-free voice recognition listener for headshot capture. Recognizes "now", "take", "shoot", "cheese", "snap".
+ */
+class HeadshotVoiceCommander(
+    private val context: Context,
+    private val onCaptureTrigger: () -> Unit,
+) {
+    var isListening by mutableStateOf(false)
+        private set
+    var lastHeard by mutableStateOf<String?>(null)
+        private set
+
+    private var recognizer: SpeechRecognizer? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var wanted = false
+
+    private val captureRegex = Regex("""(?i)\b(now|take|shoot|capture|cheese|ready|snap)\b""")
+
+    private val relisten = Runnable {
+        if (wanted) listen()
+    }
+
+    private val listener = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {
+            isListening = true
+        }
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onError(error: Int) {
+            isListening = false
+            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                wanted = false
+                return
+            }
+            handler.removeCallbacks(relisten)
+            if (wanted) {
+                runCatching { recognizer?.destroy() }
+                recognizer = null
+                val delayMs = if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) 150L else 500L
+                handler.postDelayed(relisten, delayMs)
+            }
+        }
+        override fun onResults(results: Bundle?) {
+            isListening = false
+            val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+            val matched = matches.firstOrNull { captureRegex.containsMatchIn(it) }
+            if (matched != null) {
+                lastHeard = "Heard: \"$matched\""
+                stop()
+                onCaptureTrigger()
+            } else {
+                handler.removeCallbacks(relisten)
+                if (wanted) handler.postDelayed(relisten, 250L)
+            }
+        }
+        override fun onPartialResults(partialResults: Bundle?) {
+            val partials = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+            val matched = partials.firstOrNull { captureRegex.containsMatchIn(it) }
+            if (matched != null) {
+                lastHeard = "Heard: \"$matched\""
+                stop()
+                onCaptureTrigger()
+            }
+        }
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+    }
+
+    fun start() {
+        if (wanted) return
+        wanted = true
+        lastHeard = null
+        listen()
+    }
+
+    fun stop() {
+        wanted = false
+        isListening = false
+        handler.removeCallbacks(relisten)
+        runCatching { recognizer?.cancel() }
+    }
+
+    private fun listen() {
+        if (!wanted) return
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+        val available = runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)
+        if (!available) return
+
+        val r = recognizer ?: runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
+        if (r == null) return
+        recognizer = r
+        r.setRecognitionListener(listener)
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        }
+        runCatching { r.startListening(intent) }.onFailure {
+            handler.removeCallbacks(relisten)
+            if (wanted) handler.postDelayed(relisten, 500L)
+        }
+    }
+
+    fun destroy() {
+        stop()
+        runCatching { recognizer?.destroy() }
+        recognizer = null
+    }
+}
+
+@Composable
+fun rememberHeadshotVoiceCommander(
+    context: Context,
+    enabled: Boolean,
+    onCaptureTrigger: () -> Unit,
+): HeadshotVoiceCommander {
+    val currentCapture by rememberUpdatedState(onCaptureTrigger)
+    val commander = remember { HeadshotVoiceCommander(context, onCaptureTrigger = { currentCapture() }) }
+    DisposableEffect(enabled) {
+        if (enabled) commander.start() else commander.stop()
+        onDispose { commander.stop() }
+    }
+    DisposableEffect(commander) {
+        onDispose { commander.destroy() }
+    }
+    return commander
 }

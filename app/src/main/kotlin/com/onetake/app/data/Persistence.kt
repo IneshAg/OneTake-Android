@@ -69,7 +69,7 @@ object Persistence {
             isOnboarded = root.optBoolean("isOnboarded", false),
             headshots = root.optJSONObject("headshots")?.let { runCatching { it.toStringMap() }.getOrNull() } ?: emptyMap(),
             slateAtStart = root.optBoolean("slateAtStart", true),
-            readerVolume = root.optString("readerVolume", null) ?: "Quieter",
+            readerVolume = root.optNullableString("readerVolume") ?: "Quieter",
             liquidGlass = root.optBoolean("liquidGlass", true),
             notifyMorning = root.optBoolean("notifyMorning", true),
             notifyTwoHours = root.optBoolean("notifyTwoHours", true),
@@ -174,12 +174,12 @@ object Persistence {
         scenes = optJSONArray("scenes")?.toScriptSceneList() ?: emptyList(),
         destination = runCatching { Destination.valueOf(getString("destination")) }.getOrDefault(Destination.EmailOrLink),
         status = runCatching { AuditionStatus.valueOf(getString("status")) }.getOrDefault(AuditionStatus.Due),
-        sentDate = optString("sentDate", null)?.let { LocalDateTime.parse(it, isoFmt) },
+        sentDate = optNullableString("sentDate")?.let { LocalDateTime.parse(it, isoFmt) },
         headshotAsset = optString("headshotAsset", "headshot"),
-        slateVideoUri = optString("slateVideoUri", null),
-        fullLengthVideoUri = optString("fullLengthVideoUri", null),
-        exportedFileUri = optString("exportedFileUri", null),
-        notes = optString("notes", null).orEmpty(),
+        slateVideoUri = optNullableString("slateVideoUri"),
+        fullLengthVideoUri = optNullableString("fullLengthVideoUri"),
+        exportedFileUri = optNullableString("exportedFileUri"),
+        notes = optNullableString("notes").orEmpty(),
     )
 
     private fun List<Audition>.auditionsToJson() = JSONArray(map { it.toJson() })
@@ -247,8 +247,8 @@ object Persistence {
         recordedAt = LocalDateTime.parse(getString("recordedAt"), isoFmt),
         isCircled = getBoolean("isCircled"),
         notes = optJSONArray("notes")?.toStringList() ?: emptyList(),
-        fileUri = optString("fileUri", null),
-        auditionId = optString("auditionId", null),
+        fileUri = optNullableString("fileUri"),
+        auditionId = optNullableString("auditionId"),
         sceneIndex = if (has("sceneIndex") && !isNull("sceneIndex")) getInt("sceneIndex") else null,
     )
 
@@ -271,7 +271,7 @@ object Persistence {
         character = optString("character", ""),
         scene = optJSONObject("scene")?.toScriptScene(),
         takesRecorded = optInt("takesRecorded", 0),
-        auditionId = optString("auditionId", null),
+        auditionId = optNullableString("auditionId"),
         sceneIndex = if (has("sceneIndex") && !isNull("sceneIndex")) getInt("sceneIndex") else null,
     )
 
@@ -302,6 +302,9 @@ object Persistence {
         return map
     }
 
-    private fun JSONObject.optString(name: String, fallback: String?): String? =
+    private fun JSONObject.optNullableString(name: String): String? =
+        if (has(name) && !isNull(name)) getString(name) else null
+
+    private fun JSONObject.optString(name: String, fallback: String): String =
         if (has(name) && !isNull(name)) getString(name) else fallback
 }

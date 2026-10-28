@@ -1,7 +1,7 @@
 package com.onetake.app.ui.shoot
 
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.Lifecycle
 import androidx.compose.runtime.DisposableEffect

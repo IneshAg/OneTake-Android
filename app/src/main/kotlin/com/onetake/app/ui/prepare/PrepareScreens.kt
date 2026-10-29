@@ -784,10 +784,18 @@ private class RunSpeechFollower(private val context: Context) {
                 return
             }
             handler.removeCallbacks(relisten)
-            if (wanted) {
-                runCatching { recognizer?.destroy() }
+            if (!wanted) return
+
+            if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                runCatching { recognizer?.cancel() }
+                handler.postDelayed(relisten, 30L)
+            } else {
+                runCatching {
+                    recognizer?.cancel()
+                    recognizer?.destroy()
+                }
                 recognizer = null
-                handler.postDelayed(relisten, 300)
+                handler.postDelayed(relisten, 250L)
             }
         }
         override fun onResults(results: Bundle?) {

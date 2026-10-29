@@ -7,13 +7,16 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
+import java.util.Locale
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -831,22 +834,42 @@ internal class ShootVoiceCommander(
     private var recognizer: SpeechRecognizer? = null
     private var wanted = false
     private var isRecordingMode = false
+    private var consecutiveFatalErrors = 0
+    private var lastTriggerTime = 0L
     private val handler = Handler(Looper.getMainLooper())
     private val relisten = Runnable { if (wanted) listen() }
 
-    // A command only counts when it's the whole utterance — a word like "done" or "start" inside a
-    // line of dialogue (or the slate) must not stop or start a take.
-    private val recordRegex = RECORD_REGEX
-    private val stopRegex = STOP_REGEX
-
     companion object {
-        val RECORD_REGEX = Regex("""(?i)^\s*(record|action|roll\s*camera|rolling|roll|start(\s*recording)?)[\s.!]*$""")
-        val STOP_REGEX = Regex("""(?i)^\s*(cut|and\s*cut|scene\s*cut|stop(\s*recording)?|cut\s*take|that'?s\s*a\s*wrap)[\s.!]*$""")
+        val RECORD_REGEX = Regex(
+            """(?i)^\s*(?:(?:and|okay|ok|alright|ready|go(?:\s+for)?|let's|lets|we're|hey)\s+)?(?:record|action|roll\s*camera|camera\s*roll|rolling|camera\s*speed|speed|start(?:\s+recording)?)(?:\s+(?:now|please|camera|mark))?[\s.!]*$"""
+        )
+        val STOP_REGEX = Regex(
+            """(?i)^\s*(?:(?:and|okay|ok|alright|yeah|scene|please)\s+)?(?:cut(?:\s+(?:cut|it|now|please|take|there|that))?|stop(?:\s+recording|\s+take)?|that'?s\s+a\s+wrap|wrap(?:\s+it)?)(?:\s+(?:now|please|mark|take|cut))?[\s.!]*$"""
+        )
+
+        fun matchesCommand(text: String, isRecording: Boolean): Boolean {
+            val trimmed = text.trim()
+            if (trimmed.isEmpty()) return false
+            val regex = if (isRecording) STOP_REGEX else RECORD_REGEX
+
+            if (regex.matches(trimmed) || regex.containsMatchIn(trimmed)) return true
+
+            // Check tail words for noise-prefixed utterances in noisy/crowded rooms
+            val words = trimmed.split(Regex("""\s+"""))
+            if (words.size > 1) {
+                val tail1 = words.takeLast(1).joinToString(" ")
+                val tail2 = words.takeLast(2).joinToString(" ")
+                val tail3 = words.takeLast(3).joinToString(" ")
+                if (regex.matches(tail1) || regex.matches(tail2) || regex.matches(tail3)) return true
+            }
+            return false
+        }
     }
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             isListening = true
+            consecutiveFatalErrors = 0
         }
         override fun onBeginningOfSpeech() {}
         override fun onRmsChanged(rmsdB: Float) {
@@ -861,36 +884,76 @@ internal class ShootVoiceCommander(
                 return
             }
             handler.removeCallbacks(relisten)
-            if (wanted) {
-                runCatching { recognizer?.destroy() }
-                recognizer = null
-                val delayMs = if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) 150L else 600L
-                handler.postDelayed(relisten, delayMs)
+            if (!wanted) return
+
+            when (error) {
+                SpeechRecognizer.ERROR_NO_MATCH,
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                    // Normal silence/speech boundary — keep recognizer alive and restart immediately
+                    consecutiveFatalErrors = 0
+                    runCatching { recognizer?.cancel() }
+                    handler.postDelayed(relisten, 30L)
+                }
+                SpeechRecognizer.ERROR_AUDIO,
+                SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
+                    consecutiveFatalErrors = 0
+                    runCatching { recognizer?.cancel() }
+                    handler.postDelayed(relisten, 80L)
+                }
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
+                    runCatching { recognizer?.cancel() }
+                    handler.postDelayed(relisten, 150L)
+                }
+                SpeechRecognizer.ERROR_CLIENT,
+                SpeechRecognizer.ERROR_SERVER -> {
+                    consecutiveFatalErrors++
+                    runCatching {
+                        recognizer?.cancel()
+                        recognizer?.destroy()
+                    }
+                    recognizer = null
+                    val backoff = (150L * consecutiveFatalErrors).coerceAtMost(1000L)
+                    handler.postDelayed(relisten, backoff)
+                }
+                else -> {
+                    runCatching { recognizer?.cancel() }
+                    handler.postDelayed(relisten, 100L)
+                }
             }
         }
         override fun onResults(results: Bundle?) {
             isListening = false
             evaluate(results)
             handler.removeCallbacks(relisten)
-            if (wanted) handler.postDelayed(relisten, 100)
+            if (wanted) handler.postDelayed(relisten, 30L)
         }
-        // Partial results aren't acted on: "cut" as a partial may just be the start of "cut it out".
-        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onPartialResults(partialResults: Bundle?) {
+            evaluate(partialResults)
+        }
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
-    private fun evaluate(bundle: Bundle?) {
+    private fun evaluate(bundle: Bundle?): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastTriggerTime < 1500L) return false
+
         val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+        if (matches.isEmpty()) return false
         lastHeard = matches.firstOrNull()
+
         for (text in matches) {
-            if (!isRecordingMode && recordRegex.containsMatchIn(text)) {
-                onRecordTrigger()
-                break
-            } else if (isRecordingMode && stopRegex.containsMatchIn(text)) {
-                onCutTrigger()
-                break
+            if (matchesCommand(text, isRecordingMode)) {
+                lastTriggerTime = now
+                runCatching { recognizer?.cancel() }
+                if (!isRecordingMode) {
+                    onRecordTrigger()
+                } else {
+                    onCutTrigger()
+                }
+                return true
             }
         }
+        return false
     }
 
     fun setRecordingMode(recording: Boolean) {
@@ -900,7 +963,7 @@ internal class ShootVoiceCommander(
             if (wanted) {
                 handler.removeCallbacks(relisten)
                 runCatching { recognizer?.cancel() }
-                handler.postDelayed(relisten, 100)
+                handler.postDelayed(relisten, 40L)
             }
         }
     }
@@ -908,6 +971,7 @@ internal class ShootVoiceCommander(
     fun start() {
         if (!available) return
         wanted = true
+        consecutiveFatalErrors = 0
         handler.removeCallbacks(relisten)
         runCatching { recognizer?.cancel() }
         listen()
@@ -915,20 +979,43 @@ internal class ShootVoiceCommander(
 
     private fun listen() {
         if (!wanted) return
-        val r = recognizer ?: runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
-            ?.also { it.setRecognitionListener(listener); recognizer = it }
-            ?: return
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+
+        val r = recognizer ?: run {
+            val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+            ) {
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            } else {
+                SpeechRecognizer.createSpeechRecognizer(context)
+            }
+            rec?.also {
+                it.setRecognitionListener(listener)
+                recognizer = it
+            }
+        } ?: return
+
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
+            putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            }
+            putExtra("android.speech.extra.DICTATION_MODE", true)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 350L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 100L)
         }
         runCatching {
             r.startListening(intent)
             isListening = true
         }.onFailure {
             isListening = false
-            if (wanted) handler.postDelayed(relisten, 800)
+            if (wanted) handler.postDelayed(relisten, 250L)
         }
     }
 
@@ -936,7 +1023,7 @@ internal class ShootVoiceCommander(
         wanted = false
         isListening = false
         handler.removeCallbacks(relisten)
-        runCatching { recognizer?.stopListening() }
+        runCatching { recognizer?.cancel() }
     }
 
     fun destroy() {

@@ -21,7 +21,7 @@
         </intent>
     </queries>
 
-    <!-- No cloud backup: takes, headshots and reader recordings are meant to stay on this phone
+    <!-- No cloud backup: takes, headshots and reader recordings are stored locally
          until the actor sends them, and Auto Backup would copy them to Google Drive. (Photos and
          files are picked through the system Photo Picker / document picker, so no media
          permissions are needed.) -->

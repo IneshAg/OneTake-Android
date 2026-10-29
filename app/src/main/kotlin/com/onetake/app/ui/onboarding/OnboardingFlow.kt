@@ -109,7 +109,7 @@ import kotlinx.coroutines.delay
 
 /*
  * 01 Welcome → 03 Your slate → 04 Camera & mic (→ 04.1 Camera off) → 04b Notifications → Home.
- * There are no accounts — everything stays on this phone — so there's no sign-in step (the old
+ * There are no accounts, so there's no sign-in step (the old
  * "Continue with Google" / email-code screens accepted anything and connected to nothing).
  * No Navigator exists yet, so steps are local state.
  */

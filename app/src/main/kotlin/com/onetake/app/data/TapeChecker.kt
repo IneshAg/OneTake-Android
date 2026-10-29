@@ -10,7 +10,7 @@ import com.onetake.app.models.Take
 import java.io.File
 
 /**
- * Tape check built only from what's really on the phone — the recorded files and their metadata —
+ * Tape check built from recorded files and their metadata —
  * instead of a fixed "11 checks passed" list. Each check is something measured: file metadata here,
  * and inside each scene's take the sound levels and on-device face framing ([TapeAnalysis]).
  * Blocking (reads file metadata); run it on Dispatchers.IO.

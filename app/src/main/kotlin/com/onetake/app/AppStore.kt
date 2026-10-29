@@ -245,7 +245,7 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         return callback
     }
 
-    /** Deletes an audition along with everything recorded for it on this phone: its takes, slate,
+    /** Deletes an audition along with everything recorded for it: its takes, slate,
      *  full length, export, reader recordings, and the practice pieces made from its scenes (and
      *  their practice takes). An export file another audition also points at is kept. */
     fun delete(id: String) {

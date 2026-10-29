@@ -7,7 +7,7 @@ import androidx.core.content.IntentCompat
 /**
  * A casting notice or sides shared to OneTake from another app (mail, WhatsApp, a browser, the
  * gallery, Files) — the text and any attached images or PDFs. MainActivity receives it and Add
- * audition reads it on the phone like any other notice.
+ * audition reads it like any other notice.
  */
 data class SharedNotice(val text: String?, val uris: List<Uri>) {
     companion object {

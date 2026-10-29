@@ -260,7 +260,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
         }
     }
     // A notice shared from another app (MainActivity → AppStore.incomingShare): its text plus whatever
-    // the attached images or PDFs say, read on the phone like a photo or file.
+    // the attached images or PDFs say, read like a photo or file.
     LaunchedEffect(store.incomingShare) {
         val share = store.incomingShare ?: return@LaunchedEffect
         store.incomingShare = null

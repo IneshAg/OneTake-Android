@@ -18,7 +18,7 @@ import kotlin.math.log10
 import kotlin.math.sqrt
 
 /**
- * What Tape check measures inside a take, on the phone: the sound (decoded to PCM, in half-second
+ * What Tape check measures inside a take: the sound (decoded to PCM, in half-second
  * windows) and the framing (a frame about every second through ML Kit face detection). Both are
  * blocking — run on Dispatchers.IO — and cached per file, since Tape check re-runs whenever takes
  * change and a take's analysis doesn't.

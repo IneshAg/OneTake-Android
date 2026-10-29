@@ -18,7 +18,7 @@ import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-// MARK: - App state persistence (JSON on disk, no backend — matches "nothing leaves this phone")
+// MARK: - App state persistence (JSON on disk, no backend)
 
 /** Everything AppStore needs to survive a relaunch. Media files themselves live under
  *  MediaStore; this only holds the structured data (and the URIs pointing at those files). */

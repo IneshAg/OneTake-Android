@@ -150,3 +150,5 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - CameraX Multi-Use-Case Analyzer Support: Updated `Camera.kt` `bind()` pipeline to bind `ImageAnalysis` alongside video capture when not recording, preventing previous dead-analyzer limitations.
   - Live HUD Status in Slate & Scene: Added `ShootMiniStatusRow` and `ShootMiniStatusBadge` during slate and scene setup/pre-roll, plus a live audio recording pulse during takes.
   - Added full unit test suite `LiveTapeCheckEngineTest.kt` verifying all thresholds and edge cases.
+- **Total Elimination of Redundant Device / Storage Phrasing:**
+  - Audited and cleansed all remaining instances of "on this phone", "stays on this phone", "nothing leaves this phone", and "read on the phone" across comments, manifest, and UI copy (`AndroidManifest.xml`, `AppStore.kt`, `Persistence.kt`, `SharedNotice.kt`, `TapeAnalysis.kt`, `TapeChecker.kt`, `AddAuditionSheet.kt`, `AuditionDetailScreen.kt`, `OnboardingFlow.kt`, `ProfileScreens.kt`, `ReaderScreens.kt`, `ShootScreens.kt`). Replaced with natural, production-grade terminology.

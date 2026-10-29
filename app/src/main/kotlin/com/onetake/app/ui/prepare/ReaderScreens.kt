@@ -195,7 +195,7 @@ fun ReaderScreen(auditionId: String, sceneIndex: Int = 0) {
         SectionLabel("Your reader tracks")
         Spacer(Modifier.height(4.dp))
 
-        // A real per-line listing of what's actually been recorded to this phone, backed by the
+        // A real per-line listing of recorded audio, backed by the
         // same .m4a files RecordReaderScreen writes — not a fabricated list of named "tracks".
         if (readerLines.isEmpty()) {
             Text("No reader lines in this scene yet.", style = OT.type.footnote, color = c.labelTertiary)

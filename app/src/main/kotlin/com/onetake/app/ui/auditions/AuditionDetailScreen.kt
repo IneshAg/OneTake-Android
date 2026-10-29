@@ -928,7 +928,7 @@ private fun DetailTextField(value: String, onValueChange: (String) -> Unit, plac
 
 // MARK: - Revised sides
 
-/** New pages from casting: paste them, or read a photo or file on the phone. The scenes are
+/** New pages from casting: paste them, or select a photo or file. The scenes are
  *  replaced and the scene pieces start again; takes already shot stay in Takes. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

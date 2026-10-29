@@ -129,7 +129,7 @@ fun ShootModeScreen(auditionId: String, scene: Int = -1) {
             selected = true,
             icon = Icons.Filled.Smartphone,
             title = "Solo",
-            detail = "Just this phone on a stand. Your reader plays from its speaker, lines on its screen.",
+            detail = "Your device on a stand. Your reader plays from its speaker, lines on its screen.",
             tags = listOf("Reader track", "“Action” / “Cut”"),
             onClick = {},
         )
@@ -306,7 +306,7 @@ fun ShootSetupScreen(auditionId: String, scene: Int = -1) {
     }
 }
 
-/** What "Before you roll" checks — read from the phone, not assumed. */
+/** What "Before you roll" checks — read from actual hardware status, not assumed. */
 private data class SetupStatus(
     val camera: Boolean,
     val mic: Boolean,

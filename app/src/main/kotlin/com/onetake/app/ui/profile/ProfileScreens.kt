@@ -193,7 +193,7 @@ fun ProfileScreen() {
         SectionLabel("More")
         ListRow(title = "Notifications", onClick = { nav.push(Route.Notifications) })
         ListRow(title = "Privacy & data", onClick = { nav.push(Route.Privacy) })
-        // No accounts exist (everything stays on this phone), so there's nothing to sign out of.
+        // No accounts exist, so there's nothing to sign out of.
     }
 }
 
@@ -447,7 +447,7 @@ fun PrivacyScreen() {
         ListRow(title = "Reader recordings", detail = "Your own voice, per line", value = formatStorageSize(readerBytes), showChevron = false, showDivider = false)
 
         Spacer(Modifier.height(20.dp))
-        // Everything stays on this phone: there are no private links or synced sessions, and the
+        // Local storage: there are no private links or synced sessions, and the
         // "Privacy Policy" link pointed at example.com — so neither is claimed here.
         SectionLabel("Sent tapes")
         ListRow(

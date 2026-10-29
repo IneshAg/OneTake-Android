@@ -184,26 +184,57 @@ class CameraController(private val context: Context) {
                 } else {
                     val vc = runCatching { createVideoCapture() }.getOrNull()
                     videoCapture = vc
+                    val analysis = imageAnalysis
                     if (vc != null) {
-                        runCatching {
-                            p.bindToLifecycle(owner, selector, preview, imageCapture, vc)
-                        }.recoverCatching {
-                            p.bindToLifecycle(owner, selector, preview, vc)
-                        }.recoverCatching {
-                            // VideoCapture is not supported on this camera/device stream combination.
-                            // Fall back to ImageCapture + Preview so camera remains fully usable.
-                            videoCapture = null
-                            p.bindToLifecycle(owner, selector, preview, imageCapture)
-                        }.recoverCatching {
-                            videoCapture = null
-                            p.bindToLifecycle(owner, selector, preview)
-                        }.getOrThrow()
+                        if (analysis != null) {
+                            runCatching {
+                                p.bindToLifecycle(owner, selector, preview, imageCapture, vc, analysis)
+                            }.recoverCatching {
+                                p.bindToLifecycle(owner, selector, preview, vc, analysis)
+                            }.recoverCatching {
+                                p.bindToLifecycle(owner, selector, preview, imageCapture, vc)
+                            }.recoverCatching {
+                                p.bindToLifecycle(owner, selector, preview, vc)
+                            }.recoverCatching {
+                                videoCapture = null
+                                p.bindToLifecycle(owner, selector, preview, imageCapture)
+                            }.recoverCatching {
+                                videoCapture = null
+                                p.bindToLifecycle(owner, selector, preview)
+                            }.getOrThrow()
+                        } else {
+                            runCatching {
+                                p.bindToLifecycle(owner, selector, preview, imageCapture, vc)
+                            }.recoverCatching {
+                                p.bindToLifecycle(owner, selector, preview, vc)
+                            }.recoverCatching {
+                                // VideoCapture is not supported on this camera/device stream combination.
+                                // Fall back to ImageCapture + Preview so camera remains fully usable.
+                                videoCapture = null
+                                p.bindToLifecycle(owner, selector, preview, imageCapture)
+                            }.recoverCatching {
+                                videoCapture = null
+                                p.bindToLifecycle(owner, selector, preview)
+                            }.getOrThrow()
+                        }
                     } else {
-                        runCatching {
-                            p.bindToLifecycle(owner, selector, preview, imageCapture)
-                        }.recoverCatching {
-                            p.bindToLifecycle(owner, selector, preview)
-                        }.getOrThrow()
+                        if (analysis != null) {
+                            runCatching {
+                                p.bindToLifecycle(owner, selector, preview, imageCapture, analysis)
+                            }.recoverCatching {
+                                p.bindToLifecycle(owner, selector, preview, analysis)
+                            }.recoverCatching {
+                                p.bindToLifecycle(owner, selector, preview, imageCapture)
+                            }.recoverCatching {
+                                p.bindToLifecycle(owner, selector, preview)
+                            }.getOrThrow()
+                        } else {
+                            runCatching {
+                                p.bindToLifecycle(owner, selector, preview, imageCapture)
+                            }.recoverCatching {
+                                p.bindToLifecycle(owner, selector, preview)
+                            }.getOrThrow()
+                        }
                     }
                 }
                 state = State.Ready

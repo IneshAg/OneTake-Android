@@ -141,3 +141,12 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - Fixed dead chevron bug in `PkgRow`: Chevrons now only render on clickable rows.
   - Dynamic Tape Check Row: Evaluates real tape status using `TapeChecker.run` (`c.success` checkmark when passed, `c.warning` when issues need review).
   - Pre-Export Assembly Preview: Tapping "Preview the whole tape" when unexported offers instant composition and playback via system player.
+- **Live Tape Check Engine (`ShootStage.Check`, `Slate`, `Scene`):**
+  - Replaced static placeholder chips (`ShootCheckChips`) with a real-time reactive engine (`LiveTapeCheckEngine`):
+    - **Framing & Centering:** Computes real-time horizontal face centering (tolerance 38%..62%) and distance ratio (13%..56% medium close-up). Generates dynamic cues: "Framing centered", "Shift left", "Shift right", "Move closer", "Step back", "Step into frame".
+    - **Eyeline Detection:** Enforces self-tape rule of thirds; detects whether eyes/face sit in the upper third (22%..52% vertical ratio), guiding the actor to "Eyeline level", "Raise camera", or "Tilt down".
+    - **Lighting Analysis:** Samples camera Y-plane luminance in real-time, detecting "Light balanced", "Too dark" (< 48 luma), or "Too bright" (> 216 luma).
+    - **Live Microphone Metering:** Added `AudioMeter` running off-main-thread PCM sampling for live RMS decibel monitoring; detects "Room quiet", "Clear level", "Audio peaking" (> -8 dBFS), and "Mic needed". Connected `onRmsChanged` directly from `ShootVoiceCommander` for continuous volume reporting.
+  - CameraX Multi-Use-Case Analyzer Support: Updated `Camera.kt` `bind()` pipeline to bind `ImageAnalysis` alongside video capture when not recording, preventing previous dead-analyzer limitations.
+  - Live HUD Status in Slate & Scene: Added `ShootMiniStatusRow` and `ShootMiniStatusBadge` during slate and scene setup/pre-roll, plus a live audio recording pulse during takes.
+  - Added full unit test suite `LiveTapeCheckEngineTest.kt` verifying all thresholds and edge cases.

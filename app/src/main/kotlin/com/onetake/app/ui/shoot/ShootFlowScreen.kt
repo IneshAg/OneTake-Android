@@ -58,6 +58,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
@@ -65,6 +66,8 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -74,6 +77,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -111,6 +115,7 @@ import com.onetake.app.models.Take
 import com.onetake.app.models.formatDuration
 import com.onetake.app.ui.camera.CameraBackground
 import com.onetake.app.ui.camera.CameraController
+import com.onetake.app.ui.camera.LiveTapeCheckEngine
 import com.onetake.app.ui.camera.RecordStartErrorDialog
 import com.onetake.app.ui.camera.rememberCameraController
 import com.onetake.app.ui.components.CircleIconButton
@@ -161,6 +166,9 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
     var exposureLocked by remember { mutableStateOf(false) }
     var lastTakeSeconds by remember { mutableIntStateOf(0) }
     var lastSlateSeconds by remember { mutableIntStateOf(0) }
+    var liveTapeCheck by remember { mutableStateOf(LiveTapeCheckEngine.LiveTapeCheck()) }
+    var audioLevelDb by remember { mutableFloatStateOf(-50f) }
+    var checkTipMessage by remember { mutableStateOf<String?>(null) }
 
     val recording = camera.state == CameraController.State.Recording
     val audition = store.audition(auditionId)
@@ -181,6 +189,53 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
         if (!micPermissionGranted) {
             micLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+
+    val audioMeter = remember {
+        LiveTapeCheckEngine.AudioMeter(
+            context = context.applicationContext,
+            scope = scope,
+            onLevelUpdate = { db -> audioLevelDb = db },
+        )
+    }
+
+    LaunchedEffect(stage, micPermissionGranted) {
+        if (stage == ShootStage.Check && micPermissionGranted) {
+            audioMeter.start()
+        } else {
+            audioMeter.stop()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { audioMeter.stop() }
+    }
+
+    val liveAnalyzer = remember(front) {
+        LiveTapeCheckEngine.Analyzer(isFrontCamera = front) { check ->
+            liveTapeCheck = check
+        }
+    }
+
+    LaunchedEffect(front) {
+        liveAnalyzer.isFrontCamera = front
+    }
+
+    LaunchedEffect(audioLevelDb, micPermissionGranted) {
+        liveAnalyzer.currentAudioDb = audioLevelDb
+        liveAnalyzer.micPermissionGranted = micPermissionGranted
+    }
+
+    LaunchedEffect(stage, camera.hasPermission) {
+        if (camera.hasPermission && (stage == ShootStage.Check || stage == ShootStage.Slate || stage == ShootStage.Scene)) {
+            camera.setAnalyzer(liveAnalyzer)
+        } else {
+            camera.clearAnalyzer()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { camera.clearAnalyzer() }
     }
 
     // The file lands asynchronously (CameraX Finalize), possibly after this screen has closed, so
@@ -303,6 +358,9 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
             if (voiceEnabled && recording) {
                 cut()
             }
+        },
+        onRmsChanged = { rms ->
+            audioLevelDb = rms
         },
     )
 
@@ -500,6 +558,25 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                         maxLines = 1,
                     )
                 }
+
+                if (recording) {
+                    Row(
+                        Modifier
+                            .heightIn(min = 32.dp)
+                            .clip(CircleShape)
+                            .background(OT.camera.glass)
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.GraphicEq,
+                            contentDescription = "Sound recording",
+                            tint = if (liveTapeCheck.sound == LiveTapeCheckEngine.SoundStatus.Clipping) OT.colors.warning else OT.colors.success,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
             }
             Spacer(Modifier.height(12.dp))
 
@@ -509,14 +586,60 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                     Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
                         when (stage) {
                             ShootStage.Check -> {
-                                ShootCheckChips()
+                                ShootCheckChips(
+                                    check = liveTapeCheck,
+                                    onSelectDetail = { detail ->
+                                        checkTipMessage = when {
+                                            "step into" in detail.lowercase() || "shift" in detail.lowercase() || "closer" in detail.lowercase() || "back" in detail.lowercase() || "framing" in detail.lowercase() ->
+                                                "Framing: Sit or stand centered in frame with head and shoulders visible for a medium close-up."
+                                            "eye" in detail.lowercase() || "camera" in detail.lowercase() ->
+                                                "Eyeline: Place camera lens at eye level so your gaze looks straight ahead."
+                                            "dark" in detail.lowercase() || "bright" in detail.lowercase() || "light" in detail.lowercase() ->
+                                                "Lighting: Ensure soft, even front lighting on your face without bright backlights."
+                                            else ->
+                                                "Sound: Speak at normal performance level. Check microphone is unblocked."
+                                        }
+                                    },
+                                )
+                                if (checkTipMessage != null) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color.Black.copy(alpha = 0.75f))
+                                            .border(0.5.dp, OT.colors.accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                                            .clickable { checkTipMessage = null }
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Icon(Icons.Outlined.Info, null, tint = OT.colors.accent, modifier = Modifier.size(16.dp))
+                                        Text(checkTipMessage!!, style = OT.type.footnote, color = Color.White, modifier = Modifier.weight(1f))
+                                        Icon(Icons.Filled.Close, "Dismiss", tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                                    }
+                                }
                                 Spacer(Modifier.height(10.dp))
                                 ShootScenePicker(audition.scenes, sceneIndex, shotScenes, onPick = ::pickScene)
                             }
-                            ShootStage.Slate -> ShootPromptCard(eyebrow = "Slate · say it to the lens · ≈ 5 s", text = store.slate.spoken)
-                            ShootStage.FullLength -> ShootPromptCard(eyebrow = "After the slate", text = "Head to feet, hold still")
+                            ShootStage.Slate -> {
+                                if (!recording && countdown == null) {
+                                    ShootMiniStatusRow(liveTapeCheck)
+                                    Spacer(Modifier.height(6.dp))
+                                }
+                                ShootPromptCard(eyebrow = "Slate · say it to the lens · ≈ 5 s", text = store.slate.spoken)
+                            }
+                            ShootStage.FullLength -> {
+                                if (!recording && countdown == null) {
+                                    ShootMiniStatusRow(liveTapeCheck)
+                                    Spacer(Modifier.height(6.dp))
+                                }
+                                ShootPromptCard(eyebrow = "After the slate", text = "Head to feet, hold still")
+                            }
                             ShootStage.Scene -> {
                                 if (!recording && countdown == null) {
+                                    ShootMiniStatusRow(liveTapeCheck)
+                                    Spacer(Modifier.height(6.dp))
                                     ShootScenePicker(audition.scenes, sceneIndex, shotScenes, onPick = ::pickScene)
                                     Spacer(Modifier.height(10.dp))
                                 }
@@ -697,6 +820,7 @@ internal class ShootVoiceCommander(
     private val context: Context,
     private val onRecordTrigger: () -> Unit,
     private val onCutTrigger: () -> Unit,
+    private val onRmsChanged: ((Float) -> Unit)? = null,
 ) {
     val available: Boolean = runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)
     var isListening by mutableStateOf(false)
@@ -725,7 +849,9 @@ internal class ShootVoiceCommander(
             isListening = true
         }
         override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onRmsChanged(rmsdB: Float) {
+            onRmsChanged?.invoke(rmsdB)
+        }
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
         override fun onError(error: Int) {
@@ -829,17 +955,20 @@ internal class ShootVoiceCommander(
 private fun rememberShootVoiceCommander(
     onRecordTrigger: () -> Unit,
     onCutTrigger: () -> Unit,
+    onRmsChanged: (Float) -> Unit = {},
 ): ShootVoiceCommander {
     val context = LocalContext.current
     // The commander outlives recompositions, so route through the latest lambdas — otherwise it
     // keeps the first composition's closures, where `recording` was captured as false forever.
     val latestRecord by rememberUpdatedState(onRecordTrigger)
     val latestCut by rememberUpdatedState(onCutTrigger)
+    val latestRms by rememberUpdatedState(onRmsChanged)
     val commander = remember {
         ShootVoiceCommander(
             context = context.applicationContext,
             onRecordTrigger = { latestRecord() },
             onCutTrigger = { latestCut() },
+            onRmsChanged = { latestRms(it) },
         )
     }
     DisposableEffect(commander) {
@@ -913,14 +1042,121 @@ private fun ShootChip(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ShootCheckChips() {
+private fun ShootCheckChips(
+    check: LiveTapeCheckEngine.LiveTapeCheck,
+    onSelectDetail: (String) -> Unit = {},
+) {
     FlowRow(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // A checklist to run through, not results — nothing here measures framing, light or sound.
-        listOf("Framing", "Eyeline", "Light", "Sound").forEach { ShootChip(null, "Check $it".lowercase().replaceFirstChar { c -> c.uppercase() }, big = true) }
+        ShootLiveChip(
+            icon = if (check.isFramingPassed) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+            text = check.framingLabel,
+            tint = if (check.isFramingPassed) OT.colors.success else OT.colors.warning,
+            onClick = { onSelectDetail(check.framingLabel) },
+        )
+        ShootLiveChip(
+            icon = if (check.isEyelinePassed) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+            text = check.eyelineLabel,
+            tint = if (check.isEyelinePassed) OT.colors.success else OT.colors.warning,
+            onClick = { onSelectDetail(check.eyelineLabel) },
+        )
+        ShootLiveChip(
+            icon = if (check.isLightPassed) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+            text = check.lightLabel,
+            tint = if (check.isLightPassed) OT.colors.success else OT.colors.warning,
+            onClick = { onSelectDetail(check.lightLabel) },
+        )
+        ShootLiveChip(
+            icon = if (check.isSoundPassed) Icons.Filled.GraphicEq else Icons.Filled.Warning,
+            text = check.soundLabel,
+            tint = if (check.isSoundPassed) OT.colors.success else OT.colors.warning,
+            onClick = { onSelectDetail(check.soundLabel) },
+        )
+    }
+}
+
+@Composable
+private fun ShootLiveChip(
+    icon: ImageVector,
+    text: String,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
+) {
+    Row(
+        modifier
+            .heightIn(min = 32.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.65f))
+            .border(0.5.dp, tint.copy(alpha = 0.35f), CircleShape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(16.dp))
+        Text(
+            text,
+            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun ShootMiniStatusRow(check: LiveTapeCheckEngine.LiveTapeCheck) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ShootMiniStatusBadge(
+            icon = if (check.isFramingPassed) Icons.Filled.Check else Icons.Filled.Warning,
+            label = if (check.isFramingPassed) "Framing OK" else check.framingLabel,
+            passed = check.isFramingPassed,
+        )
+        ShootMiniStatusBadge(
+            icon = if (check.isLightPassed) Icons.Filled.Check else Icons.Filled.Warning,
+            label = if (check.isLightPassed) "Light OK" else check.lightLabel,
+            passed = check.isLightPassed,
+        )
+        ShootMiniStatusBadge(
+            icon = if (check.isSoundPassed) Icons.Filled.GraphicEq else Icons.Filled.Warning,
+            label = if (check.isSoundPassed) "Mic OK" else check.soundLabel,
+            passed = check.isSoundPassed,
+        )
+    }
+}
+
+@Composable
+private fun ShootMiniStatusBadge(
+    icon: ImageVector,
+    label: String,
+    passed: Boolean,
+) {
+    val tint = if (passed) OT.colors.success else OT.colors.warning
+    Row(
+        Modifier
+            .heightIn(min = 24.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.55f))
+            .border(0.5.dp, tint.copy(alpha = 0.35f), CircleShape)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(11.dp))
+        Text(
+            label,
+            style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+            color = Color.White,
+            maxLines = 1,
+        )
     }
 }
 

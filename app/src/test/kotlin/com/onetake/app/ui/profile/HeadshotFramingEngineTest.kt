@@ -1,5 +1,6 @@
 package com.onetake.app.ui.profile
 
+import androidx.exifinterface.media.ExifInterface
 import com.onetake.app.ui.camera.HeadshotFramingEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,10 +12,8 @@ class HeadshotFramingEngineTest {
 
     @Test
     fun testCompute4by5CropRatioAndCentering() {
-        // Standard phone photo: 3000 x 4000 (3:4 ratio)
         val bitmapWidth = 3000
         val bitmapHeight = 4000
-        // Face roughly in the upper middle
         val faceLeft = 1200
         val faceTop = 1000
         val faceRight = 1800
@@ -35,14 +34,28 @@ class HeadshotFramingEngineTest {
         assertTrue("Crop left must be non-negative", cropRect.left >= 0)
         assertTrue("Crop top must be non-negative", cropRect.top >= 0)
 
-        // Verify 4:5 aspect ratio (within 1 pixel rounding)
         val calculatedAspect = cropRect.width.toFloat() / cropRect.height.toFloat()
         assertEquals(0.8f, calculatedAspect, 0.015f)
 
-        // Verify face center is contained inside the crop rect
         val faceCenterX = (faceLeft + faceRight) / 2
         val faceCenterY = (faceTop + faceBottom) / 2
         assertTrue(cropRect.contains(faceCenterX, faceCenterY))
+    }
+
+    @Test
+    fun testManualPanZoom4by5CropClampsSafelyWithinBitmap() {
+        val cropRect = HeadshotFramingEngine.computeManual4by5CropRect(
+            bitmapWidth = 2000,
+            bitmapHeight = 3000,
+            zoom = 1.5f,
+            panXNorm = 0.8f, // push right
+            panYNorm = -0.8f, // push up
+        )
+        assertTrue(cropRect.left >= 0)
+        assertTrue(cropRect.top >= 0)
+        assertTrue(cropRect.right <= 2000)
+        assertTrue(cropRect.bottom <= 3000)
+        assertEquals(0.8f, cropRect.width.toFloat() / cropRect.height.toFloat(), 0.015f)
     }
 
     @Test
@@ -57,6 +70,61 @@ class HeadshotFramingEngineTest {
         assertEquals(expectedAspect, calculatedAspect, 0.015f)
         assertEquals((bitmapWidth - cropRect.width) / 2, cropRect.left)
         assertEquals((bitmapHeight - cropRect.height) / 2, cropRect.top)
+    }
+
+    @Test
+    fun testFillCenterViewportPreventsFalseCenteredWhenOffOvalOnTallDisplay() {
+        // 480 x 640 (4:3 = 0.75) sensor frame on 20:9 (0.45) PreviewView (FILL_CENTER).
+        // Face center at raw X = 185 / 480 = 0.385 -> mirrored = 0.615.
+        // Without FILL_CENTER mapping, 0.615 was <= 0.62 and falsely said "Hold still — you're centred"!
+        // On the visible 20:9 screen, screenX = (0.615 - 0.20) / 0.60 = 0.691 (noticeably right of oval!).
+        val guidance = HeadshotFramingEngine.evaluateFramingMetrics(
+            faceLeft = 105,
+            faceTop = 180,
+            faceRight = 265,
+            faceBottom = 410,
+            uprightWidth = 480,
+            uprightHeight = 640,
+            yaw = 0f,
+            roll = 0f,
+            targetAngle = HeadshotFramingEngine.HeadshotAngle.Front,
+            isFrontCamera = true,
+            lightLabel = "soft and even",
+            isLightGood = true,
+            viewAspect = 0.45f,
+        )
+
+        assertEquals("Move left", guidance.headline)
+        assertFalse(guidance.isCenteredAndReady)
+        assertNotNull(guidance.faceBoxNorm)
+        assertEquals(0.691f, guidance.faceBoxNorm!!.centerX, 0.02f)
+    }
+
+    @Test
+    fun testExifOrientationAndMirrorTransformsHandleAllSensors() {
+        // Samsung front camera TRANSVERSE (7) = mirror + 270 deg
+        val transverse = HeadshotFramingEngine.resolveExifTransform(
+            exifOrientation = ExifInterface.ORIENTATION_TRANSVERSE,
+            extraHorizontalMirror = false,
+        )
+        assertEquals(270f, transverse.rotationDegrees, 0.01f)
+        assertTrue(transverse.flipHorizontal)
+
+        // Front camera without EXIF flip + extraHorizontalMirror = true -> flips horizontally to match selfie preview
+        val selfieNormal = HeadshotFramingEngine.resolveExifTransform(
+            exifOrientation = ExifInterface.ORIENTATION_ROTATE_270,
+            extraHorizontalMirror = true,
+        )
+        assertEquals(270f, selfieNormal.rotationDegrees, 0.01f)
+        assertTrue(selfieNormal.flipHorizontal)
+
+        // Double horizontal mirror cancels out cleanly
+        val doubleMirror = HeadshotFramingEngine.resolveExifTransform(
+            exifOrientation = ExifInterface.ORIENTATION_FLIP_HORIZONTAL,
+            extraHorizontalMirror = true,
+        )
+        assertEquals(0f, doubleMirror.rotationDegrees, 0.01f)
+        assertFalse(doubleMirror.flipHorizontal)
     }
 
     @Test
@@ -77,7 +145,6 @@ class HeadshotFramingEngineTest {
 
     @Test
     fun testEvaluateFramingMoveCloserWhenFaceTooSmall() {
-        // Face height = 200px in 1920px (normHeight ~ 0.10 < 0.26)
         val guidance = HeadshotFramingEngine.evaluateFramingMetrics(
             faceLeft = 440,
             faceTop = 760,
@@ -99,7 +166,6 @@ class HeadshotFramingEngineTest {
 
     @Test
     fun testEvaluateFramingStepBackWhenFaceTooLarge() {
-        // Face height = 1400px in 1920px (normHeight ~ 0.73 > 0.68)
         val guidance = HeadshotFramingEngine.evaluateFramingMetrics(
             faceLeft = 140,
             faceTop = 200,
@@ -121,7 +187,6 @@ class HeadshotFramingEngineTest {
 
     @Test
     fun testEvaluateFramingRaiseCameraWhenFaceTooHigh() {
-        // Face centerY at 300px in 1920px (screenY ~ 0.15 < 0.26)
         val guidance = HeadshotFramingEngine.evaluateFramingMetrics(
             faceLeft = 240,
             faceTop = 50,
@@ -143,7 +208,6 @@ class HeadshotFramingEngineTest {
 
     @Test
     fun testEvaluateFramingLowerCameraWhenFaceTooLow() {
-        // Face centerY at 1400px in 1920px (screenY ~ 0.73 > 0.60)
         val guidance = HeadshotFramingEngine.evaluateFramingMetrics(
             faceLeft = 240,
             faceTop = 1100,
@@ -165,7 +229,6 @@ class HeadshotFramingEngineTest {
 
     @Test
     fun testEvaluateFramingFaceCameraDirectlyWhenYawTurned() {
-        // Front camera, yaw = 25 degrees (turned away)
         val guidance = HeadshotFramingEngine.evaluateFramingMetrics(
             faceLeft = 240,
             faceTop = 500,
@@ -187,7 +250,6 @@ class HeadshotFramingEngineTest {
 
     @Test
     fun testEvaluateFramingKeepHeadLevelWhenRollTilted() {
-        // Front camera, roll = 20 degrees (tilted head)
         val guidance = HeadshotFramingEngine.evaluateFramingMetrics(
             faceLeft = 240,
             faceTop = 500,
@@ -209,8 +271,6 @@ class HeadshotFramingEngineTest {
 
     @Test
     fun testEvaluateFramingHoldStillWhenCenteredAndReady() {
-        // Ideal medium close-up headshot positioning:
-        // Face centered horizontally, in upper-middle vertically, upright yaw and roll, good light
         val guidance = HeadshotFramingEngine.evaluateFramingMetrics(
             faceLeft = 240,
             faceTop = 500,

@@ -86,6 +86,8 @@ import com.onetake.app.Route
 import com.onetake.app.CameraFlow
 import com.onetake.app.TabBarClearance
 import com.onetake.app.ui.camera.CameraBackground
+import com.onetake.app.ui.camera.FramingAssistOverlay
+import com.onetake.app.ui.camera.LiveTapeCheckEngine
 import com.onetake.app.ui.camera.RecordStartErrorDialog
 import com.onetake.app.ui.camera.CameraController
 import com.onetake.app.ui.camera.rememberCameraController
@@ -585,59 +587,186 @@ private fun PracticeReaderOption(title: String, detail: String, selected: Boolea
 // MARK: - 24e Practice take (no slate, never sent) — always dark
 
 @Composable
-fun PracticeTakeScreen() {
+fun PracticeTakeScreen(practicePieceId: String? = null) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val context = LocalContext.current
     val camera = rememberCameraController()
     val haptics = rememberHaptics()
+    val reader = com.onetake.app.ui.system.rememberReaderPlayer()
+    val tts = com.onetake.app.ui.system.rememberTtsEngine()
+    val scope = rememberCoroutineScope()
     var front by remember { mutableStateOf(true) }
+    var lineIndex by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    var countdown by remember { mutableStateOf<Int?>(null) }
+    var countdownJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var timerSeconds by remember { androidx.compose.runtime.mutableIntStateOf(3) }
+    var liveTapeCheck by remember { mutableStateOf(LiveTapeCheckEngine.LiveTapeCheck()) }
+
     val recording = camera.state == CameraController.State.Recording
-    // Real target piece — the one most recently picked up, mirroring iOS's `store.practice.first`
-    // — not a hardcoded "TK 4"/"SAM"/"NINA" scene that had nothing to do with what's on screen.
-    val piece = store.practice.firstOrNull()
+    val piece = remember(store.practice, practicePieceId) {
+        if (!practicePieceId.isNullOrBlank()) {
+            store.practice.firstOrNull { it.id == practicePieceId } ?: store.practice.firstOrNull()
+        } else {
+            store.practice.firstOrNull()
+        }
+    }
     KeepScreenOn()
 
-    // The file lands asynchronously (CameraX Finalize), possibly after this screen has closed, so
-    // it's saved from the camera's own callback rather than a composable effect.
+    val liveAnalyzer = remember {
+        LiveTapeCheckEngine.Analyzer(isFrontCamera = front) { check ->
+            liveTapeCheck = check
+        }
+    }
+    LaunchedEffect(front, camera.viewAspect, camera.hasMicPermission) {
+        liveAnalyzer.isFrontCamera = front
+        liveAnalyzer.viewAspect = camera.viewAspect
+        liveAnalyzer.micPermissionGranted = camera.hasMicPermission
+    }
+    LaunchedEffect(camera.hasPermission) {
+        if (camera.hasPermission) camera.setAnalyzer(liveAnalyzer)
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { camera.clearAnalyzer() }
+    }
+
+    val scene = piece?.scene
+    val sceneLines = scene?.lines.orEmpty()
+
+    LaunchedEffect(lineIndex, recording, scene?.id) {
+        reader.volume = store.readerVolumeLevel
+        tts.volume = store.readerVolumeLevel
+        val line = sceneLines.getOrNull(lineIndex)
+        if (recording && scene != null && line != null && !line.isMine) {
+            val targetIdx = lineIndex
+            val readerIdx = sceneLines.take(lineIndex).count { !it.isMine }
+            runCatching {
+                reader.playOrSynthesize(scene.id, readerIdx, line.text, tts) {
+                    scope.launch {
+                        if (recording && lineIndex == targetIdx && lineIndex < sceneLines.lastIndex) {
+                            lineIndex = targetIdx + 1
+                        }
+                    }
+                }
+            }
+        } else {
+            reader.stop()
+            tts.stop()
+        }
+    }
+
     val appContext = context.applicationContext
     fun savePracticeTake(uri: android.net.Uri?, pieceId: String) {
         val p = store.practice.firstOrNull { it.id == pieceId } ?: return
         val number = p.takesRecorded + 1
         com.onetake.app.data.MediaStore.persist(appContext, uri, "take-$number-${System.currentTimeMillis()}.mp4", "practice-${p.id}")
-            ?.let { store.incrementPracticeTakes(p.id) }
+            ?.let {
+                store.incrementPracticeTakes(p.id)
+                android.widget.Toast.makeText(appContext, "Practice take #$number saved", android.widget.Toast.LENGTH_SHORT).show()
+            }
+    }
+
+    fun cancelCountdown() {
+        countdownJob?.cancel()
+        countdownJob = null
+        countdown = null
+    }
+
+    fun rollPractice() {
+        if (countdown != null || recording) return
+        lineIndex = 0
+        if (timerSeconds == 0) {
+            if (camera.startRecording()) haptics.impact() else haptics.warning()
+            return
+        }
+        countdownJob?.cancel()
+        countdownJob = scope.launch {
+            for (n in timerSeconds downTo 1) {
+                countdown = n
+                haptics.tick()
+                kotlinx.coroutines.delay(1000)
+            }
+            countdown = null
+            countdownJob = null
+            if (camera.startRecording()) haptics.impact() else haptics.warning()
+        }
     }
 
     RecordStartErrorDialog(camera)
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
         CameraBackground(camera, Modifier.fillMaxSize(), front = front)
+        FramingAssistOverlay(
+            check = liveTapeCheck,
+            showGrid = !recording,
+            showFaceReticle = !recording,
+        )
         Column(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = OT.dims.gutter),
         ) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 CircleIconButton(Icons.Filled.Close, "Close", onClick = { nav.closeCamera() }, onDark = true)
                 Spacer(Modifier.weight(1f))
+                if (!recording) {
+                    CameraPill(
+                        text = if (timerSeconds == 0) "Instant" else "${timerSeconds}s timer",
+                        modifier = Modifier.clickable(role = Role.Button) {
+                            if (countdown == null) {
+                                timerSeconds = when (timerSeconds) {
+                                    0 -> 3
+                                    3 -> 5
+                                    else -> 0
+                                }
+                            }
+                        },
+                    )
+                }
                 val secs = camera.elapsed.toInt()
                 val takeNumber = (piece?.takesRecorded ?: 0) + 1
                 CameraPill("Practice · TK $takeNumber  %02d:%02d:%02d".format(secs / 3600, (secs / 60) % 60, secs % 60))
             }
             Spacer(Modifier.height(8.dp))
-            // Top of the scene, so the actor can glance at their first line — the real scene this
-            // piece was practising, or an honest "no scene attached" note, never invented dialogue.
-            val sceneLines = piece?.scene?.lines.orEmpty()
-            val mine = sceneLines.firstOrNull { it.isMine }
-            val partnerLine = mine?.let { m -> sceneLines.getOrNull(sceneLines.indexOf(m) + 1) }
+
+            val currentLine = sceneLines.getOrNull(lineIndex)
+            val nextLine = sceneLines.getOrNull(lineIndex + 1)
             Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(OT.camera.glass).padding(14.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(OT.camera.glass)
+                    .clickable(enabled = sceneLines.size > 1, role = Role.Button) {
+                        if (lineIndex < sceneLines.lastIndex) lineIndex += 1
+                    }
+                    .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text("TOP OF THE SCENE", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
-                if (mine != null) {
-                    Text("${mine.character.uppercase()} · YOU", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
-                    Text(mine.text, style = OT.type.headline.copy(fontSize = 20.sp, lineHeight = 25.sp), color = OT.camera.label)
-                    if (partnerLine != null) {
-                        Text(partnerLine.character.uppercase(), style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2.copy(alpha = 0.5f))
-                        Text(partnerLine.text, style = OT.type.footnote, color = OT.camera.label2.copy(alpha = 0.5f))
+                val eyebrow = if (sceneLines.isNotEmpty()) {
+                    "${piece?.title?.uppercase().orEmpty()} · LINE ${lineIndex + 1} OF ${sceneLines.size}"
+                } else {
+                    "PRACTICE SCENE"
+                }
+                Text(eyebrow, style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = OT.camera.label2)
+                if (currentLine != null) {
+                    Text(
+                        if (currentLine.isMine) "${currentLine.character.uppercase()} · YOU" else currentLine.character.uppercase(),
+                        style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (currentLine.isMine) OT.camera.label2 else com.onetake.app.ui.theme.DarkOT.reader,
+                    )
+                    Text(
+                        currentLine.text,
+                        style = OT.type.headline.copy(fontSize = 20.sp, lineHeight = 25.sp),
+                        color = if (currentLine.isMine) OT.camera.label else OT.camera.label.copy(alpha = 0.75f),
+                    )
+                    if (nextLine != null) {
+                        Text(
+                            nextLine.character.uppercase(),
+                            style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                            color = OT.camera.label2.copy(alpha = 0.5f),
+                        )
+                        Text(nextLine.text, style = OT.type.footnote, color = OT.camera.label2.copy(alpha = 0.5f), maxLines = 2)
                     }
                 } else {
                     Text(
@@ -647,26 +776,47 @@ fun PracticeTakeScreen() {
                     )
                 }
             }
-            Spacer(Modifier.weight(1f))
+
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                countdown?.let { n ->
+                    Box(
+                        Modifier.fillMaxSize().clickable { cancelCountdown() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("$n", fontSize = 148.sp, lineHeight = 156.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                }
+            }
+
+            if (!recording && countdown == null) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CameraPill(
+                        text = "${liveTapeCheck.framingLabel} · ${liveTapeCheck.lightLabel}",
+                        background = Color.Black.copy(alpha = 0.55f),
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+            }
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 CameraPill("Practice · no slate, never sent", icon = Icons.Filled.Lock, background = Color.Black.copy(alpha = 0.55f))
             }
             Spacer(Modifier.height(12.dp))
             Box(Modifier.fillMaxWidth().padding(bottom = 12.dp), contentAlignment = Alignment.Center) {
                 PracticeRecordButton(recording) {
-                    haptics.impact()
-                    if (recording) {
-                        val pieceId = piece?.id
-                        camera.stopRecording { uri -> if (pieceId != null) savePracticeTake(uri, pieceId) }
-                    } else {
-                        camera.startRecording()
+                    when {
+                        countdown != null -> cancelCountdown()
+                        recording -> {
+                            haptics.impact()
+                            val pieceId = piece?.id
+                            camera.stopRecording { uri -> if (pieceId != null) savePracticeTake(uri, pieceId) }
+                        }
+                        else -> rollPractice()
                     }
-                    // A failed start shows RecordStartErrorDialog rather than a fake take.
                 }
                 CircleIconButton(
                     Icons.Filled.Cameraswitch,
                     "Switch camera",
-                    onClick = { front = !front },
+                    onClick = { if (!recording && countdown == null) front = !front },
                     onDark = true,
                     modifier = Modifier.align(Alignment.CenterEnd),
                 )

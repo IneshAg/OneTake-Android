@@ -4,14 +4,22 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.camera2.CaptureRequest
 import android.net.Uri
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -24,6 +32,10 @@ import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,24 +64,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.theme.OT
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
- * CameraX capture pipeline — Android twin of iOS `CameraController` (AVFoundation).
- * Compose has no camera view, so this is where OneTake drops to the Android View system (PreviewView).
+ * CameraX capture pipeline — powers live framing analysis, photo capture, and H.264 MP4 recording.
  */
 @Stable
 class CameraController(private val context: Context) {
@@ -83,25 +99,37 @@ class CameraController(private val context: Context) {
         private set
     var hasPermission by mutableStateOf(granted(context, Manifest.permission.CAMERA))
         internal set
+    var hasMicPermission by mutableStateOf(granted(context, Manifest.permission.RECORD_AUDIO))
+        internal set
+    var isAnalysisActive by mutableStateOf(false)
+        private set
+    var isExposureLocked by mutableStateOf(false)
+        private set
+    var viewAspect by mutableFloatStateOf(0.56f)
+        internal set
 
     private val imageCapture = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
     private var videoCapture: VideoCapture<Recorder>? = null
     private var imageAnalysis: ImageAnalysis? = null
+    private var currentAnalyzer: ImageAnalysis.Analyzer? = null
     private var analyzerExecutor: ExecutorService? = null
     private var recording: Recording? = null
+    private var recordingStartRealtimeMs: Long = 0L
     private var provider: ProcessCameraProvider? = null
+    private var boundCamera: Camera? = null
 
     private var boundOwner: LifecycleOwner? = null
     private var boundPreviewView: PreviewView? = null
     private var boundSelector: CameraSelector? = null
     private var boundFront: Boolean = true
     private var boundPhotoOnly: Boolean = false
+    private var boundNeedsVideo: Boolean = true
+    private var pendingRebind: Boolean = false
 
-    /** Who gets the finished file of the recording being stopped. Held here, not in a composable
-     *  effect, so the file still lands if the screen closes before CameraX finalizes it. */
+    /** Who gets the finished file of the recording being stopped. Held here so finalization completes cleanly. */
     private var onFinalized: ((Uri?) -> Unit)? = null
 
-    fun setAnalyzer(analyzer: ImageAnalysis.Analyzer) {
+    private fun buildImageAnalysis(analyzer: ImageAnalysis.Analyzer): ImageAnalysis {
         val executor = analyzerExecutor ?: Executors.newSingleThreadExecutor().also { analyzerExecutor = it }
         val selector = ResolutionSelector.Builder()
             .setResolutionStrategy(
@@ -111,51 +139,114 @@ class CameraController(private val context: Context) {
                 )
             )
             .build()
-        val analysis = ImageAnalysis.Builder()
+        return ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setResolutionSelector(selector)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
             .build()
-        analysis.setAnalyzer(executor, analyzer)
-        imageAnalysis = analysis
-        rebind()
+            .also { it.setAnalyzer(executor, analyzer) }
+    }
+
+    fun setAnalyzer(analyzer: ImageAnalysis.Analyzer) {
+        if (currentAnalyzer === analyzer && imageAnalysis != null) return
+        imageAnalysis?.clearAnalyzer()
+        currentAnalyzer = analyzer
+        imageAnalysis = buildImageAnalysis(analyzer)
+        requestRebind()
     }
 
     fun clearAnalyzer() {
+        if (currentAnalyzer == null && imageAnalysis == null) return
         imageAnalysis?.clearAnalyzer()
         imageAnalysis = null
-        rebind()
+        currentAnalyzer = null
+        isAnalysisActive = false
+        requestRebind()
     }
 
-    private fun rebind() {
+    private fun requestRebind() {
+        // Never unbind CameraX while an active recording is flushing/finalizing its MP4 file!
+        if (recording != null || state == State.Recording) {
+            pendingRebind = true
+            return
+        }
         val o = boundOwner ?: return
         val pv = boundPreviewView ?: return
-        bind(o, pv, boundFront, boundPhotoOnly)
+        bind(o, pv, boundFront, boundPhotoOnly, boundNeedsVideo)
     }
 
-    private fun createVideoCapture(): VideoCapture<Recorder> {
-        // 1080p is what self-tape sites ask for (and what the destinations' specs say). 4K first
-        // made files ~4x larger, slowed export, and could break limits like Actors Access's 500 MB.
+    private fun createVideoCapture(preferHdFor3StreamCompatibility: Boolean = false): VideoCapture<Recorder> {
+        val qualities = if (preferHdFor3StreamCompatibility) {
+            listOf(Quality.HD, Quality.SD)
+        } else {
+            listOf(Quality.FHD, Quality.HD, Quality.SD)
+        }
+        val primary = qualities.first()
         val qualitySelector = QualitySelector.fromOrderedList(
-            listOf(Quality.FHD, Quality.HD, Quality.SD),
-            FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD),
+            qualities,
+            FallbackStrategy.lowerQualityOrHigherThan(primary),
         )
         val recorder = Recorder.Builder().setQualitySelector(qualitySelector).build()
         return VideoCapture.withOutput(recorder)
     }
 
-    internal fun bind(owner: LifecycleOwner, previewView: PreviewView, front: Boolean, photoOnly: Boolean = false) {
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    fun setExposureLocked(locked: Boolean, focusCenterNormX: Float = 0.5f, focusCenterNormY: Float = 0.36f) {
+        isExposureLocked = locked
+        val cam = boundCamera ?: return
+        runCatching {
+            val c2 = Camera2CameraControl.from(cam.cameraControl)
+            val opts = CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, locked)
+                .build()
+            c2.setCaptureRequestOptions(opts)
+            if (locked) {
+                val factory = SurfaceOrientedMeteringPointFactory(1f, 1f)
+                val point = factory.createPoint(
+                    focusCenterNormX.coerceIn(0.1f, 0.9f),
+                    focusCenterNormY.coerceIn(0.1f, 0.9f),
+                )
+                val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+                    .disableAutoCancel()
+                    .build()
+                cam.cameraControl.startFocusAndMetering(action)
+            } else {
+                cam.cameraControl.cancelFocusAndMetering()
+            }
+        }
+    }
+
+    internal fun bind(
+        owner: LifecycleOwner,
+        previewView: PreviewView,
+        front: Boolean,
+        photoOnly: Boolean = false,
+        needsVideo: Boolean = !photoOnly,
+    ) {
         boundOwner = owner
         boundPreviewView = previewView
         boundFront = front
         boundPhotoOnly = photoOnly
+        boundNeedsVideo = needsVideo
+
+        // If a recording is actively flushing, defer rebinding until VideoRecordEvent.Finalize arrives.
+        if (recording != null || state == State.Recording) {
+            pendingRebind = true
+            return
+        }
+        pendingRebind = false
 
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
+            if (recording != null || state == State.Recording) {
+                pendingRebind = true
+                return@addListener
+            }
             runCatching {
                 val p = future.get()
                 provider = p
-                val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+                fun newPreview() = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+
                 val frontSelector = CameraSelector.DEFAULT_FRONT_CAMERA
                 val backSelector = CameraSelector.DEFAULT_BACK_CAMERA
                 val selector = when {
@@ -166,102 +257,123 @@ class CameraController(private val context: Context) {
                     else -> if (front) frontSelector else backSelector
                 }
                 boundSelector = selector
-                p.unbindAll()
+
+                // Rebuild ImageAnalysis cleanly if an analyzer is registered
+                val activeAnalyzer = currentAnalyzer
+                val analysis = if (activeAnalyzer != null) {
+                    imageAnalysis ?: buildImageAnalysis(activeAnalyzer).also { imageAnalysis = it }
+                } else {
+                    null
+                }
+
+                var analysisBound = false
+                var cameraInstance: Camera? = null
+
                 if (photoOnly) {
                     videoCapture = null
-                    val analysis = imageAnalysis
                     if (analysis != null) {
-                        runCatching {
-                            p.bindToLifecycle(owner, selector, preview, imageCapture, analysis)
+                        cameraInstance = runCatching {
+                            p.unbindAll()
+                            p.bindToLifecycle(owner, selector, newPreview(), imageCapture, analysis).also { analysisBound = true }
                         }.recoverCatching {
-                            p.bindToLifecycle(owner, selector, preview, analysis)
+                            // Guaranteed 2-stream PRIV + YUV fallback; capturePhoto temporarily swaps to ImageCapture on shutter!
+                            p.unbindAll()
+                            p.bindToLifecycle(owner, selector, newPreview(), analysis).also { analysisBound = true }
                         }.recoverCatching {
-                            p.bindToLifecycle(owner, selector, preview, imageCapture)
+                            p.unbindAll()
+                            analysisBound = false
+                            p.bindToLifecycle(owner, selector, newPreview(), imageCapture)
                         }.getOrThrow()
                     } else {
-                        p.bindToLifecycle(owner, selector, preview, imageCapture)
+                        p.unbindAll()
+                        cameraInstance = p.bindToLifecycle(owner, selector, newPreview(), imageCapture)
+                    }
+                } else if (!needsVideo) {
+                    // Check-only stage (e.g. ShootStage.Check): pure 2-stream Preview + ImageAnalysis.
+                    // Never binds ImageCapture or VideoCapture, guaranteeing 100% compatibility on LIMITED/LEGACY front cameras.
+                    videoCapture = null
+                    if (analysis != null) {
+                        cameraInstance = runCatching {
+                            p.unbindAll()
+                            p.bindToLifecycle(owner, selector, newPreview(), analysis).also { analysisBound = true }
+                        }.recoverCatching {
+                            p.unbindAll()
+                            analysisBound = false
+                            p.bindToLifecycle(owner, selector, newPreview())
+                        }.getOrThrow()
+                    } else {
+                        p.unbindAll()
+                        cameraInstance = p.bindToLifecycle(owner, selector, newPreview())
                     }
                 } else {
-                    val vc = runCatching { createVideoCapture() }.getOrNull()
-                    videoCapture = vc
-                    val analysis = imageAnalysis
-                    if (vc != null) {
-                        if (analysis != null) {
-                            runCatching {
-                                p.bindToLifecycle(owner, selector, preview, imageCapture, vc, analysis)
-                            }.recoverCatching {
-                                p.bindToLifecycle(owner, selector, preview, vc, analysis)
-                            }.recoverCatching {
-                                p.bindToLifecycle(owner, selector, preview, imageCapture, vc)
-                            }.recoverCatching {
-                                p.bindToLifecycle(owner, selector, preview, vc)
-                            }.recoverCatching {
-                                videoCapture = null
-                                p.bindToLifecycle(owner, selector, preview, imageCapture)
-                            }.recoverCatching {
-                                videoCapture = null
-                                p.bindToLifecycle(owner, selector, preview)
-                            }.getOrThrow()
-                        } else {
-                            runCatching {
-                                p.bindToLifecycle(owner, selector, preview, imageCapture, vc)
-                            }.recoverCatching {
-                                p.bindToLifecycle(owner, selector, preview, vc)
-                            }.recoverCatching {
-                                // VideoCapture is not supported on this camera/device stream combination.
-                                // Fall back to ImageCapture + Preview so camera remains fully usable.
-                                videoCapture = null
-                                p.bindToLifecycle(owner, selector, preview, imageCapture)
-                            }.recoverCatching {
-                                videoCapture = null
-                                p.bindToLifecycle(owner, selector, preview)
-                            }.getOrThrow()
-                        }
+                    // Video recording stages: NEVER bind ImageCapture (saves an entire hardware JPEG stream!).
+                    if (analysis != null) {
+                        cameraInstance = runCatching {
+                            p.unbindAll()
+                            val vcFhd = createVideoCapture(preferHdFor3StreamCompatibility = false)
+                            videoCapture = vcFhd
+                            p.bindToLifecycle(owner, selector, newPreview(), vcFhd, analysis).also { analysisBound = true }
+                        }.recoverCatching {
+                            // Many LIMITED front cameras support PRIV(Preview) + PRIV(720p HD) + YUV(Analysis) even when 1080p fails.
+                            p.unbindAll()
+                            val vcHd = createVideoCapture(preferHdFor3StreamCompatibility = true)
+                            videoCapture = vcHd
+                            p.bindToLifecycle(owner, selector, newPreview(), vcHd, analysis).also { analysisBound = true }
+                        }.recoverCatching {
+                            // Final video fallback if hardware strictly forbids 3 streams even with StreamSharing.
+                            p.unbindAll()
+                            analysisBound = false
+                            val vcFhd = createVideoCapture(preferHdFor3StreamCompatibility = false)
+                            videoCapture = vcFhd
+                            p.bindToLifecycle(owner, selector, newPreview(), vcFhd)
+                        }.recoverCatching {
+                            p.unbindAll()
+                            analysisBound = false
+                            videoCapture = null
+                            p.bindToLifecycle(owner, selector, newPreview())
+                        }.getOrThrow()
                     } else {
-                        if (analysis != null) {
-                            runCatching {
-                                p.bindToLifecycle(owner, selector, preview, imageCapture, analysis)
-                            }.recoverCatching {
-                                p.bindToLifecycle(owner, selector, preview, analysis)
-                            }.recoverCatching {
-                                p.bindToLifecycle(owner, selector, preview, imageCapture)
-                            }.recoverCatching {
-                                p.bindToLifecycle(owner, selector, preview)
-                            }.getOrThrow()
-                        } else {
-                            runCatching {
-                                p.bindToLifecycle(owner, selector, preview, imageCapture)
-                            }.recoverCatching {
-                                p.bindToLifecycle(owner, selector, preview)
-                            }.getOrThrow()
-                        }
+                        cameraInstance = runCatching {
+                            p.unbindAll()
+                            val vcFhd = createVideoCapture(preferHdFor3StreamCompatibility = false)
+                            videoCapture = vcFhd
+                            p.bindToLifecycle(owner, selector, newPreview(), vcFhd)
+                        }.recoverCatching {
+                            p.unbindAll()
+                            videoCapture = null
+                            p.bindToLifecycle(owner, selector, newPreview())
+                        }.getOrThrow()
                     }
                 }
+
+                boundCamera = cameraInstance
+                isAnalysisActive = analysisBound
                 state = State.Ready
+
+                // Re-apply exposure lock if actor already locked exposure before stage transition
+                if (isExposureLocked) {
+                    setExposureLocked(true)
+                }
             }.onFailure { e ->
                 android.util.Log.e("CameraController", "Camera bind failed", e)
+                isAnalysisActive = false
                 state = State.Failed
             }
         }, ContextCompat.getMainExecutor(context))
     }
 
-    /** Why the last [startRecording] didn't start, for the screen to show ([RecordStartErrorDialog]);
-     *  null once it's been seen or a recording did start. */
     var startError by mutableStateOf<String?>(null)
         private set
 
     fun clearStartError() { startError = null }
 
-    /** Starts a real recording and returns true. With nothing to record with (camera not bound yet,
-     *  or this device can't bind video) it returns false and sets [startError] — it used to run the
-     *  timer anyway, so the actor performed a whole take that was never saved. */
     @SuppressLint("MissingPermission")
     fun startRecording(): Boolean {
         val vc = videoCapture
         if (state != State.Ready || vc == null) {
             startError = when {
                 state == State.Failed -> "The camera couldn't start on this device."
-                state == State.Ready -> "This camera can't record video on this device, only photos."
+                state == State.Ready -> "The camera is finishing setup. Give it a second and try again."
                 else -> "The camera isn't ready yet. Give it a second and try again."
             }
             return false
@@ -272,12 +384,22 @@ class CameraController(private val context: Context) {
             val withAudio = if (granted(context, Manifest.permission.RECORD_AUDIO)) pending.withAudioEnabled() else pending
             withAudio.start(ContextCompat.getMainExecutor(context)) { event ->
                 if (event is VideoRecordEvent.Finalize) {
-                    val uri = if (event.hasError()) null else event.outputResults.outputUri
+                    val uri = if (event.hasError()) {
+                        file.delete()
+                        null
+                    } else {
+                        event.outputResults.outputUri
+                    }
+                    recording = null
                     lastRecording = uri
                     state = State.Ready
                     val callback = onFinalized
                     onFinalized = null
                     callback?.invoke(uri)
+                    if (pendingRebind) {
+                        pendingRebind = false
+                        requestRebind()
+                    }
                 }
             }
         }
@@ -286,20 +408,24 @@ class CameraController(private val context: Context) {
             startError = "The recording couldn't start. Try again, or close and reopen the camera."
             return false
         }
+        recordingStartRealtimeMs = SystemClock.elapsedRealtime()
         startError = null
         state = State.Recording
         elapsed = 0f
         return true
     }
 
-    /** Stops the current recording. [onFinalized] runs once the file is fully written (null if
-     *  nothing real was recorded), even if the calling screen has gone by then. */
     fun stopRecording(onFinalized: ((Uri?) -> Unit)? = null) {
         val r = recording
-        recording = null
         if (r != null) {
             this.onFinalized = onFinalized
-            r.stop()
+            // Keep `recording` non-null until VideoRecordEvent.Finalize fires so rebind() never calls unbindAll() mid-flush!
+            runCatching { r.stop() }.onFailure {
+                recording = null
+                state = if (provider != null) State.Ready else State.Idle
+                this.onFinalized = null
+                onFinalized?.invoke(null)
+            }
         } else {
             state = if (provider != null) State.Ready else State.Idle
             onFinalized?.invoke(null)
@@ -312,21 +438,24 @@ class CameraController(private val context: Context) {
         val p = provider
         val owner = boundOwner
         val selector = boundSelector
+        val pv = boundPreviewView
         if (p == null || state != State.Ready) {
-            // Camera not ready or unavailable: report failure rather than saving a placeholder
-            // image as if it were the actor's real headshot.
             onResult(null)
             return
         }
 
-        val takeAction = {
+        val takeAction = { onComplete: () -> Unit ->
             imageCapture.takePicture(
                 ImageCapture.OutputFileOptions.Builder(file).build(),
                 ContextCompat.getMainExecutor(context),
                 object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(output: ImageCapture.OutputFileResults) = onResult(output.savedUri ?: Uri.fromFile(file))
+                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                        onComplete()
+                        onResult(output.savedUri ?: Uri.fromFile(file))
+                    }
                     override fun onError(exception: ImageCaptureException) {
                         android.util.Log.e("CameraController", "capturePhoto failed", exception)
+                        onComplete()
                         onResult(null)
                     }
                 },
@@ -334,38 +463,19 @@ class CameraController(private val context: Context) {
         }
 
         if (p.isBound(imageCapture)) {
-            takeAction()
-        } else if (owner != null && selector != null) {
-            // On devices with limited stream combinations where Preview + Analysis was bound,
-            // temporarily swap Analysis with ImageCapture to take the high-res shot, then restore.
-            val analysis = imageAnalysis
+            takeAction {}
+        } else if (owner != null && selector != null && pv != null) {
+            // Clean full-session swap for constrained devices where Preview + Analysis was bound without ImageCapture
             runCatching {
-                if (analysis != null) p.unbind(analysis)
-                p.bindToLifecycle(owner, selector, imageCapture)
-                imageCapture.takePicture(
-                    ImageCapture.OutputFileOptions.Builder(file).build(),
-                    ContextCompat.getMainExecutor(context),
-                    object : ImageCapture.OnImageSavedCallback {
-                        override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                            runCatching {
-                                p.unbind(imageCapture)
-                                if (analysis != null) p.bindToLifecycle(owner, selector, analysis)
-                            }
-                            onResult(output.savedUri ?: Uri.fromFile(file))
-                        }
-                        override fun onError(exception: ImageCaptureException) {
-                            android.util.Log.e("CameraController", "capturePhoto swap failed", exception)
-                            runCatching {
-                                p.unbind(imageCapture)
-                                if (analysis != null) p.bindToLifecycle(owner, selector, analysis)
-                            }
-                            onResult(null)
-                        }
-                    },
-                )
+                p.unbindAll()
+                val preview = Preview.Builder().build().also { it.setSurfaceProvider(pv.surfaceProvider) }
+                p.bindToLifecycle(owner, selector, preview, imageCapture)
+                takeAction {
+                    requestRebind()
+                }
             }.onFailure { e ->
                 android.util.Log.e("CameraController", "Failed to bind imageCapture for photo", e)
-                runCatching { if (analysis != null) p.bindToLifecycle(owner, selector, analysis) }
+                requestRebind()
                 onResult(null)
             }
         } else {
@@ -376,17 +486,23 @@ class CameraController(private val context: Context) {
     internal suspend fun tick() {
         while (true) {
             delay(100)
-            if (state == State.Recording) elapsed += 0.1f
+            if (state == State.Recording && recordingStartRealtimeMs > 0L) {
+                elapsed = ((SystemClock.elapsedRealtime() - recordingStartRealtimeMs).coerceAtLeast(0L)) / 1000f
+            }
         }
     }
 
     fun release() {
-        recording?.stop()
+        runCatching { recording?.stop() }
+        recording = null
         imageAnalysis?.clearAnalyzer()
         imageAnalysis = null
+        currentAnalyzer = null
+        isAnalysisActive = false
+        boundCamera = null
         runCatching { analyzerExecutor?.shutdown() }
         analyzerExecutor = null
-        provider?.unbindAll()
+        runCatching { provider?.unbindAll() }
     }
 
     companion object {
@@ -405,9 +521,7 @@ fun rememberCameraController(): CameraController {
 }
 
 /**
- * Full-bleed camera feed. Requests camera + audio permissions cleanly.
- * When permissions are missing or camera hardware is unavailable, renders a sleek studio viewfinder
- * with clear status instead of any bundled stock photos.
+ * Full-bleed camera feed. Requests camera + audio permissions in a single unified system dialog.
  */
 @Composable
 fun CameraBackground(
@@ -415,26 +529,44 @@ fun CameraBackground(
     modifier: Modifier = Modifier,
     front: Boolean = true,
     photoOnly: Boolean = false,
+    needsVideo: Boolean = !photoOnly,
 ) {
+    val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        controller.hasPermission = result[Manifest.permission.CAMERA] == true
+        controller.hasPermission = result[Manifest.permission.CAMERA] == true ||
+            CameraController.granted(context, Manifest.permission.CAMERA)
+        controller.hasMicPermission = result[Manifest.permission.RECORD_AUDIO] == true ||
+            CameraController.granted(context, Manifest.permission.RECORD_AUDIO)
     }
     LaunchedEffect(Unit) {
-        if (!controller.hasPermission) {
+        controller.hasPermission = CameraController.granted(context, Manifest.permission.CAMERA)
+        controller.hasMicPermission = CameraController.granted(context, Manifest.permission.RECORD_AUDIO)
+        if (!controller.hasPermission || !controller.hasMicPermission) {
             launcher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
         }
     }
-    Box(modifier.fillMaxSize().clipToBounds().background(OT.camera.bg)) {
+    Box(
+        modifier
+            .fillMaxSize()
+            .clipToBounds()
+            .background(OT.camera.bg)
+            .onSizeChanged { size ->
+                if (size.width > 0 && size.height > 0) {
+                    controller.viewAspect = size.width.toFloat() / size.height.toFloat()
+                }
+            },
+    ) {
         if (controller.hasPermission && controller.state != CameraController.State.Failed) {
-            val context = LocalContext.current
             val previewView = remember {
                 PreviewView(context).apply {
                     scaleType = PreviewView.ScaleType.FILL_CENTER
-                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    implementationMode = PreviewView.ImplementationMode.PERFORMANCE
                 }
             }
-            LaunchedEffect(front, photoOnly) { controller.bind(owner, previewView, front, photoOnly) }
+            LaunchedEffect(front, photoOnly, needsVideo) {
+                controller.bind(owner, previewView, front, photoOnly, needsVideo)
+            }
             AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
         } else if (!controller.hasPermission) {
             Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -450,7 +582,7 @@ fun CameraBackground(
                     }
                     Text("Camera Access Required", style = OT.type.title, color = Color.White, textAlign = TextAlign.Center)
                     Text(
-                        "OneTake needs camera access to capture your headshots and record takes.",
+                        "OneTake needs camera and mic access to frame your shot and record takes.",
                         style = OT.type.callout,
                         color = Color.White.copy(alpha = 0.7f),
                         textAlign = TextAlign.Center,
@@ -482,6 +614,106 @@ fun CameraBackground(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Live Cinema Framing Assist Viewfinder Overlay:
+ * Draws subtle rule-of-thirds composition lines, upper-third self-tape eyeline mark (or full-body headroom/footroom guides),
+ * and smooth animated corner tracking brackets around the detected actor's face.
+ */
+@Composable
+fun FramingAssistOverlay(
+    check: LiveTapeCheckEngine.LiveTapeCheck,
+    modifier: Modifier = Modifier,
+    target: LiveTapeCheckEngine.FramingTarget = LiveTapeCheckEngine.FramingTarget.MediumCloseUp,
+    showGrid: Boolean = true,
+    showFaceReticle: Boolean = true,
+) {
+    val isGood = check.isFramingPassed && check.isEyelinePassed
+    val reticleColor by animateColorAsState(
+        targetValue = when {
+            check.faceBoxNorm == null -> Color.White.copy(alpha = 0.35f)
+            isGood -> Color(0xFF34C759)
+            else -> Color(0xFFFFB340)
+        },
+        animationSpec = tween(180),
+        label = "framingReticleColor",
+    )
+
+    val box = check.faceBoxNorm
+    val animLeft by animateFloatAsState(box?.left ?: 0.32f, tween(110), label = "faceL")
+    val animTop by animateFloatAsState(box?.top ?: 0.22f, tween(110), label = "faceT")
+    val animRight by animateFloatAsState(box?.right ?: 0.68f, tween(110), label = "faceR")
+    val animBottom by animateFloatAsState(box?.bottom ?: 0.50f, tween(110), label = "faceB")
+
+    Canvas(modifier = modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+        if (w <= 0f || h <= 0f) return@Canvas
+
+        if (showGrid) {
+            val gridColor = Color.White.copy(alpha = 0.14f)
+            val stroke = 1.dp.toPx()
+            // Rule of thirds vertical lines
+            drawLine(gridColor, Offset(w / 3f, 0f), Offset(w / 3f, h), strokeWidth = stroke)
+            drawLine(gridColor, Offset(2f * w / 3f, 0f), Offset(2f * w / 3f, h), strokeWidth = stroke)
+            // Horizontal thirds
+            drawLine(gridColor, Offset(0f, h / 3f), Offset(w, h / 3f), strokeWidth = stroke)
+            drawLine(gridColor, Offset(0f, 2f * h / 3f), Offset(w, 2f * h / 3f), strokeWidth = stroke)
+
+            // Target eyeline / headroom dashed guide
+            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+            val eyelineY = if (target == LiveTapeCheckEngine.FramingTarget.FullBody) h * 0.14f else h * 0.333f
+            val eyelineColor = if (check.isEyelinePassed) {
+                Color(0xFF34C759).copy(alpha = 0.45f)
+            } else {
+                Color(0xFFFFB340).copy(alpha = 0.45f)
+            }
+            drawLine(
+                color = eyelineColor,
+                start = Offset(w * 0.18f, eyelineY),
+                end = Offset(w * 0.82f, eyelineY),
+                strokeWidth = 1.5.dp.toPx(),
+                pathEffect = dashEffect,
+            )
+            if (target == LiveTapeCheckEngine.FramingTarget.FullBody) {
+                // Footroom baseline mark for full-length head-to-toe shot
+                val footY = h * 0.88f
+                drawLine(
+                    color = Color.White.copy(alpha = 0.28f),
+                    start = Offset(w * 0.25f, footY),
+                    end = Offset(w * 0.75f, footY),
+                    strokeWidth = 1.5.dp.toPx(),
+                    pathEffect = dashEffect,
+                )
+            }
+        }
+
+        if (showFaceReticle && box != null) {
+            val padX = (w * 0.025f)
+            val padY = (h * 0.018f)
+            val l = (animLeft * w - padX).coerceIn(8f, w - 24f)
+            val t = (animTop * h - padY).coerceIn(8f, h - 24f)
+            val r = (animRight * w + padX).coerceIn(l + 24f, w - 8f)
+            val b = (animBottom * h + padY).coerceIn(t + 24f, h - 8f)
+
+            val corner = minOf(r - l, b - t) * 0.24f
+            val sw = 2.5.dp.toPx()
+
+            // Top-left bracket
+            drawLine(reticleColor, Offset(l, t), Offset(l + corner, t), sw, StrokeCap.Round)
+            drawLine(reticleColor, Offset(l, t), Offset(l, t + corner), sw, StrokeCap.Round)
+            // Top-right bracket
+            drawLine(reticleColor, Offset(r, t), Offset(r - corner, t), sw, StrokeCap.Round)
+            drawLine(reticleColor, Offset(r, t), Offset(r, t + corner), sw, StrokeCap.Round)
+            // Bottom-left bracket
+            drawLine(reticleColor, Offset(l, b), Offset(l + corner, b), sw, StrokeCap.Round)
+            drawLine(reticleColor, Offset(l, b), Offset(l, b - corner), sw, StrokeCap.Round)
+            // Bottom-right bracket
+            drawLine(reticleColor, Offset(r, b), Offset(r - corner, b), sw, StrokeCap.Round)
+            drawLine(reticleColor, Offset(r, b), Offset(r, b - corner), sw, StrokeCap.Round)
         }
     }
 }

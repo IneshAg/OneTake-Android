@@ -5,9 +5,10 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.graphics.Rect
-import android.graphics.RectF
 import android.media.Image
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.core.net.toUri
@@ -25,8 +26,8 @@ import java.nio.ByteBuffer
 import kotlin.math.abs
 
 /**
- * Real-time framing, lighting, and angle analysis for headshots, plus face-centered 4:5 auto-cropping.
- * Powers live dynamic guidance in HeadshotFlowScreen and ensures captured headshots match industry standard 4:5.
+ * Real-time framing, lighting, and angle analysis for headshots, plus face-centered or manual 4:5 portrait cropping.
+ * Powers live dynamic guidance in HeadshotFlowScreen and ensures captured or imported headshots match industry 4:5.
  */
 object HeadshotFramingEngine {
 
@@ -39,34 +40,67 @@ object HeadshotFramingEngine {
         val angleLabel: String,
         val isAngleGood: Boolean,
         val isCenteredAndReady: Boolean,
-        val faceBoxNorm: RectF? = null,
+        val faceBoxNorm: NormalizedBox? = null,
+    )
+
+    data class ExifTransform(
+        val rotationDegrees: Float,
+        val flipHorizontal: Boolean,
     )
 
     private val detector by lazy {
+        // ACCURATE + tracking keeps 30-55 degree Left/Right profile head turns locked without dropouts,
+        // while CLASSIFICATION_MODE_NONE avoids wasted smile/blink neural inference.
         val options = FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
+            .enableTracking()
             .build()
         FaceDetection.getClient(options)
     }
 
     /**
+     * Resolves all 8 EXIF orientation constants (including Samsung front-camera TRANSPOSE/TRANSVERSE)
+     * plus optional selfie horizontal mirroring.
+     */
+    fun resolveExifTransform(
+        exifOrientation: Int,
+        extraHorizontalMirror: Boolean = false,
+    ): ExifTransform {
+        val (deg, exifFlipH) = when (exifOrientation) {
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> 0f to true
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f to false
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> 180f to true
+            ExifInterface.ORIENTATION_TRANSPOSE -> 90f to true
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f to false
+            ExifInterface.ORIENTATION_TRANSVERSE -> 270f to true
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f to false
+            else -> 0f to false
+        }
+        return ExifTransform(
+            rotationDegrees = deg,
+            flipHorizontal = exifFlipH xor extraHorizontalMirror,
+        )
+    }
+
+    /**
      * CameraX ImageAnalysis.Analyzer that inspects live camera frames for face centering, head angle,
-     * and scene lighting. Runs on a background executor.
+     * and scene lighting. Runs on a background executor and dispatches UI updates on the main thread.
      */
     class LiveAnalyzer(
-        var targetAngle: HeadshotAngle,
-        var isFrontCamera: Boolean,
+        @Volatile var targetAngle: HeadshotAngle,
+        @Volatile var isFrontCamera: Boolean,
+        @Volatile var viewAspect: Float? = null,
         private val onGuidanceUpdate: (FramingGuidance) -> Unit,
     ) : ImageAnalysis.Analyzer {
 
+        private val mainHandler = Handler(Looper.getMainLooper())
         private var lastAnalyzedMs = 0L
 
         @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
         override fun analyze(imageProxy: ImageProxy) {
             val now = System.currentTimeMillis()
-            // Throttle to ~12 FPS for smooth UI without exhausting CPU
-            if (now - lastAnalyzedMs < 80L) {
+            if (now - lastAnalyzedMs < 85L) {
                 imageProxy.close()
                 return
             }
@@ -79,8 +113,7 @@ object HeadshotFramingEngine {
             }
 
             try {
-                // 1. Calculate lighting from Y-plane luminance buffer
-                val luma = calculateLuminance(imageProxy.planes[0].buffer)
+                val luma = calculateLuminance(imageProxy.planes[0].buffer).toInt()
                 val isLightTooDark = luma < 45
                 val isLightTooBright = luma > 218
                 val isLightGood = !isLightTooDark && !isLightTooBright
@@ -90,11 +123,13 @@ object HeadshotFramingEngine {
                     else -> "soft and even"
                 }
 
-                // 2. Detect face and orientation
                 val rotation = imageProxy.imageInfo.rotationDegrees
                 val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
                 val uprightWidth = if (rotation == 90 || rotation == 270) mediaImage.height else mediaImage.width
                 val uprightHeight = if (rotation == 90 || rotation == 270) mediaImage.width else mediaImage.height
+                val angleSnapshot = targetAngle
+                val frontSnapshot = isFrontCamera
+                val aspectSnapshot = viewAspect
 
                 detector.process(inputImage)
                     .addOnSuccessListener { faces ->
@@ -102,49 +137,36 @@ object HeadshotFramingEngine {
                             faces = faces,
                             uprightWidth = uprightWidth,
                             uprightHeight = uprightHeight,
-                            targetAngle = targetAngle,
-                            isFrontCamera = isFrontCamera,
+                            targetAngle = angleSnapshot,
+                            isFrontCamera = frontSnapshot,
                             lightLabel = lightLabel,
                             isLightGood = isLightGood,
+                            viewAspect = aspectSnapshot,
                         )
-                        onGuidanceUpdate(guidance)
+                        mainHandler.post { onGuidanceUpdate(guidance) }
                     }
                     .addOnFailureListener {
-                        onGuidanceUpdate(
-                            FramingGuidance(
-                                headline = "Hold still",
-                                lightLabel = lightLabel,
-                                isLightGood = isLightGood,
-                                angleLabel = "measuring…",
-                                isAngleGood = false,
-                                isCenteredAndReady = false,
-                            )
+                        val fallback = FramingGuidance(
+                            headline = "Hold still",
+                            lightLabel = lightLabel,
+                            isLightGood = isLightGood,
+                            angleLabel = "measuring…",
+                            isAngleGood = false,
+                            isCenteredAndReady = false,
                         )
+                        mainHandler.post { onGuidanceUpdate(fallback) }
                     }
                     .addOnCompleteListener {
                         imageProxy.close()
                     }
-            } catch (e: Throwable) {
-                android.util.Log.e("HeadshotFramingEngine", "LiveAnalyzer frame analysis failed", e)
+            } catch (t: Throwable) {
+                android.util.Log.e("HeadshotFramingEngine", "LiveAnalyzer frame analysis failed", t)
                 imageProxy.close()
             }
         }
 
-        private fun calculateLuminance(buffer: ByteBuffer): Int {
-            buffer.rewind()
-            val remaining = buffer.remaining()
-            if (remaining == 0) return 128
-            var sum = 0L
-            var count = 0
-            val step = maxOf(1, remaining / 300) // Sample ~300 pixels across the frame
-            var i = 0
-            while (i < remaining) {
-                sum += (buffer.get(i).toInt() and 0xFF)
-                count++
-                i += step
-            }
-            return if (count > 0) (sum / count).toInt() else 128
-        }
+        private fun calculateLuminance(buffer: ByteBuffer): Double =
+            LiveTapeCheckEngine.calculateLuminance(buffer)
     }
 
     /**
@@ -158,6 +180,7 @@ object HeadshotFramingEngine {
         isFrontCamera: Boolean,
         lightLabel: String,
         isLightGood: Boolean,
+        viewAspect: Float? = null,
     ): FramingGuidance {
         if (faces.isEmpty() || uprightWidth <= 0 || uprightHeight <= 0) {
             return FramingGuidance(
@@ -171,7 +194,7 @@ object HeadshotFramingEngine {
             )
         }
 
-        val primaryFace = faces.maxByOrNull { (it.boundingBox.bottom - it.boundingBox.top) } ?: faces.first()
+        val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() } ?: faces.first()
         val box = primaryFace.boundingBox
 
         return evaluateFramingMetrics(
@@ -187,6 +210,7 @@ object HeadshotFramingEngine {
             isFrontCamera = isFrontCamera,
             lightLabel = lightLabel,
             isLightGood = isLightGood,
+            viewAspect = viewAspect,
         )
     }
 
@@ -203,22 +227,34 @@ object HeadshotFramingEngine {
         isFrontCamera: Boolean,
         lightLabel: String,
         isLightGood: Boolean,
+        viewAspect: Float? = null,
     ): FramingGuidance {
-        val faceCenterX = (faceLeft + faceRight).toFloat() / 2f
-        val faceCenterY = (faceTop + faceBottom).toFloat() / 2f
-        val faceHeight = (faceBottom - faceTop).toFloat()
+        if (uprightWidth <= 0 || uprightHeight <= 0) {
+            return FramingGuidance(
+                headline = "Step into the frame",
+                lightLabel = lightLabel,
+                isLightGood = isLightGood,
+                angleLabel = "square",
+                isAngleGood = false,
+                isCenteredAndReady = false,
+                faceBoxNorm = null,
+            )
+        }
 
-        val rawNormX = faceCenterX / uprightWidth
-        val screenX = if (isFrontCamera) 1f - rawNormX else rawNormX
-        val screenY = faceCenterY / uprightHeight
-        val normHeight = faceHeight / uprightHeight
-
-        val normRect = RectF(
-            faceLeft.toFloat() / uprightWidth,
-            faceTop.toFloat() / uprightHeight,
-            faceRight.toFloat() / uprightWidth,
-            faceBottom.toFloat() / uprightHeight,
+        val visibleBox = LiveTapeCheckEngine.sensorToVisibleScreenBox(
+            faceLeft = faceLeft.toFloat(),
+            faceTop = faceTop.toFloat(),
+            faceRight = faceRight.toFloat(),
+            faceBottom = faceBottom.toFloat(),
+            uprightWidth = uprightWidth,
+            uprightHeight = uprightHeight,
+            isFrontCamera = isFrontCamera,
+            viewAspect = viewAspect,
         )
+
+        val screenX = visibleBox.centerX
+        val screenY = visibleBox.centerY
+        val normHeight = visibleBox.height
 
         val isAngleGood: Boolean
         val angleLabel: String
@@ -226,52 +262,58 @@ object HeadshotFramingEngine {
 
         when (targetAngle) {
             HeadshotAngle.Front -> {
-                val yawOff = abs(yaw) > 16f
-                val rollOff = abs(roll) > 15f
+                val yawOff = abs(yaw) > 15f
+                val rollOff = abs(roll) > 14f
                 if (yawOff) angleInstruction = "Face camera directly"
                 else if (rollOff) angleInstruction = "Keep head level"
                 isAngleGood = !yawOff && !rollOff
                 angleLabel = if (isAngleGood) "square" else "turned away"
             }
             HeadshotAngle.Left -> {
-                // Front camera: looking left from user's perspective
-                val inRange = if (isFrontCamera) yaw in 16f..55f else yaw in -55f..-16f
+                val inRange = if (isFrontCamera) yaw in 15f..58f else yaw in -58f..-15f
                 if (!inRange) {
-                    angleInstruction = if ((isFrontCamera && yaw < 16f) || (!isFrontCamera && yaw > -16f)) "Turn head left" else "Turn slightly forward"
+                    angleInstruction = if ((isFrontCamera && yaw < 15f) || (!isFrontCamera && yaw > -15f)) {
+                        "Turn head left"
+                    } else {
+                        "Turn slightly forward"
+                    }
                 }
                 isAngleGood = inRange
                 angleLabel = if (isAngleGood) "profile left" else "turn left"
             }
             HeadshotAngle.Right -> {
-                val inRange = if (isFrontCamera) yaw in -55f..-16f else yaw in 16f..55f
+                val inRange = if (isFrontCamera) yaw in -58f..-15f else yaw in 15f..58f
                 if (!inRange) {
-                    angleInstruction = if ((isFrontCamera && yaw > -16f) || (!isFrontCamera && yaw < 16f)) "Turn head right" else "Turn slightly forward"
+                    angleInstruction = if ((isFrontCamera && yaw > -15f) || (!isFrontCamera && yaw < 15f)) {
+                        "Turn head right"
+                    } else {
+                        "Turn slightly forward"
+                    }
                 }
                 isAngleGood = inRange
                 angleLabel = if (isAngleGood) "profile right" else "turn right"
             }
         }
 
-        // Evaluate Positioning & Distance
         val headline: String
         val isFramingCentered: Boolean
 
-        if (normHeight < 0.26f) {
+        if (normHeight < 0.25f) {
             headline = "Move closer"
             isFramingCentered = false
-        } else if (normHeight > 0.68f) {
+        } else if (normHeight > 0.65f) {
             headline = "Step back"
             isFramingCentered = false
-        } else if (screenX < 0.38f) {
+        } else if (screenX < 0.39f) {
             headline = "Move right"
             isFramingCentered = false
-        } else if (screenX > 0.62f) {
+        } else if (screenX > 0.61f) {
             headline = "Move left"
             isFramingCentered = false
-        } else if (screenY < 0.26f) {
+        } else if (screenY < 0.27f) {
             headline = "Raise camera"
             isFramingCentered = false
-        } else if (screenY > 0.60f) {
+        } else if (screenY > 0.59f) {
             headline = "Lower camera"
             isFramingCentered = false
         } else if (angleInstruction != null) {
@@ -279,7 +321,11 @@ object HeadshotFramingEngine {
             isFramingCentered = false
         } else {
             isFramingCentered = true
-            headline = if (targetAngle == HeadshotAngle.Front) "Hold still — you’re centred" else "Hold still — that’s your profile"
+            headline = if (targetAngle == HeadshotAngle.Front) {
+                "Hold still — you’re centred"
+            } else {
+                "Hold still — that’s your profile"
+            }
         }
 
         val isReady = isFramingCentered && isAngleGood && isLightGood
@@ -291,51 +337,115 @@ object HeadshotFramingEngine {
             angleLabel = angleLabel,
             isAngleGood = isAngleGood,
             isCenteredAndReady = isReady,
-            faceBoxNorm = normRect,
+            faceBoxNorm = visibleBox,
         )
     }
 
     /**
-     * Rotates captured JPEG upright according to Exif orientation, locates the face, and crops
-     * to casting-standard 4:5 portrait ratio with natural headroom.
+     * Decodes an upright Bitmap from either a local file:// URI or a content:// gallery URI,
+     * applying EXIF orientation, optional selfie mirroring, and extra user 90-degree rotation.
      */
-    suspend fun processAndCropHeadshot(context: Context, rawUri: Uri): Uri? = withContext(Dispatchers.IO) {
-        val rawPath = rawUri.path ?: return@withContext null
-        val rawFile = File(rawPath)
-        if (!rawFile.exists()) return@withContext null
-
-        return@withContext runCatching {
-            // 1. Decode bitmap with orientation
-            val exif = ExifInterface(rawFile.absolutePath)
-            val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-            val rotationDegrees = when (orientation) {
-                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-                else -> 0f
-            }
-
-            val originalBitmap = BitmapFactory.decodeFile(rawFile.absolutePath) ?: return@withContext null
-            val uprightBitmap = if (rotationDegrees != 0f) {
-                val matrix = Matrix().apply { postRotate(rotationDegrees) }
-                Bitmap.createBitmap(originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true).also {
-                    if (it !== originalBitmap) originalBitmap.recycle()
-                }
+    suspend fun loadUprightHeadshotBitmap(
+        context: Context,
+        sourceUri: Uri,
+        mirrorHorizontally: Boolean = false,
+        extraRotationDegrees: Int = 0,
+        maxDimension: Int = 2400,
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        runCatching {
+            val exifOrientation = if (sourceUri.scheme == "file" || sourceUri.scheme == null) {
+                val path = sourceUri.path ?: return@withContext null
+                ExifInterface(path).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
             } else {
-                originalBitmap
+                context.contentResolver.openInputStream(sourceUri)?.use { stream ->
+                    ExifInterface(stream).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+                } ?: ExifInterface.ORIENTATION_NORMAL
             }
 
-            // 2. Detect face in upright bitmap for optimal 4:5 centering
-            val inputImage = InputImage.fromBitmap(uprightBitmap, 0)
-            val faces = runCatching { Tasks.await(detector.process(inputImage)) }.getOrNull().orEmpty()
-            val face = faces.maxByOrNull { it.boundingBox.height() }
+            // Bounds-only pass to prevent OOM on 48MP+ camera roll photos
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            if (sourceUri.scheme == "file" || sourceUri.scheme == null) {
+                val path = sourceUri.path ?: return@withContext null
+                BitmapFactory.decodeFile(path, boundsOpts)
+            } else {
+                context.contentResolver.openInputStream(sourceUri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, boundsOpts)
+                }
+            }
+            var sampleSize = 1
+            val longest = maxOf(boundsOpts.outWidth, boundsOpts.outHeight)
+            while (longest / sampleSize > maxDimension * 2) {
+                sampleSize *= 2
+            }
 
-            // 3. Compute 4:5 crop bounds
-            val cropRect = compute4by5CropRect(
-                bitmapWidth = uprightBitmap.width,
-                bitmapHeight = uprightBitmap.height,
-                faceBox = face?.boundingBox,
-            )
+            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val rawBitmap = if (sourceUri.scheme == "file" || sourceUri.scheme == null) {
+                val path = sourceUri.path ?: return@withContext null
+                BitmapFactory.decodeFile(path, decodeOpts)
+            } else {
+                context.contentResolver.openInputStream(sourceUri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, decodeOpts)
+                }
+            } ?: return@withContext null
+
+            val transform = resolveExifTransform(exifOrientation, mirrorHorizontally)
+            val totalRotation = ((transform.rotationDegrees + extraRotationDegrees) % 360f + 360f) % 360f
+            if (totalRotation == 0f && !transform.flipHorizontal) {
+                rawBitmap
+            } else {
+                val matrix = Matrix().apply {
+                    if (totalRotation != 0f) postRotate(totalRotation)
+                    if (transform.flipHorizontal) postScale(-1f, 1f)
+                }
+                Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true).also {
+                    if (it !== rawBitmap) rawBitmap.recycle()
+                }
+            }
+        }.onFailure {
+            android.util.Log.e("HeadshotFramingEngine", "Failed to decode upright headshot bitmap", it)
+        }.getOrNull()
+    }
+
+    /**
+     * Rotates captured or imported photo upright, applies auto face-centered or manual pan/zoom 4:5 portrait crop,
+     * and saves to permanent headshots storage.
+     */
+    suspend fun processAndCropHeadshot(
+        context: Context,
+        rawUri: Uri,
+        mirrorHorizontally: Boolean = false,
+        extraRotationDegrees: Int = 0,
+        manualZoom: Float? = null,
+        manualPanXNorm: Float = 0f,
+        manualPanYNorm: Float = 0f,
+        deleteRawIfTempFile: Boolean = true,
+    ): Uri? = withContext(Dispatchers.IO) {
+        runCatching {
+            val uprightBitmap = loadUprightHeadshotBitmap(
+                context = context,
+                sourceUri = rawUri,
+                mirrorHorizontally = mirrorHorizontally,
+                extraRotationDegrees = extraRotationDegrees,
+            ) ?: return@withContext null
+
+            val cropRect = if (manualZoom != null) {
+                computeManual4by5CropRect(
+                    bitmapWidth = uprightBitmap.width,
+                    bitmapHeight = uprightBitmap.height,
+                    zoom = manualZoom,
+                    panXNorm = manualPanXNorm,
+                    panYNorm = manualPanYNorm,
+                )
+            } else {
+                val inputImage = InputImage.fromBitmap(uprightBitmap, 0)
+                val faces = runCatching { Tasks.await(detector.process(inputImage)) }.getOrNull().orEmpty()
+                val face = faces.maxByOrNull { it.boundingBox.height() }
+                compute4by5CropRect(
+                    bitmapWidth = uprightBitmap.width,
+                    bitmapHeight = uprightBitmap.height,
+                    faceBox = face?.boundingBox,
+                )
+            }
 
             val croppedBitmap = Bitmap.createBitmap(
                 uprightBitmap,
@@ -346,7 +456,6 @@ object HeadshotFramingEngine {
             )
             if (croppedBitmap !== uprightBitmap) uprightBitmap.recycle()
 
-            // 4. Save cropped headshot to permanent storage
             val headshotsDir = File(context.filesDir, "headshots").apply { mkdirs() }
             val outputFile = File(headshotsDir, "headshot-${System.currentTimeMillis()}.jpg")
             FileOutputStream(outputFile).use { out ->
@@ -354,9 +463,11 @@ object HeadshotFramingEngine {
             }
             croppedBitmap.recycle()
 
-            // Remove temporary uncropped capture
-            if (rawFile.absolutePath != outputFile.absolutePath) {
-                rawFile.delete()
+            if (deleteRawIfTempFile && (rawUri.scheme == "file" || rawUri.scheme == null)) {
+                val rawFile = rawUri.path?.let(::File)
+                if (rawFile != null && rawFile.exists() && rawFile.absolutePath != outputFile.absolutePath) {
+                    rawFile.delete()
+                }
             }
 
             outputFile.toUri()
@@ -377,7 +488,43 @@ object HeadshotFramingEngine {
     }
 
     /**
-     * Computes a 4:5 aspect ratio crop centered on the face with golden ratio headroom.
+     * Computes a manual 4:5 crop rect given zoom (>= 1.0f) and normalized pan offsets [-1f..+1f].
+     */
+    fun computeManual4by5CropRect(
+        bitmapWidth: Int,
+        bitmapHeight: Int,
+        zoom: Float = 1f,
+        panXNorm: Float = 0f,
+        panYNorm: Float = 0f,
+    ): HeadshotCropRect {
+        val targetAspect = 4f / 5f
+        val safeW = bitmapWidth.coerceAtLeast(4)
+        val safeH = bitmapHeight.coerceAtLeast(5)
+        val baseWidth: Int
+        val baseHeight: Int
+        if (safeW.toFloat() / safeH > targetAspect) {
+            baseHeight = safeH
+            baseWidth = (baseHeight * targetAspect).toInt().coerceAtLeast(4)
+        } else {
+            baseWidth = safeW
+            baseHeight = (baseWidth / targetAspect).toInt().coerceAtLeast(5)
+        }
+        val clampedZoom = zoom.coerceIn(1f, 3.5f)
+        val cropWidth = (baseWidth / clampedZoom).toInt().coerceIn(4, safeW)
+        val cropHeight = (baseHeight / clampedZoom).toInt().coerceIn(5, safeH)
+
+        val maxLeft = (safeW - cropWidth).coerceAtLeast(0)
+        val maxTop = (safeH - cropHeight).coerceAtLeast(0)
+        val centerLeft = maxLeft * 0.5f
+        val centerTop = maxTop * 0.5f
+
+        val left = (centerLeft + panXNorm.coerceIn(-1f, 1f) * centerLeft).toInt().coerceIn(0, maxLeft)
+        val top = (centerTop + panYNorm.coerceIn(-1f, 1f) * centerTop).toInt().coerceIn(0, maxTop)
+        return HeadshotCropRect(left, top, cropWidth, cropHeight)
+    }
+
+    /**
+     * Computes a 4:5 aspect ratio crop centered on the face with natural headroom.
      */
     fun compute4by5CropRect(
         bitmapWidth: Int,
@@ -385,19 +532,7 @@ object HeadshotFramingEngine {
         faceBox: Rect? = null,
     ): HeadshotCropRect {
         if (faceBox == null || (faceBox.right <= faceBox.left) || (faceBox.bottom <= faceBox.top)) {
-            val targetAspect = 4f / 5f
-            val cropWidth: Int
-            val cropHeight: Int
-            if (bitmapWidth.toFloat() / bitmapHeight > targetAspect) {
-                cropHeight = bitmapHeight
-                cropWidth = (cropHeight * targetAspect).toInt()
-            } else {
-                cropWidth = bitmapWidth
-                cropHeight = (cropWidth / targetAspect).toInt()
-            }
-            val left = (bitmapWidth - cropWidth) / 2
-            val top = (bitmapHeight - cropHeight) / 2
-            return HeadshotCropRect(left, top, cropWidth, cropHeight)
+            return computeManual4by5CropRect(bitmapWidth, bitmapHeight, zoom = 1f, panXNorm = 0f, panYNorm = 0f)
         }
 
         return compute4by5CropRect(
@@ -419,15 +554,12 @@ object HeadshotFramingEngine {
         faceBottom: Int,
     ): HeadshotCropRect {
         val targetAspect = 4f / 5f
-        val faceWidth = faceRight - faceLeft
         val faceHeight = faceBottom - faceTop
         val faceCenterX = (faceLeft + faceRight) / 2
 
-        // For a professional headshot, face height is typically ~38% of total height
         var cropHeight = (faceHeight * 2.4f).toInt()
         var cropWidth = (cropHeight * targetAspect).toInt()
 
-        // Clamp to bitmap boundaries
         if (cropHeight > bitmapHeight) {
             cropHeight = bitmapHeight
             cropWidth = (cropHeight * targetAspect).toInt()
@@ -436,12 +568,12 @@ object HeadshotFramingEngine {
             cropWidth = bitmapWidth
             cropHeight = (cropWidth / targetAspect).toInt()
         }
+        cropWidth = cropWidth.coerceIn(1, bitmapWidth.coerceAtLeast(1))
+        cropHeight = cropHeight.coerceIn(1, bitmapHeight.coerceAtLeast(1))
 
-        // Center horizontally on the face
         val idealLeft = faceCenterX - (cropWidth / 2)
         val left = idealLeft.coerceIn(0, maxOf(0, bitmapWidth - cropWidth))
 
-        // Position face in upper third with natural headroom (~40% of face height above top of head)
         val headroom = (faceHeight * 0.40f).toInt()
         val idealTop = faceTop - headroom
         val top = idealTop.coerceIn(0, maxOf(0, bitmapHeight - cropHeight))

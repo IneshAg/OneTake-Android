@@ -16,7 +16,10 @@ import android.content.Intent
 import android.content.Context
 import android.app.NotificationManager
 import android.Manifest
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -131,7 +134,7 @@ fun ShootModeScreen(auditionId: String, scene: Int = -1) {
             title = "Solo",
             detail = "Your device on a stand. Your reader plays from its speaker, lines on its screen.",
             tags = listOf("Reader track", "“Action” / “Cut”"),
-            onClick = {},
+            onClick = { nav.push(Route.ShootSetup(auditionId, scene)) },
         )
         Spacer(Modifier.height(14.dp))
         // There's no device pairing in the app yet, so this is shown as unavailable rather than
@@ -220,6 +223,15 @@ fun ShootSetupScreen(auditionId: String, scene: Int = -1) {
 
     // Re-read the phone's real state whenever the screen comes back (e.g. from Settings).
     var status by remember { mutableStateOf(SetupStatus.read(context)) }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val updated = SetupStatus.read(context)
+        val missingRequested = (!updated.camera && it.containsKey(Manifest.permission.CAMERA) && it[Manifest.permission.CAMERA] == false) ||
+            (!updated.mic && it.containsKey(Manifest.permission.RECORD_AUDIO) && it[Manifest.permission.RECORD_AUDIO] == false)
+        status = updated
+        if (missingRequested) {
+            SetupStatus.openAppDetails(context)
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -256,22 +268,31 @@ fun ShootSetupScreen(auditionId: String, scene: Int = -1) {
             SetupCheckRow(
                 "Camera",
                 "Front camera · you can flip it",
-                if (status.camera) "Ready" else "Camera access is off — the camera will ask",
+                if (status.camera) "Ready" else "Tap to grant camera access",
                 ok = status.camera,
+                onClick = if (!status.camera) {
+                    { permLauncher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) }
+                } else null,
             )
             OTDivider()
             SetupCheckRow(
                 "Microphone",
                 status.micName,
-                if (status.mic) "Records with every take" else "Microphone access is off — takes will be silent",
+                if (status.mic) "Records with every take" else "Tap to grant microphone access",
                 ok = status.mic,
+                onClick = if (!status.mic) {
+                    { permLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)) }
+                } else null,
             )
             OTDivider()
             SetupCheckRow(
                 "Hands-free",
                 "Say “Action” / “Cut”",
-                if (status.voice) "Voice commands active" else "Speech recognition isn't available — tap to record",
+                if (status.voice) "Voice commands active" else if (!status.mic) "Needs microphone access — tap to grant" else "Speech recognition isn't available — tap to record",
                 ok = status.voice,
+                onClick = if (!status.mic) {
+                    { permLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO)) }
+                } else null,
             )
             OTDivider()
             SetupCheckRow(
@@ -279,6 +300,7 @@ fun ShootSetupScreen(auditionId: String, scene: Int = -1) {
                 if (status.quiet) "Do Not Disturb is on" else "Calls and alerts can cut in",
                 "A notification mid-scene throws the reader’s timing",
                 ok = status.quiet,
+                onClick = { SetupStatus.openDoNotDisturb(context) },
             ) {
                 if (!status.quiet) {
                     Row(
@@ -342,6 +364,13 @@ private data class SetupStatus(
                 if (runCatching { context.startActivity(intent) }.isSuccess) return
             }
         }
+
+        fun openAppDetails(context: Context) {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", context.packageName, null)
+            }
+            runCatching { context.startActivity(intent) }
+        }
     }
 }
 
@@ -351,11 +380,15 @@ private fun SetupCheckRow(
     title: String,
     detail: String,
     ok: Boolean,
+    onClick: (() -> Unit)? = null,
     extra: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     val c = OT.colors
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 12.dp),
+        Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+            .padding(vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(Modifier.padding(top = 5.dp).size(8.dp).clip(CircleShape).background(if (ok) c.accent else c.warning))
@@ -365,6 +398,8 @@ private fun SetupCheckRow(
             Text(detail, style = OT.type.footnote, color = if (ok) c.labelSecondary else c.warning)
             extra?.invoke(this)
         }
-        Chevron()
+        if (onClick != null) {
+            Chevron()
+        }
     }
 }

@@ -57,7 +57,9 @@ sealed class Route(val path: String) {
         const val HEADSHOTS_AUDITION = "headshots/{id}"
         const val CAMERA_SHOOT = "camera/shoot/{id}/{scene}"
         const val CAMERA_HEADSHOT = "camera/headshot"
+        const val CAMERA_HEADSHOT_ANGLE = "camera/headshot/{angle}"
         const val CAMERA_PRACTICE = "camera/practice"
+        const val CAMERA_PRACTICE_PIECE = "camera/practice/{id}"
     }
 }
 
@@ -65,8 +67,16 @@ sealed class Route(val path: String) {
 sealed class CameraFlow(val path: String) {
     /** `scene` -1 opens on the next scene still to shoot. */
     data class Shoot(val auditionId: String, val scene: Int = -1) : CameraFlow("camera/shoot/$auditionId/$scene")
-    data object Headshot : CameraFlow("camera/headshot")
-    data object PracticeTake : CameraFlow("camera/practice")
+    data class Headshot(val initialAngle: String? = null) : CameraFlow(
+        if (!initialAngle.isNullOrBlank()) "camera/headshot/$initialAngle" else "camera/headshot"
+    ) {
+        companion object : CameraFlow("camera/headshot")
+    }
+    data class PracticeTake(val pieceId: String? = null) : CameraFlow(
+        if (!pieceId.isNullOrBlank()) "camera/practice/$pieceId" else "camera/practice"
+    ) {
+        companion object : CameraFlow("camera/practice")
+    }
 }
 
 /**

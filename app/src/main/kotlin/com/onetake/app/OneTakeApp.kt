@@ -203,7 +203,13 @@ private fun RootTabs(
                     ShootFlowScreen(it.idArg(), initialScene = it.arguments?.getInt("scene")?.takeIf { s -> s >= 0 })
                 }
                 cameraRoute(Route.Pattern.CAMERA_HEADSHOT) { HeadshotFlowScreen() }
+                cameraRoute(Route.Pattern.CAMERA_HEADSHOT_ANGLE, withAngle = true) {
+                    HeadshotFlowScreen(initialAngle = it.arguments?.getString("angle"))
+                }
                 cameraRoute(Route.Pattern.CAMERA_PRACTICE) { PracticeTakeScreen() }
+                cameraRoute(Route.Pattern.CAMERA_PRACTICE_PIECE, withId = true) {
+                    PracticeTakeScreen(practicePieceId = it.idArg().takeIf { id -> id.isNotBlank() })
+                }
             }
 
             AnimatedVisibility(
@@ -267,6 +273,7 @@ private fun NavGraphBuilder.cameraRoute(
     pattern: String,
     withId: Boolean = false,
     withScene: Boolean = false,
+    withAngle: Boolean = false,
     content: @Composable (NavBackStackEntry) -> Unit,
 ) {
     composable(
@@ -274,6 +281,7 @@ private fun NavGraphBuilder.cameraRoute(
         arguments = buildList {
             if (withId) add(navArgument("id") { type = NavType.StringType })
             if (withScene) add(navArgument("scene") { type = NavType.IntType })
+            if (withAngle) add(navArgument("angle") { type = NavType.StringType })
         },
         enterTransition = { slideInVertically(tween(320)) { it } },
         exitTransition = { fadeOut(tween(200)) },

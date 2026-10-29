@@ -594,7 +594,14 @@ fun HeadshotsScreen(auditionId: String? = null) {
                     if (taken < 3) {
                         SecondaryButton(
                             text = "Add profile angles",
-                            onClick = { nav.openCamera(CameraFlow.Headshot) },
+                            onClick = {
+                                val nextMissing = when {
+                                    !hasFront -> "front"
+                                    !hasLeft -> "left"
+                                    else -> "right"
+                                }
+                                nav.openCamera(CameraFlow.Headshot(nextMissing))
+                            },
                         )
                     } else {
                         SecondaryButton(
@@ -605,7 +612,7 @@ fun HeadshotsScreen(auditionId: String? = null) {
                 } else {
                     PrimaryButton(
                         text = "Take your headshot",
-                        onClick = { nav.openCamera(CameraFlow.Headshot) },
+                        onClick = { nav.openCamera(CameraFlow.Headshot("front")) },
                     )
                 }
             }
@@ -622,11 +629,27 @@ fun HeadshotsScreen(auditionId: String? = null) {
                 done = hasFront,
                 modifier = Modifier.weight(1.15f).fillMaxHeight(),
                 action = if (hasFront) "Retake" else null,
-                onAction = { nav.openCamera(CameraFlow.Headshot) },
+                onAction = { nav.openCamera(CameraFlow.Headshot("front")) },
             )
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                HeadshotSlot("Left profile", "left", done = hasLeft, photoUri = store.headshot("left"), modifier = Modifier.weight(1f).fillMaxWidth())
-                HeadshotSlot("Right profile", "right", done = hasRight, photoUri = store.headshot("right"), modifier = Modifier.weight(1f).fillMaxWidth())
+                HeadshotSlot(
+                    title = "Left profile",
+                    asset = "left",
+                    done = hasLeft,
+                    photoUri = store.headshot("left"),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    action = if (hasLeft) "Retake" else null,
+                    onAction = { nav.openCamera(CameraFlow.Headshot("left")) },
+                )
+                HeadshotSlot(
+                    title = "Right profile",
+                    asset = "right",
+                    done = hasRight,
+                    photoUri = store.headshot("right"),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    action = if (hasRight) "Retake" else null,
+                    onAction = { nav.openCamera(CameraFlow.Headshot("right")) },
+                )
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -687,6 +710,7 @@ private fun HeadshotSlot(
             .clip(shape)
             .background(Color(0xFF111114))
             .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
+            .clickable(role = Role.Button, onClick = onAction)
     ) {
         if (done) {
             HeadshotImage(Modifier.fillMaxSize(), name = asset, uri = photoUri, contentDescription = "$title headshot")
@@ -770,18 +794,25 @@ private fun HeadshotTip(icon: ImageVector, title: String, detail: String, modifi
 private enum class HeadshotAngle(val label: String) { Front("Front"), Left("Left"), Right("Right") }
 
 @Composable
-fun HeadshotFlowScreen() {
+fun HeadshotFlowScreen(initialAngle: String? = null) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val camera = rememberCameraController()
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
-    var angle by rememberSaveable { mutableStateOf(HeadshotAngle.Front) }
+    val startingAngle = when (initialAngle?.lowercase()) {
+        "left" -> HeadshotAngle.Left
+        "right" -> HeadshotAngle.Right
+        else -> HeadshotAngle.Front
+    }
+    var angle by rememberSaveable(initialAngle) { mutableStateOf(startingAngle) }
     var front by remember { mutableStateOf(true) }
     var capturing by remember { mutableStateOf(false) }
 
     var guidance by remember { mutableStateOf<HeadshotFramingEngine.FramingGuidance?>(null) }
+
+    com.onetake.app.ui.system.KeepScreenOn()
 
     // Map UI angle to Engine angle
     val engineAngle = when (angle) {
@@ -799,33 +830,23 @@ fun HeadshotFlowScreen() {
         )
     }
 
-    LaunchedEffect(engineAngle, front) {
+    LaunchedEffect(engineAngle, front, camera.viewAspect) {
         analyzer.targetAngle = engineAngle
         analyzer.isFrontCamera = front
+        analyzer.viewAspect = camera.viewAspect
     }
 
-    LaunchedEffect(analyzer) {
-        camera.setAnalyzer(analyzer)
+    LaunchedEffect(analyzer, camera.hasPermission) {
+        if (camera.hasPermission) {
+            camera.setAnalyzer(analyzer)
+        }
     }
 
     DisposableEffect(Unit) {
         onDispose { camera.clearAnalyzer() }
     }
 
-    // Voice recognition permission request if needed
-    var micPermissionGranted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        )
-    }
-    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        micPermissionGranted = granted
-    }
-    LaunchedEffect(Unit) {
-        if (!micPermissionGranted) {
-            micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
+    val micPermissionGranted = camera.hasMicPermission
 
     fun takeHeadshot() {
         if (capturing) return
@@ -838,7 +859,11 @@ fun HeadshotFlowScreen() {
                 return@capturePhoto
             }
             scope.launch {
-                val croppedUri = HeadshotFramingEngine.processAndCropHeadshot(context, rawUri) ?: rawUri
+                val croppedUri = HeadshotFramingEngine.processAndCropHeadshot(
+                    context = context,
+                    rawUri = rawUri,
+                    mirrorHorizontally = front,
+                ) ?: rawUri
                 capturing = false
                 store.saveHeadshot(angle.name.lowercase(), croppedUri.toString())
                 store.auditions.forEach { a ->
@@ -846,7 +871,9 @@ fun HeadshotFlowScreen() {
                         store.markDone(PieceKind.Headshot, a.id)
                     }
                 }
-                val next = HeadshotAngle.entries.getOrNull(angle.ordinal + 1)
+                val next = HeadshotAngle.entries.drop(angle.ordinal + 1)
+                    .firstOrNull { store.headshot(it.name.lowercase()) == null }
+                    ?: if (initialAngle.isNullOrBlank()) HeadshotAngle.entries.getOrNull(angle.ordinal + 1) else null
                 if (next != null) {
                     haptics.tick()
                     guidance = null

@@ -65,6 +65,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Storage
@@ -118,6 +119,7 @@ import com.onetake.app.models.Take
 import com.onetake.app.models.formatDuration
 import com.onetake.app.ui.camera.CameraBackground
 import com.onetake.app.ui.camera.CameraController
+import com.onetake.app.ui.camera.FramingAssistOverlay
 import com.onetake.app.ui.camera.LiveTapeCheckEngine
 import com.onetake.app.ui.camera.RecordStartErrorDialog
 import com.onetake.app.ui.camera.rememberCameraController
@@ -141,7 +143,57 @@ import java.time.LocalDateTime
 // Camera flow: 15 check → 16 slate → 16b slate done → 16c full length → 17 scene → 17.5 take saved.
 // Android port of iOS `ShootFlow`. Always dark; every control sits inside the system-bar insets.
 
-private enum class ShootStage { Check, Slate, SlateDone, FullLength, Scene, Saved }
+internal enum class ShootStage { Check, Slate, SlateDone, FullLength, Scene, Saved }
+
+internal object ShootStagePlanner {
+    private val WORD_REGEX = Regex("""\S+""")
+
+    fun stageFromCheck(
+        wantsSlate: Boolean,
+        hasSlate: Boolean,
+        wantsFullLength: Boolean,
+        hasFullLength: Boolean,
+        hasScenes: Boolean,
+        slateAtStart: Boolean,
+        explicitSceneRequested: Boolean,
+    ): ShootStage {
+        if (explicitSceneRequested && hasScenes) return ShootStage.Scene
+        if (slateAtStart) {
+            if (wantsSlate && !hasSlate) return ShootStage.Slate
+            if (wantsFullLength && !hasFullLength) return ShootStage.FullLength
+        }
+        if (hasScenes) return ShootStage.Scene
+        if (wantsSlate && !hasSlate) return ShootStage.Slate
+        if (wantsFullLength && !hasFullLength) return ShootStage.FullLength
+        return if (wantsSlate) ShootStage.Slate else ShootStage.Scene
+    }
+
+    fun stageAfterSlate(
+        wantsFullLength: Boolean,
+        hasFullLength: Boolean,
+        hasScenes: Boolean,
+    ): ShootStage = when {
+        wantsFullLength && !hasFullLength -> ShootStage.FullLength
+        hasScenes -> ShootStage.Scene
+        else -> ShootStage.Saved
+    }
+
+    fun stageAfterFullLength(
+        wantsSlate: Boolean,
+        hasSlate: Boolean,
+        hasScenes: Boolean,
+        slateAtStart: Boolean,
+    ): ShootStage = when {
+        hasScenes -> ShootStage.Scene
+        !slateAtStart && wantsSlate && !hasSlate -> ShootStage.Slate
+        else -> ShootStage.Saved
+    }
+
+    fun estimateActorLineHoldMs(text: String): Long {
+        val words = WORD_REGEX.findAll(text.trim()).count().coerceAtLeast(1)
+        return (words * 420L + 1850L).coerceIn(2200L, 14500L)
+    }
+}
 
 @Composable
 fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
@@ -166,62 +218,71 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
     var sceneIndex by remember { mutableIntStateOf(initialScene ?: store.sceneToShoot(auditionId)) }
     var takeNumber by remember { mutableIntStateOf(store.nextTakeNumber(auditionId, sceneIndex)) }
     var front by remember { mutableStateOf(true) }
-    var exposureLocked by remember { mutableStateOf(false) }
     var lastTakeSeconds by remember { mutableIntStateOf(0) }
     var lastSlateSeconds by remember { mutableIntStateOf(0) }
+    var lastFullLengthSeconds by remember { mutableIntStateOf(0) }
+    var lastSavedKind by remember { mutableStateOf(PieceKind.Scene) }
     var liveTapeCheck by remember { mutableStateOf(LiveTapeCheckEngine.LiveTapeCheck()) }
     var audioLevelDb by remember { mutableFloatStateOf(-50f) }
     var checkTipMessage by remember { mutableStateOf<String?>(null) }
+    var readerSpeaking by remember { mutableStateOf(false) }
 
     val recording = camera.state == CameraController.State.Recording
+    val exposureLocked = camera.isExposureLocked
+    val micPermissionGranted = camera.hasMicPermission
     val audition = store.audition(auditionId)
     val scene = audition?.scenes?.getOrNull(sceneIndex)
     val lines = scene?.lines.orEmpty()
+    val hasPartnerLines = remember(lines) { lines.any { !it.isMine } }
+    var autoPaceLines by remember(scene?.id) { mutableStateOf(hasPartnerLines) }
+
+    val wantsSlate = remember(audition?.pieces, audition?.asks) {
+        audition?.pieces?.any { it.kind == PieceKind.Slate } == true ||
+            audition?.asks?.any { "slate" in it.lowercase() || "ident" in it.lowercase() } == true
+    }
+    val hasSlate = !audition?.slateVideoUri.isNullOrBlank()
+    val wantsFullLength = remember(audition?.pieces, audition?.asks) {
+        audition?.pieces?.any { it.kind == PieceKind.FullLength } == true ||
+            audition?.asks?.any { "full" in it.lowercase() } == true
+    }
+    val hasFullLength = !audition?.fullLengthVideoUri.isNullOrBlank()
+    val hasScenes = (audition?.scenes?.isNotEmpty() == true) ||
+        (audition?.pieces?.any { it.kind == PieceKind.Scene } == true)
 
     KeepScreenOn()
     ShootLightSystemBars()
-
-    var micPermissionGranted by remember {
-        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
-    }
-    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        micPermissionGranted = it
-    }
-
-    LaunchedEffect(Unit) {
-        if (!micPermissionGranted) {
-            micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
 
     val audioMeter = remember {
         LiveTapeCheckEngine.AudioMeter(
             context = context.applicationContext,
             scope = scope,
-            onLevelUpdate = { db -> audioLevelDb = db },
+            onLevelUpdate = { db ->
+                audioLevelDb = db
+                liveTapeCheck = liveTapeCheck.withUpdatedSound(camera.hasMicPermission, db)
+            },
         )
-    }
-
-    LaunchedEffect(stage, micPermissionGranted) {
-        if (stage == ShootStage.Check && micPermissionGranted) {
-            audioMeter.start()
-        } else {
-            audioMeter.stop()
-        }
     }
 
     DisposableEffect(Unit) {
         onDispose { audioMeter.stop() }
     }
 
-    val liveAnalyzer = remember(front) {
+    val framingTarget = if (stage == ShootStage.FullLength) {
+        LiveTapeCheckEngine.FramingTarget.FullBody
+    } else {
+        LiveTapeCheckEngine.FramingTarget.MediumCloseUp
+    }
+
+    val liveAnalyzer = remember {
         LiveTapeCheckEngine.Analyzer(isFrontCamera = front) { check ->
             liveTapeCheck = check
         }
     }
 
-    LaunchedEffect(front) {
+    LaunchedEffect(front, camera.viewAspect, framingTarget) {
         liveAnalyzer.isFrontCamera = front
+        liveAnalyzer.viewAspect = camera.viewAspect
+        liveAnalyzer.framingTarget = framingTarget
     }
 
     LaunchedEffect(audioLevelDb, micPermissionGranted) {
@@ -230,7 +291,7 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
     }
 
     LaunchedEffect(stage, camera.hasPermission) {
-        if (camera.hasPermission && (stage == ShootStage.Check || stage == ShootStage.Slate || stage == ShootStage.Scene)) {
+        if (camera.hasPermission && (stage == ShootStage.Check || stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
             camera.setAnalyzer(liveAnalyzer)
         } else {
             camera.clearAnalyzer()
@@ -276,19 +337,44 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
 
     // Reader: the actor's own recorded voice or TTS for the other character's lines, at the
     // Profile → Reader volume level so casting hears the actor first.
-    LaunchedEffect(lineIndex, recording, stage) {
+    // Automatically advances to the next line once the reader finishes speaking, and optionally
+    // paces the actor's own lines hands-free from their mark.
+    LaunchedEffect(lineIndex, recording, stage, autoPaceLines) {
         reader.volume = store.readerVolumeLevel
         tts.volume = store.readerVolumeLevel
         val line = lines.getOrNull(lineIndex)
-        runCatching {
-            if (stage == ShootStage.Scene && recording && scene != null && line != null && !line.isMine) {
-                // Reader files are numbered by reader line within the scene, not by overall line.
+        if (stage == ShootStage.Scene && recording && scene != null && line != null) {
+            if (!line.isMine) {
+                readerSpeaking = true
+                val targetIndex = lineIndex
                 val readerIndex = lines.take(lineIndex).count { !it.isMine }
-                reader.playOrSynthesize(scene.id, readerIndex, line.text, tts)
+                runCatching {
+                    reader.playOrSynthesize(scene.id, readerIndex, line.text, tts) {
+                        scope.launch {
+                            readerSpeaking = false
+                            if (recording && stage == ShootStage.Scene && lineIndex == targetIndex && lineIndex < lines.lastIndex) {
+                                lineIndex = targetIndex + 1
+                            }
+                        }
+                    }
+                }.onFailure {
+                    readerSpeaking = false
+                }
             } else {
+                readerSpeaking = false
                 reader.stop()
                 tts.stop()
+                if (autoPaceLines && lineIndex < lines.lastIndex) {
+                    delay(ShootStagePlanner.estimateActorLineHoldMs(line.text))
+                    if (recording && stage == ShootStage.Scene && lineIndex < lines.lastIndex) {
+                        lineIndex += 1
+                    }
+                }
             }
+        } else {
+            readerSpeaking = false
+            reader.stop()
+            tts.stop()
         }
     }
 
@@ -302,6 +388,9 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
 
     fun roll() {
         if (countdown != null || recording) return
+        if (stage == ShootStage.Scene) {
+            lineIndex = 0
+        }
         if (timerSeconds == 0) {
             if (camera.startRecording()) haptics.impact() else haptics.warning()
             return
@@ -321,20 +410,29 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
 
     fun cut() {
         cancelCountdown()
-        val seconds = camera.elapsed.toInt()
+        val seconds = camera.elapsed.toInt().coerceAtLeast(1)
         haptics.success()
         when (stage) {
             ShootStage.Slate -> {
                 camera.stopRecording { saveSlate(it) }
                 lastSlateSeconds = seconds
+                lastSavedKind = PieceKind.Slate
                 stage = ShootStage.SlateDone
             }
             ShootStage.FullLength -> {
                 camera.stopRecording { saveFullLength(it) }
-                stage = ShootStage.Scene
+                lastFullLengthSeconds = seconds
+                lastSavedKind = PieceKind.FullLength
+                stage = ShootStagePlanner.stageAfterFullLength(
+                    wantsSlate = wantsSlate,
+                    hasSlate = hasSlate,
+                    hasScenes = hasScenes,
+                    slateAtStart = store.slateAtStart,
+                )
             }
             ShootStage.Scene -> {
                 lastTakeSeconds = seconds
+                lastSavedKind = PieceKind.Scene
                 val take = Take(
                     number = takeNumber,
                     durationSeconds = seconds,
@@ -358,20 +456,33 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
             }
         },
         onCutTrigger = {
-            if (voiceEnabled && recording) {
+            if (voiceEnabled && recording && !readerSpeaking) {
                 cut()
             }
         },
-        onRmsChanged = { rms ->
-            audioLevelDb = rms
-        },
     )
 
-    LaunchedEffect(voiceEnabled, micPermissionGranted, stage) {
-        if (voiceEnabled && micPermissionGranted && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
-            voiceCommander.start()
-        } else {
+    // Strictly arbitrate microphone access between Check's AudioMeter and Shoot's SpeechRecognizer,
+    // and pause SpeechRecognizer while the partner Reader/TTS track is speaking over the loudspeaker.
+    LaunchedEffect(voiceEnabled, micPermissionGranted, stage, readerSpeaking) {
+        if (stage == ShootStage.Check) {
             voiceCommander.stop()
+            if (micPermissionGranted) {
+                audioMeter.start()
+            } else {
+                audioMeter.stop()
+            }
+        } else {
+            audioMeter.stopAndJoin()
+            val canListenForCommands = voiceEnabled &&
+                micPermissionGranted &&
+                !readerSpeaking &&
+                (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)
+            if (canListenForCommands) {
+                voiceCommander.start()
+            } else {
+                voiceCommander.stop()
+            }
         }
     }
 
@@ -421,7 +532,21 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
 
     RecordStartErrorDialog(camera)
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
-        CameraBackground(camera, Modifier.fillMaxSize(), front = front)
+        CameraBackground(
+            controller = camera,
+            modifier = Modifier.fillMaxSize(),
+            front = front,
+            photoOnly = false,
+            needsVideo = stage != ShootStage.Check,
+        )
+        if (stage == ShootStage.Check || stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene) {
+            FramingAssistOverlay(
+                check = liveTapeCheck,
+                target = framingTarget,
+                showGrid = !recording && stage != ShootStage.SlateDone && stage != ShootStage.Saved,
+                showFaceReticle = !recording || stage == ShootStage.Check,
+            )
+        }
         // Soft bottom scrim so chips and controls stay legible on bright frames.
         Box(
             Modifier.fillMaxSize().background(
@@ -627,6 +752,18 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                             }
                             ShootStage.Slate -> {
                                 if (!recording && countdown == null) {
+                                    ShootStageSwitcher(
+                                        current = stage,
+                                        showFullLength = wantsFullLength || hasFullLength,
+                                        showScene = hasScenes,
+                                        hasSlate = hasSlate,
+                                        hasFullLength = hasFullLength,
+                                        onSelect = { nextStage ->
+                                            stage = nextStage
+                                            haptics.tick()
+                                        },
+                                    )
+                                    Spacer(Modifier.height(6.dp))
                                     ShootMiniStatusRow(liveTapeCheck)
                                     Spacer(Modifier.height(6.dp))
                                 }
@@ -634,13 +771,37 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                             }
                             ShootStage.FullLength -> {
                                 if (!recording && countdown == null) {
+                                    ShootStageSwitcher(
+                                        current = stage,
+                                        showFullLength = true,
+                                        showScene = hasScenes,
+                                        hasSlate = hasSlate,
+                                        hasFullLength = hasFullLength,
+                                        onSelect = { nextStage ->
+                                            stage = nextStage
+                                            haptics.tick()
+                                        },
+                                    )
+                                    Spacer(Modifier.height(6.dp))
                                     ShootMiniStatusRow(liveTapeCheck)
                                     Spacer(Modifier.height(6.dp))
                                 }
-                                ShootPromptCard(eyebrow = "After the slate", text = "Head to feet, hold still")
+                                ShootPromptCard(eyebrow = "Full-length framing", text = "Step back so head to feet are visible, hold still")
                             }
                             ShootStage.Scene -> {
                                 if (!recording && countdown == null) {
+                                    ShootStageSwitcher(
+                                        current = stage,
+                                        showFullLength = wantsFullLength || hasFullLength,
+                                        showScene = true,
+                                        hasSlate = hasSlate,
+                                        hasFullLength = hasFullLength,
+                                        onSelect = { nextStage ->
+                                            stage = nextStage
+                                            haptics.tick()
+                                        },
+                                    )
+                                    Spacer(Modifier.height(6.dp))
                                     ShootMiniStatusRow(liveTapeCheck)
                                     Spacer(Modifier.height(6.dp))
                                     ShootScenePicker(audition.scenes, sceneIndex, shotScenes, onPick = ::pickScene)
@@ -649,12 +810,18 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                                 val line = lines.getOrNull(lineIndex)
                                 if (line != null) {
                                     ShootScenePrompt(
-                                        eyebrow = if (lineIndex == 0 && !recording) "Top of the scene" else null,
+                                        eyebrow = if (lineIndex == 0 && !recording) "Top of the scene" else "Line ${lineIndex + 1} of ${lines.size}",
                                         character = if (line.isMine) "${line.character} · you" else line.character,
                                         text = line.text,
                                         mine = line.isMine,
                                         next = lines.getOrNull(lineIndex + 1)?.let { it.character to it.text },
-                                        onTap = { lineIndex = minOf(lineIndex + 1, lines.lastIndex) },
+                                        autoPace = if (lines.size > 1) autoPaceLines else null,
+                                        onToggleAutoPace = { autoPaceLines = !autoPaceLines },
+                                        onTap = {
+                                            if (lineIndex < lines.lastIndex) {
+                                                lineIndex += 1
+                                            }
+                                        },
                                     )
                                 }
                             }
@@ -662,45 +829,91 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                         }
                     }
                     when (stage) {
-                        ShootStage.SlateDone -> ShootResultCard(
-                            modifier = Modifier.align(Alignment.Center),
-                            eyebrow = null,
-                            title = "Slate’s done.",
-                            detail = "${formatDuration(lastSlateSeconds)} · opens every scene in ${audition.project}",
-                            primary = "Next: full length" to { stage = ShootStage.FullLength },
-                            secondary = "Redo" to { stage = ShootStage.Slate },
-                            primaryFirst = true,
-                        )
-                        ShootStage.Saved -> {
-                            val goAgain = "Go again" to {
-                                takeNumber += 1
-                                lineIndex = 0
-                                stage = ShootStage.Scene
+                        ShootStage.SlateDone -> {
+                            val nextStage = ShootStagePlanner.stageAfterSlate(
+                                wantsFullLength = wantsFullLength,
+                                hasFullLength = hasFullLength,
+                                hasScenes = hasScenes,
+                            )
+                            val primaryAction: Pair<String, () -> Unit> = when (nextStage) {
+                                ShootStage.FullLength -> "Next: full length" to { stage = ShootStage.FullLength }
+                                ShootStage.Scene -> {
+                                    val scTitle = audition.scenes.getOrNull(sceneIndex)?.title ?: "scene"
+                                    "Next: $scTitle" to { stage = ShootStage.Scene }
+                                }
+                                else -> "Done" to { finish(Route.AuditionDetail(auditionId)) }
                             }
-                            val next = nextUnshotScene()
-                            if (next != null) {
+                            val extraActions = buildList<Pair<String, () -> Unit>> {
+                                if (nextStage == ShootStage.FullLength && hasScenes) {
+                                    val scTitle = audition.scenes.getOrNull(sceneIndex)?.title ?: "scene"
+                                    add("Skip to $scTitle" to { stage = ShootStage.Scene })
+                                } else if (nextStage == ShootStage.Scene && (wantsFullLength || hasFullLength)) {
+                                    add("Record full length" to { stage = ShootStage.FullLength })
+                                }
+                                add("Done for now" to { finish(Route.AuditionDetail(auditionId)) })
+                            }
+                            ShootResultCard(
+                                modifier = Modifier.align(Alignment.Center),
+                                eyebrow = "Slate saved",
+                                title = "Slate’s done.",
+                                detail = "${formatDuration(lastSlateSeconds)} · opens every scene in ${audition.project}",
+                                primary = primaryAction,
+                                secondary = "Redo slate" to { stage = ShootStage.Slate },
+                                extras = extraActions,
+                                primaryFirst = true,
+                            )
+                        }
+                        ShootStage.Saved -> {
+                            if (lastSavedKind == PieceKind.FullLength) {
                                 ShootResultCard(
                                     modifier = Modifier.align(Alignment.Center),
-                                    eyebrow = "Take saved",
-                                    title = "Take $takeNumber, in the can.",
-                                    detail = "${formatDuration(lastTakeSeconds)} · ${audition.scenes[next].title} is still to shoot",
-                                    primary = "Next: ${audition.scenes[next].title}" to { moveToScene(next) },
-                                    secondary = goAgain,
-                                    extras = listOf(
-                                        "Watch take $takeNumber" to { finish(Route.Takes(auditionId)) },
-                                        "Done for now" to { finish(Route.AuditionDetail(auditionId)) },
-                                    ),
+                                    eyebrow = "Full length saved",
+                                    title = "Full-length shot, in the can.",
+                                    detail = "${formatDuration(lastFullLengthSeconds)} · saved",
+                                    primary = (if (hasScenes) "Next: ${audition.scenes.getOrNull(sceneIndex)?.title ?: "scene"}" else "Done") to {
+                                        if (hasScenes) stage = ShootStage.Scene else finish(Route.AuditionDetail(auditionId))
+                                    },
+                                    secondary = "Redo" to { stage = ShootStage.FullLength },
+                                    extras = if (hasScenes) listOf("Done for now" to { finish(Route.AuditionDetail(auditionId)) }) else emptyList(),
+                                    primaryFirst = true,
                                 )
                             } else {
-                                ShootResultCard(
-                                    modifier = Modifier.align(Alignment.Center),
-                                    eyebrow = "Take saved",
-                                    title = "Take $takeNumber, in the can.",
-                                    detail = "${formatDuration(lastTakeSeconds)} · saved",
-                                    primary = "Watch take $takeNumber" to { finish(Route.Takes(auditionId)) },
-                                    secondary = goAgain,
-                                    extras = listOf("Done for now" to { finish(Route.AuditionDetail(auditionId)) }),
-                                )
+                                val goAgain = "Go again" to {
+                                    takeNumber += 1
+                                    lineIndex = 0
+                                    stage = ShootStage.Scene
+                                }
+                                val next = nextUnshotScene()
+                                val extraButtons = buildList<Pair<String, () -> Unit>> {
+                                    if (!store.slateAtStart && wantsSlate && !hasSlate) {
+                                        add("Record slate" to { stage = ShootStage.Slate })
+                                    }
+                                    if (next != null) {
+                                        add("Watch take $takeNumber" to { finish(Route.Takes(auditionId)) })
+                                    }
+                                    add("Done for now" to { finish(Route.AuditionDetail(auditionId)) })
+                                }
+                                if (next != null) {
+                                    ShootResultCard(
+                                        modifier = Modifier.align(Alignment.Center),
+                                        eyebrow = "Take saved",
+                                        title = "Take $takeNumber, in the can.",
+                                        detail = "${formatDuration(lastTakeSeconds)} · ${audition.scenes[next].title} is still to shoot",
+                                        primary = "Next: ${audition.scenes[next].title}" to { moveToScene(next) },
+                                        secondary = goAgain,
+                                        extras = extraButtons,
+                                    )
+                                } else {
+                                    ShootResultCard(
+                                        modifier = Modifier.align(Alignment.Center),
+                                        eyebrow = "Take saved",
+                                        title = "Take $takeNumber, in the can.",
+                                        detail = "${formatDuration(lastTakeSeconds)} · saved",
+                                        primary = "Watch take $takeNumber" to { finish(Route.Takes(auditionId)) },
+                                        secondary = goAgain,
+                                        extras = extraButtons,
+                                    )
+                                }
                             }
                         }
                         else -> Unit
@@ -747,7 +960,21 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                     Modifier.align(Alignment.CenterHorizontally),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    if (exposureLocked) ShootChip(Icons.Filled.Lock, "Exposure locked", tint = DarkOT.warning)
+                    ShootChip(
+                        icon = if (exposureLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                        text = if (exposureLocked) "Exposure locked" else "Lock exposure",
+                        tint = if (exposureLocked) DarkOT.warning else Color.White,
+                        modifier = Modifier.clickable(role = Role.Button) {
+                            val nextLock = !exposureLocked
+                            val face = liveTapeCheck.faceBoxNorm
+                            camera.setExposureLocked(
+                                locked = nextLock,
+                                focusCenterNormX = face?.centerX ?: 0.5f,
+                                focusCenterNormY = face?.centerY ?: 0.36f,
+                            )
+                            haptics.tick()
+                        },
+                    )
                     ShootChip(Icons.Filled.Storage, "$minutes min")
                 }
             }
@@ -764,8 +991,21 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                         ShootStage.Check -> PrimaryButton(
                             "Go to your mark",
                             onClick = {
-                                stage = ShootStage.Slate
-                                exposureLocked = true
+                                val face = liveTapeCheck.faceBoxNorm
+                                camera.setExposureLocked(
+                                    locked = true,
+                                    focusCenterNormX = face?.centerX ?: 0.5f,
+                                    focusCenterNormY = face?.centerY ?: 0.36f,
+                                )
+                                stage = ShootStagePlanner.stageFromCheck(
+                                    wantsSlate = wantsSlate,
+                                    hasSlate = hasSlate,
+                                    wantsFullLength = wantsFullLength,
+                                    hasFullLength = hasFullLength,
+                                    hasScenes = hasScenes,
+                                    slateAtStart = store.slateAtStart,
+                                    explicitSceneRequested = initialScene != null && initialScene >= 0,
+                                )
                                 haptics.impact()
                             },
                             modifier = Modifier.widthIn(max = 220.dp),
@@ -1262,7 +1502,61 @@ private fun ShootPromptCard(eyebrow: String, text: String) {
     }
 }
 
-/** 17 — current line big under the lens, the next line dimmed. Tap to advance. */
+@Composable
+private fun ShootStageSwitcher(
+    current: ShootStage,
+    showFullLength: Boolean,
+    showScene: Boolean,
+    hasSlate: Boolean,
+    hasFullLength: Boolean,
+    onSelect: (ShootStage) -> Unit,
+) {
+    val items = buildList {
+        add(Triple(ShootStage.Check, "Check", false))
+        add(Triple(ShootStage.Slate, "Slate", hasSlate))
+        if (showFullLength) add(Triple(ShootStage.FullLength, "Full length", hasFullLength))
+        if (showScene) add(Triple(ShootStage.Scene, "Scene", false))
+    }
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+    ) {
+        items.forEach { (itemStage, label, done) ->
+            val selected = current == itemStage
+            Row(
+                Modifier
+                    .heightIn(min = 30.dp)
+                    .clip(CircleShape)
+                    .background(if (selected) Color.White else Color.Black.copy(alpha = 0.55f))
+                    .border(
+                        0.5.dp,
+                        if (selected) Color.White else Color.White.copy(alpha = 0.25f),
+                        CircleShape,
+                    )
+                    .clickable(role = Role.Tab) { onSelect(itemStage) }
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (done) {
+                    Icon(
+                        Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = if (selected) Color.Black else OT.colors.success,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+                Text(
+                    label,
+                    style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                    color = if (selected) Color.Black else Color.White,
+                )
+            }
+        }
+    }
+}
+
+/** 17 — current line big under the lens, the next line dimmed. Tap to advance, or auto-pace hands-free. */
 @Composable
 private fun ShootScenePrompt(
     eyebrow: String?,
@@ -1270,6 +1564,8 @@ private fun ShootScenePrompt(
     text: String,
     mine: Boolean,
     next: Pair<String, String>?,
+    autoPace: Boolean? = null,
+    onToggleAutoPace: () -> Unit = {},
     onTap: () -> Unit,
 ) {
     val readerColor = DarkOT.reader
@@ -1283,8 +1579,31 @@ private fun ShootScenePrompt(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         val eyebrowStyle = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp)
-        if (eyebrow != null) Text(eyebrow.uppercase(), style = eyebrowStyle, color = OT.camera.label2)
-        Text(character.uppercase(), style = eyebrowStyle, color = if (mine) OT.camera.label2 else readerColor)
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(Modifier.weight(1f)) {
+                if (eyebrow != null) Text(eyebrow.uppercase(), style = eyebrowStyle, color = OT.camera.label2)
+                Text(character.uppercase(), style = eyebrowStyle, color = if (mine) OT.camera.label2 else readerColor)
+            }
+            if (autoPace != null) {
+                Box(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(if (autoPace) OT.colors.accent.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.14f))
+                        .clickable(role = Role.Switch, onClick = onToggleAutoPace)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        if (autoPace) "Auto-pace" else "Tap lines",
+                        style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (autoPace) OT.colors.accent else Color.White.copy(alpha = 0.85f),
+                    )
+                }
+            }
+        }
         Text(
             text,
             fontSize = 24.sp,

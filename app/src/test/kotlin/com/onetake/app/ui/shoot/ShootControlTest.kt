@@ -164,4 +164,116 @@ class ShootControlTest {
         assertFalse("Casual sentence with action should not trigger record", ShootVoiceCommander.matchesCommand("This is an action movie about two detectives", isRecording = false))
         assertFalse("I will take action tomorrow should not trigger record", ShootVoiceCommander.matchesCommand("I will take action tomorrow morning", isRecording = false))
     }
+
+    @Test
+    fun `stageFromCheck respects slateAtStart, existing clips, deliverables, and explicit scene`() {
+        // Fresh audition asking for slate + scene with slateAtStart = true -> starts at Slate
+        assertEquals(
+            ShootStage.Slate,
+            ShootStagePlanner.stageFromCheck(
+                wantsSlate = true,
+                hasSlate = false,
+                wantsFullLength = false,
+                hasFullLength = false,
+                hasScenes = true,
+                slateAtStart = true,
+                explicitSceneRequested = false,
+            ),
+        )
+
+        // Slate already recorded, full-length not requested -> jumps straight to Scene (no forced dummy slate/full-length!)
+        assertEquals(
+            ShootStage.Scene,
+            ShootStagePlanner.stageFromCheck(
+                wantsSlate = true,
+                hasSlate = true,
+                wantsFullLength = false,
+                hasFullLength = false,
+                hasScenes = true,
+                slateAtStart = true,
+                explicitSceneRequested = false,
+            ),
+        )
+
+        // Slate recorded, full-length requested & unrecorded -> goes to FullLength
+        assertEquals(
+            ShootStage.FullLength,
+            ShootStagePlanner.stageFromCheck(
+                wantsSlate = true,
+                hasSlate = true,
+                wantsFullLength = true,
+                hasFullLength = false,
+                hasScenes = true,
+                slateAtStart = true,
+                explicitSceneRequested = false,
+            ),
+        )
+
+        // Actor prefers slate at end (slateAtStart = false) -> shoots Scene first!
+        assertEquals(
+            ShootStage.Scene,
+            ShootStagePlanner.stageFromCheck(
+                wantsSlate = true,
+                hasSlate = false,
+                wantsFullLength = true,
+                hasFullLength = false,
+                hasScenes = true,
+                slateAtStart = false,
+                explicitSceneRequested = false,
+            ),
+        )
+
+        // Explicit scene requested (e.g. shooting Take 2 from Scene 1) -> goes straight to Scene
+        assertEquals(
+            ShootStage.Scene,
+            ShootStagePlanner.stageFromCheck(
+                wantsSlate = true,
+                hasSlate = false,
+                wantsFullLength = true,
+                hasFullLength = false,
+                hasScenes = true,
+                slateAtStart = true,
+                explicitSceneRequested = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `stageAfterSlate skips FullLength when casting did not ask for full-length`() {
+        assertEquals(
+            ShootStage.Scene,
+            ShootStagePlanner.stageAfterSlate(
+                wantsFullLength = false,
+                hasFullLength = false,
+                hasScenes = true,
+            ),
+        )
+        assertEquals(
+            ShootStage.FullLength,
+            ShootStagePlanner.stageAfterSlate(
+                wantsFullLength = true,
+                hasFullLength = false,
+                hasScenes = true,
+            ),
+        )
+        assertEquals(
+            ShootStage.Scene,
+            ShootStagePlanner.stageAfterSlate(
+                wantsFullLength = true,
+                hasFullLength = true,
+                hasScenes = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `estimateActorLineHoldMs scales with spoken word count within sane bounds`() {
+        val shortHold = ShootStagePlanner.estimateActorLineHoldMs("Yes.")
+        val longHold = ShootStagePlanner.estimateActorLineHoldMs(
+            "I waited at the station until midnight and nobody from the bureau ever showed up to meet us."
+        )
+        assertTrue("Short line hold ($shortHold) should be at least 2200ms", shortHold >= 2200L)
+        assertTrue("Long line hold ($longHold) should exceed short line hold ($shortHold)", longHold > shortHold + 3000L)
+        assertTrue("Long line hold ($longHold) should be capped <= 15000ms", longHold <= 15000L)
+    }
 }

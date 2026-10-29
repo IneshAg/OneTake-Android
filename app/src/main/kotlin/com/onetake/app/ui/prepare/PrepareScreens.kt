@@ -526,7 +526,7 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
             }
             PrepCapsule("Run lines", Icons.Filled.PlayArrow, onClick = { nav.push(Route.RunLines(auditionId, sceneIndex)) })
             PrepCapsule("Record", Icons.Filled.RadioButtonChecked, filled = true, onClick = {
-                if (a != null) nav.push(Route.ShootMode(a.id, sceneIndex)) else nav.openCamera(CameraFlow.PracticeTake)
+                if (a != null) nav.push(Route.ShootMode(a.id, sceneIndex)) else nav.openCamera(CameraFlow.PracticeTake(auditionId))
             })
         }
     }

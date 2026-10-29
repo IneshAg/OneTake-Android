@@ -152,3 +152,11 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - Added full unit test suite `LiveTapeCheckEngineTest.kt` verifying all thresholds and edge cases.
 - **Total Elimination of Redundant Device / Storage Phrasing:**
   - Audited and cleansed all remaining instances of "on this phone", "stays on this phone", "nothing leaves this phone", and "read on the phone" across comments, manifest, and UI copy (`AndroidManifest.xml`, `AppStore.kt`, `Persistence.kt`, `SharedNotice.kt`, `TapeAnalysis.kt`, `TapeChecker.kt`, `AddAuditionSheet.kt`, `AuditionDetailScreen.kt`, `OnboardingFlow.kt`, `ProfileScreens.kt`, `ReaderScreens.kt`, `ShootScreens.kt`). Replaced with natural, production-grade terminology.
+- **Deadline Time Picker & Quick Presets in Audition Setup:**
+  - Added full interactive time editing and selection to the "Here's what they want" review step (`AddReviewStep` in `AddAuditionSheet.kt`):
+    - Replaced the single date box with side-by-side **Date** and **Time** cards featuring calendar and schedule icons, clear labels, and tap-to-edit affordances.
+    - Added Material 3 `AddTimePickerDialog` utilizing `rememberTimePickerState`, `TimePicker`, and `AlertDialog` matching the theme.
+    - Added one-tap industry standard deadline time preset chips (`10:00 AM`, `12:00 PM`, `5:00 PM`, `6:00 PM`, `9:00 PM`, `11:59 PM`, `Custom…`), highlighting the selected time and updating the audition draft while preserving the chosen date.
+    - Extended time selection to `AddMissingDateStep` (when notice did not state a due date) and `AddEditAsksStep` ("What they want" edit sheet), ensuring actors can customize audition deadline times anywhere in the flow.
+    - Added `LocalTime.otTime` extension helper in `Models.kt` formatted as standard 12-hour AM/PM time.
+    - Added unit tests in `AddAuditionNoticeParsingTest.kt` for `LocalTime.otTime` format verification and date/time component preservation.

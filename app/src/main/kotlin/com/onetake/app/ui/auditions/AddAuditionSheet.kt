@@ -37,8 +37,10 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.DocumentScanner
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Keyboard
@@ -49,6 +51,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -59,8 +62,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -116,6 +121,7 @@ import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -588,7 +594,9 @@ private fun AddMissingDateStep(draft: AddDraft, onCancel: () -> Unit, onContinue
     val friday = remember { today.with(TemporalAdjusters.next(DayOfWeek.FRIDAY)) }
     var choice by remember { mutableStateOf<Int?>(null) } // 0 tomorrow · 1 Friday · 2 picked · 3 no date yet
     var picked by remember { mutableStateOf<LocalDate?>(null) }
-    var showPicker by remember { mutableStateOf(false) }
+    var pickedTime by remember { mutableStateOf(LocalTime.of(10, 0)) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxWidth().fillMaxHeight()) {
         SheetHeader("", leading = "Cancel", onLeading = onCancel)
@@ -623,8 +631,62 @@ private fun AddMissingDateStep(draft: AddDraft, onCancel: () -> Unit, onContinue
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AddChip("Tomorrow", choice == 0) { choice = 0 }
                     AddChip(friday.format(addDueDay), choice == 1) { choice = 1 }
-                    AddChip(picked?.format(addDueDay) ?: "Pick a date", choice == 2) { showPicker = true }
+                    AddChip(picked?.format(addDueDay) ?: "Pick a date", choice == 2) { showDatePicker = true }
                     AddChip("No date yet", choice == 3) { choice = 3 }
+                }
+
+                if (choice in 0..2) {
+                    OTDivider()
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(Icons.Filled.Schedule, null, tint = c.due, modifier = Modifier.size(16.dp))
+                            Text("Due time", style = OT.type.footnote, color = c.labelSecondary)
+                        }
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(c.fillField)
+                                .clickable { showTimePicker = true }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            Text(pickedTime.otTime, style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold), color = c.due)
+                        }
+                    }
+                    val presetTimes = remember {
+                        listOf(
+                            LocalTime.of(10, 0) to "10:00 AM",
+                            LocalTime.of(12, 0) to "12:00 PM",
+                            LocalTime.of(17, 0) to "5:00 PM",
+                            LocalTime.of(18, 0) to "6:00 PM",
+                            LocalTime.of(21, 0) to "9:00 PM",
+                            LocalTime.of(23, 59) to "11:59 PM",
+                        )
+                    }
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        presetTimes.forEach { (time, label) ->
+                            AddChip(
+                                text = label,
+                                selected = pickedTime.hour == time.hour && pickedTime.minute == time.minute,
+                                onClick = { pickedTime = time },
+                            )
+                        }
+                        AddChip(
+                            text = "Custom…",
+                            selected = presetTimes.none { it.first.hour == pickedTime.hour && it.first.minute == pickedTime.minute },
+                            onClick = { showTimePicker = true },
+                        )
+                    }
                 }
             }
 
@@ -644,9 +706,9 @@ private fun AddMissingDateStep(draft: AddDraft, onCancel: () -> Unit, onContinue
             if (choice == null) "Choose a due date first" else "Continue",
             onClick = {
                 val due: LocalDateTime? = when (choice) {
-                    0 -> tomorrow.atTime(10, 0)
-                    1 -> friday.atTime(10, 0)
-                    2 -> picked?.atTime(10, 0)
+                    0 -> tomorrow.atTime(pickedTime)
+                    1 -> friday.atTime(pickedTime)
+                    2 -> (picked ?: tomorrow).atTime(pickedTime)
                     else -> null
                 }
                 onContinue(due)
@@ -656,14 +718,22 @@ private fun AddMissingDateStep(draft: AddDraft, onCancel: () -> Unit, onContinue
         )
     }
 
-    if (showPicker) {
+    if (showDatePicker) {
         AddDatePickerDialog(
             initial = picked ?: tomorrow,
             onPick = {
                 picked = it
                 choice = 2
             },
-            onDismiss = { showPicker = false },
+            onDismiss = { showDatePicker = false },
+        )
+    }
+
+    if (showTimePicker) {
+        AddTimePickerDialog(
+            initial = pickedTime,
+            onPick = { pickedTime = it },
+            onDismiss = { showTimePicker = false },
         )
     }
 }
@@ -721,6 +791,159 @@ private fun AddDatePickerDialog(initial: LocalDate, onPick: (LocalDate) -> Unit,
     ) { DatePicker(state = state) }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddTimePickerDialog(initial: LocalTime, onPick: (LocalTime) -> Unit, onDismiss: () -> Unit) {
+    val c = OT.colors
+    val state = rememberTimePickerState(
+        initialHour = initial.hour,
+        initialMinute = initial.minute,
+        is24Hour = false,
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.surfaceCard,
+        title = {
+            Text("Set deadline time", style = OT.type.headline, color = c.labelPrimary)
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onPick(LocalTime.of(state.hour, state.minute))
+                onDismiss()
+            }) { Text("Done", color = c.accent) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = c.labelSecondary) }
+        },
+        text = {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                TimePicker(state = state)
+            }
+        },
+    )
+}
+
+@Composable
+private fun AddDueTimeSection(
+    due: LocalDateTime?,
+    onChange: (LocalDateTime) -> Unit,
+    onOpenDatePicker: () -> Unit,
+    onOpenTimePicker: () -> Unit,
+) {
+    val c = OT.colors
+    val days = if (due != null) ChronoUnit.DAYS.between(LocalDate.now(), due.toLocalDate()) else null
+    val dayText = when {
+        days == null -> ""
+        days < 0L -> "overdue"
+        days == 0L -> "today"
+        days == 1L -> "tomorrow"
+        else -> "in $days days"
+    }
+
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        // Date card
+        Row(
+            Modifier
+                .weight(1.15f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(c.fillField)
+                .clickable(role = Role.Button, onClick = onOpenDatePicker)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(c.surfaceCard),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Outlined.CalendarMonth, null, tint = c.labelSecondary, modifier = Modifier.size(20.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Date", style = OT.type.footnote, color = c.labelTertiary)
+                Text(
+                    due?.format(addDueDay) ?: "Set date",
+                    style = OT.type.headline,
+                    color = if (due != null) c.labelPrimary else c.accent,
+                    maxLines = 1,
+                )
+                if (dayText.isNotEmpty()) {
+                    Text(dayText, style = OT.type.caption, color = c.labelSecondary)
+                }
+            }
+        }
+
+        // Time card
+        Row(
+            Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(c.fillField)
+                .clickable(role = Role.Button, onClick = onOpenTimePicker)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(c.surfaceCard),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Schedule, null, tint = c.due, modifier = Modifier.size(20.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Deadline time", style = OT.type.footnote, color = c.labelTertiary)
+                Text(
+                    due?.otTime ?: "10:00 AM",
+                    style = OT.type.headline,
+                    color = c.due,
+                    maxLines = 1,
+                )
+                Text("Tap to edit", style = OT.type.caption, color = c.labelSecondary)
+            }
+        }
+    }
+
+    // Quick preset time chips
+    val presetTimes = remember {
+        listOf(
+            LocalTime.of(10, 0) to "10:00 AM",
+            LocalTime.of(12, 0) to "12:00 PM",
+            LocalTime.of(17, 0) to "5:00 PM",
+            LocalTime.of(18, 0) to "6:00 PM",
+            LocalTime.of(21, 0) to "9:00 PM",
+            LocalTime.of(23, 59) to "11:59 PM",
+        )
+    }
+    val currentLocalTime = due?.toLocalTime()
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        presetTimes.forEach { (time, label) ->
+            val isSelected = currentLocalTime?.hour == time.hour && currentLocalTime.minute == time.minute
+            AddChip(
+                text = label,
+                selected = isSelected,
+                onClick = {
+                    val baseDate = due?.toLocalDate() ?: LocalDate.now().plusDays(1)
+                    onChange(baseDate.atTime(time))
+                },
+            )
+        }
+        AddChip(
+            text = "Custom…",
+            selected = currentLocalTime != null && presetTimes.none { it.first.hour == currentLocalTime.hour && it.first.minute == currentLocalTime.minute },
+            onClick = onOpenTimePicker,
+        )
+    }
+}
+
 // MARK: - 6c Here's what they want (review + save)
 
 private fun addAskIcon(ask: String): ImageVector = when (ask) {
@@ -766,7 +989,8 @@ private fun AddReviewStep(
     onSave: () -> Unit,
 ) {
     val c = OT.colors
-    var showPicker by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxWidth().fillMaxHeight()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -797,23 +1021,12 @@ private fun AddReviewStep(
             )
 
             SectionLabel("Due")
-            Box(Modifier.fillMaxWidth().clickable { showPicker = true }.padding(vertical = 2.dp)) {
-                val due = draft.due
-                if (due != null) {
-                    val days = ChronoUnit.DAYS.between(LocalDate.now(), due.toLocalDate())
-                    val dayText = when {
-                        days <= 0L -> "today"
-                        days == 1L -> "1 day"
-                        else -> "$days days"
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(due.format(addDueDay), style = OT.type.title, color = c.labelPrimary, modifier = Modifier.alignByBaseline())
-                        Text("${due.otTime} · $dayText", style = OT.type.headline, color = c.due, modifier = Modifier.alignByBaseline())
-                    }
-                } else {
-                    Text("Add a due date", style = OT.type.headline, color = c.accent, modifier = Modifier.heightIn(min = 48.dp).padding(top = 12.dp))
-                }
-            }
+            AddDueTimeSection(
+                due = draft.due,
+                onChange = { onChange(draft.copy(due = it)) },
+                onOpenDatePicker = { showDatePicker = true },
+                onOpenTimePicker = { showTimePicker = true },
+            )
 
             SectionLabel("They asked for")
             val cells = listOf(Triple("__role", "${draft.role.ifEmpty { "Your role" }} · ${draft.scenes} scenes", "Your lines found")) +
@@ -875,14 +1088,25 @@ private fun AddReviewStep(
         )
     }
 
-    if (showPicker) {
+    if (showDatePicker) {
         AddDatePickerDialog(
             initial = draft.due?.toLocalDate() ?: LocalDate.now().plusDays(1),
             onPick = { date ->
-                val time = draft.due?.toLocalTime()
-                onChange(draft.copy(due = if (time != null) date.atTime(time) else date.atTime(10, 0)))
+                val time = draft.due?.toLocalTime() ?: LocalTime.of(10, 0)
+                onChange(draft.copy(due = date.atTime(time)))
             },
-            onDismiss = { showPicker = false },
+            onDismiss = { showDatePicker = false },
+        )
+    }
+
+    if (showTimePicker) {
+        AddTimePickerDialog(
+            initial = draft.due?.toLocalTime() ?: LocalTime.of(10, 0),
+            onPick = { time ->
+                val date = draft.due?.toLocalDate() ?: LocalDate.now().plusDays(1)
+                onChange(draft.copy(due = date.atTime(time)))
+            },
+            onDismiss = { showTimePicker = false },
         )
     }
 }
@@ -946,6 +1170,8 @@ private fun AddEditAsksStep(draft: AddDraft, slateName: String, onCancel: () -> 
     val c = OT.colors
     var working by remember { mutableStateOf(draft) }
     var showAdd by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxWidth().fillMaxHeight()) {
         SheetHeader(
@@ -967,6 +1193,14 @@ private fun AddEditAsksStep(draft: AddDraft, slateName: String, onCancel: () -> 
                 "OneTake read this from the email. It can miss things — add, remove or change any step. Only what's here becomes a step.",
                 style = OT.type.callout,
                 color = c.labelSecondary,
+            )
+
+            SectionLabel("Due date & time", Modifier.padding(top = 6.dp))
+            AddDueTimeSection(
+                due = working.due,
+                onChange = { working = working.copy(due = it) },
+                onOpenDatePicker = { showDatePicker = true },
+                onOpenTimePicker = { showTimePicker = true },
             )
 
             SectionLabel("Scenes", Modifier.padding(top = 6.dp))
@@ -1064,6 +1298,28 @@ private fun AddEditAsksStep(draft: AddDraft, slateName: String, onCancel: () -> 
                 color = c.labelTertiary,
             )
         }
+    }
+
+    if (showDatePicker) {
+        AddDatePickerDialog(
+            initial = working.due?.toLocalDate() ?: LocalDate.now().plusDays(1),
+            onPick = { date ->
+                val time = working.due?.toLocalTime() ?: LocalTime.of(10, 0)
+                working = working.copy(due = date.atTime(time))
+            },
+            onDismiss = { showDatePicker = false },
+        )
+    }
+
+    if (showTimePicker) {
+        AddTimePickerDialog(
+            initial = working.due?.toLocalTime() ?: LocalTime.of(10, 0),
+            onPick = { time ->
+                val date = working.due?.toLocalDate() ?: LocalDate.now().plusDays(1)
+                working = working.copy(due = date.atTime(time))
+            },
+            onDismiss = { showTimePicker = false },
+        )
     }
 }
 

@@ -8,6 +8,7 @@ import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.ui.graphics.vector.ImageVector
 import java.time.Duration
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
@@ -183,6 +184,9 @@ val LocalDateTime.otWeekdayCaps: String get() = dayOfWeek.getDisplayName(TextSty
 
 /** "6:00 PM" */
 val LocalDateTime.otTime: String get() = format(timeFmt)
+
+/** "6:00 PM" */
+val LocalTime.otTime: String get() = format(timeFmt)
 
 /** "Tomorrow, 2:30 PM" / "Today, 6:00 PM" / "Fri, 10:00 AM" */
 val LocalDateTime.otRelative: String

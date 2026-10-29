@@ -135,8 +135,57 @@ private enum class AddStep { Reading, MissingDate, Review, EditAsks, CouldNotRea
 private val addDueLong = DateTimeFormatter.ofPattern("EEE d MMM, h:mm a", Locale.US)
 private val addDueDay = DateTimeFormatter.ofPattern("EEE d MMM", Locale.US)
 
+enum class AddAuditionSource {
+    Paste,
+    Scan,
+    Photo,
+    PdfOrFile,
+    Share,
+    Type,
+}
+
+internal fun addReviewTitle(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "Audition details"
+    else -> "Here's what they want"
+}
+
+internal fun addReviewSubtitle(source: AddAuditionSource, asksCount: Int): String {
+    val count = asksCount + 1
+    val items = if (count == 1) "1 item" else "$count items"
+    return when (source) {
+        AddAuditionSource.Type -> "Set up your role, deadline, and deliverables, then save."
+        AddAuditionSource.Scan -> "$items found from your scan. Tap any line to edit, then save."
+        AddAuditionSource.PdfOrFile -> "$items found in the PDF. Tap any line to edit, then save."
+        AddAuditionSource.Photo -> "$items found in the image. Tap any line to edit, then save."
+        AddAuditionSource.Paste, AddAuditionSource.Share -> "$items found in the notice. Tap any line to edit, then save."
+    }
+}
+
+internal fun addAsksSectionTitle(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "What to prepare"
+    else -> "They asked for"
+}
+
+internal fun addEditHeaderTitle(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "What to prepare"
+    else -> "What they want"
+}
+
+internal fun addEditSubtitle(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "Customize each deliverable and step. Only what's listed here becomes a step in your audition."
+    AddAuditionSource.Scan -> "OneTake read this from your scan. It can miss things — add, remove or change any step. Only what's here becomes a step."
+    AddAuditionSource.PdfOrFile -> "OneTake read this from the PDF. It can miss things — add, remove or change any step. Only what's here becomes a step."
+    AddAuditionSource.Photo -> "OneTake read this from the image. It can miss things — add, remove or change any step. Only what's here becomes a step."
+    AddAuditionSource.Paste, AddAuditionSource.Share -> "OneTake read this from the notice. It can miss things — add, remove or change any step. Only what's here becomes a step."
+}
+
+internal fun addEditAddButtonLabel(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "Add a deliverable"
+    else -> "Add something they asked for"
+}
+
 /** Rule-based and ScriptParser-backed casting notice & sides parser. */
-private data class AddDraft(
+internal data class AddDraft(
     val project: String = "",
     val role: String = "",
     val projectType: String = "Feature film",
@@ -145,6 +194,7 @@ private data class AddDraft(
     val asks: List<String> = emptyList(),
     val destination: Destination = Destination.ActorsAccess,
     val rawScriptText: String = "",
+    val source: AddAuditionSource = AddAuditionSource.Paste,
 ) {
     fun makeAudition(hasHeadshot: Boolean = false): Audition {
         // Use the pasted/scanned text as the scene only when it actually reads like sides — one of
@@ -207,19 +257,20 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     var notice by remember { mutableStateOf("") }
     var draft by remember { mutableStateOf(AddDraft()) }
 
-    fun startReading(text: String) {
+    fun startReading(text: String, source: AddAuditionSource = AddAuditionSource.Paste) {
         if (text.isBlank()) {
             path = listOf(AddStep.CouldNotRead)
             return
         }
         notice = text
-        draft = addParseNotice(text)
+        draft = addParseNotice(text).copy(source = source)
         path = listOf(AddStep.Reading)
     }
 
     val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
             notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
+            draft = draft.copy(source = AddAuditionSource.Photo)
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = OcrManager.recognizeTextFromUri(context, uri)
@@ -228,7 +279,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
                     path = listOf(AddStep.CouldNotRead)
                 } else {
                     notice = text
-                    draft = addParseNotice(text)
+                    draft = addParseNotice(text).copy(source = AddAuditionSource.Photo)
                 }
             }
         }
@@ -236,6 +287,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
         if (bitmap != null) {
             notice = ""
+            draft = draft.copy(source = AddAuditionSource.Scan)
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = OcrManager.recognizeTextFromBitmap(bitmap)
@@ -244,7 +296,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
                     path = listOf(AddStep.CouldNotRead)
                 } else {
                     notice = text
-                    draft = addParseNotice(text)
+                    draft = addParseNotice(text).copy(source = AddAuditionSource.Scan)
                 }
             }
         }
@@ -252,6 +304,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
+            draft = draft.copy(source = AddAuditionSource.PdfOrFile)
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = OcrManager.recognizeTextFromUri(context, uri)
@@ -260,7 +313,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
                     path = listOf(AddStep.CouldNotRead)
                 } else {
                     notice = text
-                    draft = addParseNotice(text)
+                    draft = addParseNotice(text).copy(source = AddAuditionSource.PdfOrFile)
                 }
             }
         }
@@ -271,6 +324,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
         val share = store.incomingShare ?: return@LaunchedEffect
         store.incomingShare = null
         notice = ""
+        draft = draft.copy(source = AddAuditionSource.Share)
         path = listOf(AddStep.Reading)
         val parts = buildList {
             share.text?.let { add(it) }
@@ -283,7 +337,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
             path = listOf(AddStep.CouldNotRead)
         } else {
             notice = text
-            draft = addParseNotice(text)
+            draft = addParseNotice(text).copy(source = AddAuditionSource.Share)
         }
     }
 
@@ -320,23 +374,24 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
         when (step) {
             null -> AddCaptureStep(
                 onClose = onDismiss,
-                onPaste = { startReading(runCatching { clipboardText(context) }.getOrNull().orEmpty()) },
+                onPaste = { startReading(runCatching { clipboardText(context) }.getOrNull().orEmpty(), AddAuditionSource.Paste) },
                 onPhoto = pickPhoto,
                 onScan = scan,
                 onFile = { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "application/rtf", "text/rtf")) },
                 onType = {
-                    draft = AddDraft()
+                    draft = AddDraft(source = AddAuditionSource.Type)
                     path = path + AddStep.Review
                 },
             )
             AddStep.Reading -> AddReadingStep(
                 notice = notice,
+                source = draft.source,
                 onCancel = onDismiss,
                 onDone = { result ->
                     if (result.project.isEmpty() && result.role.isEmpty()) {
                         path = listOf(AddStep.CouldNotRead)
                     } else {
-                        draft = result
+                        draft = result.copy(source = draft.source)
                         path = path + (if (result.due == null) AddStep.MissingDate else AddStep.Review)
                     }
                 },
@@ -372,7 +427,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
                 onRetry = { path = emptyList() },
                 onScan = scan,
                 onType = {
-                    draft = AddDraft()
+                    draft = AddDraft(source = AddAuditionSource.Type)
                     path = listOf(AddStep.Review)
                 },
             )
@@ -470,7 +525,12 @@ private fun AddWay(icon: ImageVector, title: String, onClick: () -> Unit, modifi
 // MARK: - 6.1 Reading the notice
 
 @Composable
-private fun AddReadingStep(notice: String, onCancel: () -> Unit, onDone: (AddDraft) -> Unit) {
+private fun AddReadingStep(
+    notice: String,
+    source: AddAuditionSource,
+    onCancel: () -> Unit,
+    onDone: (AddDraft) -> Unit,
+) {
     val c = OT.colors
     val parsed = remember(notice) { addParseNotice(notice) }
     var found by remember(notice) { mutableIntStateOf(0) }
@@ -511,7 +571,13 @@ private fun AddReadingStep(notice: String, onCancel: () -> Unit, onDone: (AddDra
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            LargeTitle("Reading the notice…", subtitle = "Extracting details and dates.")
+            val readingTitle = when (source) {
+                AddAuditionSource.Scan -> "Reading your scan…"
+                AddAuditionSource.PdfOrFile -> "Reading the document…"
+                AddAuditionSource.Photo -> "Reading the photo…"
+                else -> "Reading the notice…"
+            }
+            LargeTitle(readingTitle, subtitle = "Extracting details and dates.")
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -608,7 +674,13 @@ private fun AddMissingDateStep(draft: AddDraft, onCancel: () -> Unit, onContinue
                 .padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            LargeTitle("One thing missing", subtitle = "Everything else is filled in from the notice.")
+            val missingSubtitle = when (draft.source) {
+                AddAuditionSource.Scan -> "Everything else is filled in from your scan."
+                AddAuditionSource.PdfOrFile -> "Everything else is filled in from the PDF."
+                AddAuditionSource.Photo -> "Everything else is filled in from the photo."
+                else -> "Everything else is filled in from the notice."
+            }
+            LargeTitle("One thing missing", subtitle = missingSubtitle)
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -624,8 +696,14 @@ private fun AddMissingDateStep(draft: AddDraft, onCancel: () -> Unit, onContinue
                         contentAlignment = Alignment.Center,
                     ) { Icon(Icons.Outlined.CalendarMonth, null, tint = c.due, modifier = Modifier.size(22.dp)) }
                     Column {
+                        val noDateText = when (draft.source) {
+                            AddAuditionSource.Scan -> "The scan didn't give a date."
+                            AddAuditionSource.PdfOrFile -> "The PDF didn't give a date."
+                            AddAuditionSource.Photo -> "The photo didn't give a date."
+                            else -> "The notice didn't give a date."
+                        }
                         Text("When is it due?", style = OT.type.headline, color = c.labelPrimary)
-                        Text("The notice didn't give a date.", style = OT.type.footnote, color = c.labelSecondary)
+                        Text(noDateText, style = OT.type.footnote, color = c.labelSecondary)
                     }
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -690,14 +768,21 @@ private fun AddMissingDateStep(draft: AddDraft, onCancel: () -> Unit, onContinue
                 }
             }
 
-            SectionLabel("From the notice", Modifier.padding(top = 4.dp))
+            val sourceSectionLabel = when (draft.source) {
+                AddAuditionSource.Scan -> "From your scan"
+                AddAuditionSource.PdfOrFile -> "From the PDF"
+                AddAuditionSource.Photo -> "From the photo"
+                else -> "From the notice"
+            }
+            SectionLabel(sourceSectionLabel, Modifier.padding(top = 4.dp))
             Column {
                 AddValueRow(draft.project.ifEmpty { "—" }, "Project")
                 AddValueRow(draft.role.ifEmpty { "—" }, "Your role")
-                AddValueRow("${draft.scenes} scenes, your lines found", "Sides")
+                val sidesDetail = if (draft.rawScriptText.isNotBlank()) "${draft.scenes} scenes, your lines found" else "${draft.scenes} scenes"
+                AddValueRow(sidesDetail, "Sides")
                 AddValueRow(
                     draft.asks.joinToString(", ").lowercase().replaceFirstChar { it.titlecase(Locale.US) }.ifEmpty { "—" },
-                    "They asked for",
+                    addAsksSectionTitle(draft.source),
                     showDivider = false,
                 )
             }
@@ -1016,8 +1101,8 @@ private fun AddReviewStep(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             LargeTitle(
-                "Here's what they want",
-                subtitle = "${draft.asks.size + 1} things found in the email. Tap any line to change it, then save.",
+                addReviewTitle(draft.source),
+                subtitle = addReviewSubtitle(draft.source, draft.asks.size),
             )
 
             SectionLabel("Due")
@@ -1028,8 +1113,13 @@ private fun AddReviewStep(
                 onOpenTimePicker = { showTimePicker = true },
             )
 
-            SectionLabel("They asked for")
-            val cells = listOf(Triple("__role", "${draft.role.ifEmpty { "Your role" }} · ${draft.scenes} scenes", "Your lines found")) +
+            SectionLabel(addAsksSectionTitle(draft.source))
+            val roleDetail = when {
+                draft.rawScriptText.isNotBlank() -> "Your lines found"
+                draft.source == AddAuditionSource.Type -> "Sides to record"
+                else -> "Sides"
+            }
+            val cells = listOf(Triple("__role", "${draft.role.ifEmpty { "Your role" }} · ${draft.scenes} scenes", roleDetail)) +
                 draft.asks.map { Triple(it, it, addAskDetail(it, slateName, draft.role)) }
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 cells.chunked(2).forEach { pair ->
@@ -1175,7 +1265,7 @@ private fun AddEditAsksStep(draft: AddDraft, slateName: String, onCancel: () -> 
 
     Column(Modifier.fillMaxWidth().fillMaxHeight()) {
         SheetHeader(
-            "What they want",
+            addEditHeaderTitle(working.source),
             leading = "Cancel",
             trailing = "Done",
             onLeading = onCancel,
@@ -1190,7 +1280,7 @@ private fun AddEditAsksStep(draft: AddDraft, slateName: String, onCancel: () -> 
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                "OneTake read this from the email. It can miss things — add, remove or change any step. Only what's here becomes a step.",
+                addEditSubtitle(working.source),
                 style = OT.type.callout,
                 color = c.labelSecondary,
             )
@@ -1264,7 +1354,7 @@ private fun AddEditAsksStep(draft: AddDraft, slateName: String, onCancel: () -> 
                     Box(Modifier.size(22.dp).clip(CircleShape).background(c.accent), contentAlignment = Alignment.Center) {
                         Icon(Icons.Filled.Add, null, tint = c.labelOnAccent, modifier = Modifier.size(16.dp))
                     }
-                    Text("Add something they asked for", style = OT.type.headline, color = c.accent)
+                    Text(addEditAddButtonLabel(working.source), style = OT.type.headline, color = c.accent)
                 }
                 val suggestions = listOf("Slate first", "Full length", "Both profiles", "Landscape", "Under 3 min", working.destination.label)
                     .filter { it !in working.asks }

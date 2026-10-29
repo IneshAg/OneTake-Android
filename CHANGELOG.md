@@ -160,3 +160,15 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
     - Extended time selection to `AddMissingDateStep` (when notice did not state a due date) and `AddEditAsksStep` ("What they want" edit sheet), ensuring actors can customize audition deadline times anywhere in the flow.
     - Added `LocalTime.otTime` extension helper in `Models.kt` formatted as standard 12-hour AM/PM time.
     - Added unit tests in `AddAuditionNoticeParsingTest.kt` for `LocalTime.otTime` format verification and date/time component preservation.
+- **Context-Aware Audition Review & Type-In Support:**
+  - Fully nuked generic and false "found in the email" copy from audition creation.
+  - Introduced `AddAuditionSource` enum (`Scan`, `PdfOrFile`, `Photo`, `Paste`, `Share`, `Type`) wired across all ingestion launchers.
+  - Made title, subtitle, and asks headers dynamically context-aware based on the user's input method:
+    - **Manual Typing (`Type`):** Title dynamically switches to `"Audition details"`, subtitle to `"Set up your role, deadline, and deliverables, then save."`, and section label from `"They asked for"` to `"What to prepare"`.
+    - **Camera Scan (`Scan`):** Subtitle reflects scan origin (e.g. `"$items found from your scan. Tap any line to edit, then save."`).
+    - **PDF / File (`PdfOrFile`):** Subtitle reflects document origin (e.g. `"$items found in the PDF. Tap any line to edit, then save."`).
+    - **Photo (`Photo`):** Subtitle reflects image origin (e.g. `"$items found in the image. Tap any line to edit, then save."`).
+    - **Pasted / Shared (`Paste` / `Share`):** Subtitle accurately references the notice (e.g. `"$items found in the notice. Tap any line to edit, then save."`).
+  - Updated `AddEditAsksStep` ("What they want" / "What to prepare") and `AddMissingDateStep` ("One thing missing") to dynamically adapt titles, explanations, and button labels between typing ("Add a deliverable", "What to prepare") and scanning ("Add something they asked for", "They asked for").
+  - Fixed sides detail label in review to only claim "Your lines found" if real sides were parsed, gracefully showing "Sides to record" or "Sides" for manually typed auditions.
+  - Added unit test suite `testContextAwareReviewTitlesAndSubtitles` in `AddAuditionNoticeParsingTest.kt`.

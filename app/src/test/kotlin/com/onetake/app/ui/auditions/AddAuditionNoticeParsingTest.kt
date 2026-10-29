@@ -97,4 +97,34 @@ class AddAuditionNoticeParsingTest {
         assertEquals("18 Nov", due?.format(java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.US)))
         assertEquals("5:00 PM", due?.otTime)
     }
+
+    @Test
+    fun testContextAwareReviewTitlesAndSubtitles() {
+        // Manual Type mode
+        assertEquals("Audition details", addReviewTitle(AddAuditionSource.Type))
+        assertEquals("Set up your role, deadline, and deliverables, then save.", addReviewSubtitle(AddAuditionSource.Type, asksCount = 2))
+        assertEquals("What to prepare", addAsksSectionTitle(AddAuditionSource.Type))
+        assertEquals("What to prepare", addEditHeaderTitle(AddAuditionSource.Type))
+        assertEquals("Add a deliverable", addEditAddButtonLabel(AddAuditionSource.Type))
+
+        // Scan mode
+        assertEquals("Here's what they want", addReviewTitle(AddAuditionSource.Scan))
+        assertEquals("3 items found from your scan. Tap any line to edit, then save.", addReviewSubtitle(AddAuditionSource.Scan, asksCount = 2))
+        assertEquals("They asked for", addAsksSectionTitle(AddAuditionSource.Scan))
+        assertEquals("What they want", addEditHeaderTitle(AddAuditionSource.Scan))
+        assertEquals("Add something they asked for", addEditAddButtonLabel(AddAuditionSource.Scan))
+
+        // PDF mode
+        assertEquals("Here's what they want", addReviewTitle(AddAuditionSource.PdfOrFile))
+        assertEquals("2 items found in the PDF. Tap any line to edit, then save.", addReviewSubtitle(AddAuditionSource.PdfOrFile, asksCount = 1))
+        assertEquals("They asked for", addAsksSectionTitle(AddAuditionSource.PdfOrFile))
+
+        // Photo mode
+        assertEquals("Here's what they want", addReviewTitle(AddAuditionSource.Photo))
+        assertEquals("1 item found in the image. Tap any line to edit, then save.", addReviewSubtitle(AddAuditionSource.Photo, asksCount = 0))
+
+        // Paste / Share mode
+        assertEquals("Here's what they want", addReviewTitle(AddAuditionSource.Paste))
+        assertEquals("4 items found in the notice. Tap any line to edit, then save.", addReviewSubtitle(AddAuditionSource.Paste, asksCount = 3))
+    }
 }

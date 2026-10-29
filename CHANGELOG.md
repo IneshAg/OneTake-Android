@@ -130,3 +130,14 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - Refined director speech triggers in `ShootFlowScreen` and hardened error recovery across all speech recognizers.
 - **Copy Cleanup (Privacy & Local Storage Disclaimers):**
   - Purged repetitive, nagging "stays on this phone", "nothing leaves this phone", and "on this phone" disclaimers across Practice, Profile, Auditions, Shoot, Takes, and Package flows. Replaced with concise, professional UI labels.
+- **Ready to Send (`PackageScreen`) Interactive Package Overhaul:**
+  - Made every tape strip block and legend item interactive in `PkgTapeStrip`: tapping Headshot, Slate, Full length, or Scene segments opens direct preview sheets.
+  - Built comprehensive interactive bottom sheets:
+    - `PkgHeadshotsSheet`: Previews all 3 headshots with 4:5 aspect ratio, angle labels, and retake action.
+    - `PkgClipSheet`: Embedded video playback with `TkPlayerCard`, slate spoken text, and re-record actions for Slate and Full Length.
+    - `PkgSceneTakeSheet`: Displays circled take preview with playback and direct "Choose different take" shortcut.
+    - `PkgAudioSheet`: Verifies audio presence, peak dBFS levels, and distortion warnings across all deliverable clips.
+    - `PkgDeliverableDetailsSheet`: Shows deliverable file naming, destination casting specifications, video/audio encoding parameters, and duration.
+  - Fixed dead chevron bug in `PkgRow`: Chevrons now only render on clickable rows.
+  - Dynamic Tape Check Row: Evaluates real tape status using `TapeChecker.run` (`c.success` checkmark when passed, `c.warning` when issues need review).
+  - Pre-Export Assembly Preview: Tapping "Preview the whole tape" when unexported offers instant composition and playback via system player.

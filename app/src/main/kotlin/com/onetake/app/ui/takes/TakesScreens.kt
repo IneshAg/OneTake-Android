@@ -453,7 +453,7 @@ private fun TkCompareGlyph(color: Color) {
 
 /** The VideoView behind a [TkPlayerCard], so [TkPlaybackBar] can show and seek real playback time. */
 @Stable
-private class TkPlayerState {
+class TkPlayerState {
     var view: android.widget.VideoView? = null
     var positionMs by mutableIntStateOf(0)
     var durationMs by mutableIntStateOf(0)
@@ -468,7 +468,7 @@ private class TkPlayerState {
 }
 
 @Composable
-private fun TkPlayerCard(
+fun TkPlayerCard(
     modifier: Modifier = Modifier,
     state: TkPlayerState,
     fileUri: String? = null,

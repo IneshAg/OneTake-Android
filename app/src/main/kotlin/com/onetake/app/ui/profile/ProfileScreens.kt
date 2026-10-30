@@ -69,7 +69,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -962,7 +962,7 @@ private fun HeadshotCropSheet(
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Icon(Icons.Filled.RotateRight, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(Icons.AutoMirrored.Filled.RotateRight, null, tint = Color.White, modifier = Modifier.size(16.dp))
                         Text("Rotate 90°", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = Color.White)
                     }
                 }

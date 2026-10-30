@@ -203,3 +203,27 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
     - Upgraded all 3 headshot slots (Front, Left profile, Right profile) with `HeadshotOptionsSheet` supporting Take with Camera, Import from Photos (via Photo Picker), Adjust 4:5 Crop & Rotation, and Delete Headshot.
     - Added interactive `HeadshotCropSheet` with 4:5 portrait preview, pan gestures, zoom slider, 90° rotation, and saving via `HeadshotFramingEngine.processAndCropHeadshot`.
   - Added unit test suite `AppStoreEditingTest.kt` verifying all editing mutations and state guarantees.
+- **Industry-Standard `.zip` Package Export & Delivery Architecture (`MediaExporter.kt`, `PackageScreen.kt`, `Platform.kt`, `TapeChecker.kt`):**
+  - **`MediaExporter.exportZipPackage(...)`**:
+    - Exports audition deliverables into a cleanly structured, production-ready `.zip` archive named according to casting requirements: `<LAST>_<FIRST>_<ROLE>_<PROJECT>.zip`.
+    - Automatically builds and embeds `MANIFEST.txt` containing actor details (Name, Role, Project, Agency/Representation, Height, Location, Destination, Date), plus an itemized file manifest with uncompressed byte sizes.
+    - Packages cleanly named individual media files: `..._SLATE.mp4`, `..._FULL_LENGTH.mp4`, `..._SCENE_1.mp4`, `..._SCENE_2.mp4`, and 4:5 headshots (`..._HEADSHOT_FRONT.jpg`, `..._HEADSHOT_LEFT.jpg`, `..._HEADSHOT_RIGHT.jpg`).
+    - Stitches and embeds optional assembled full tape (`..._FULL_TAPE.mp4`) when 2+ video pieces are present.
+    - Safely cleans up temporary intermediate concatenation files in `finally` blocks.
+  - **`MediaExporter.inspectPackageManifest(...)`**:
+    - Computes package deliverables, calculating entry names, media kinds, byte sizes, and availability prior to compression.
+  - **`PackageScreen.kt` Overhaul**:
+    - Replaced single-video export flow with dual delivery workflow:
+      - **"Send .zip package"**: Automatically compiles `.zip` archive and launches Android system share sheet with MIME type `application/zip` and `ClipData` permissions.
+      - **"Save .zip to device"**: Prompts file destination via `ActivityResultContracts.CreateDocument("application/zip")` and streams package bytes directly to local or cloud storage.
+      - **"Preview full tape"**: Generates/plays combined `.mp4` deliverable without having to extract files.
+    - Upgraded `PkgDeliverableDetailsSheet` with full itemized deliverable manifest, file sizes, and destination specifications.
+    - Fixed UI freeze/ANR in `PkgAudioSheet`: Moved `TapeAnalysis.sound` decoding off the main composition thread to `Dispatchers.IO` via `produceState`.
+    - Fixed false-green "Audio track present · clear" bug when `sound == null` in `PkgAudioSheet`; now accurately reports "No audio track detected" or "Silent track".
+  - **`TapeChecker.kt` & `Platform.kt`**:
+    - Supported `slateAtStart` ordering parameter in `TapeChecker.run`.
+    - Added "Both profiles" deliverable check when casting asks for left & right profiles.
+    - Updated `Platform.shareFile` and `Platform.viewFile` with full `application/zip` MIME support and `ClipData` content URI grant permissions for third-party apps (Drive, Gmail, WhatsApp).
+  - **Unit Test Suite**:
+    - Added `MediaExporterZipTest.kt` verifying `ZipFile` entries, `MANIFEST.txt` contents, file naming conventions, and non-zero media payloads.
+    - Updated `PackageScreenTest.kt` with `deliverableZipFileName` assertions.

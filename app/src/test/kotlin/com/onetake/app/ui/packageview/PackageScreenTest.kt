@@ -32,8 +32,10 @@ class PackageScreenTest {
         )
         val slate = SlateInfo(name = "Jane Smith", height = "5'7\"", basedIn = "London", representation = "CAA")
         val fileName = MediaExporter.deliverableFileName(audition, slate)
+        val zipFileName = MediaExporter.deliverableZipFileName(audition, slate)
 
         assertEquals("SMITH_JANE_OPHELIA_HAMLET.mp4", fileName)
+        assertEquals("SMITH_JANE_OPHELIA_HAMLET.zip", zipFileName)
     }
 
     @Test

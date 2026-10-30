@@ -7,6 +7,7 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
 import com.onetake.app.models.Audition
+import com.onetake.app.models.PieceKind
 import com.onetake.app.models.SlateInfo
 import com.onetake.app.models.Take
 import java.io.File
@@ -32,13 +33,241 @@ object MediaExporter {
         class MuxerFailed(cause: Throwable) : ExportException(cause.message ?: "Couldn't put the export together.", cause)
     }
 
-    fun deliverableFileName(audition: Audition, slate: SlateInfo): String {
+    fun deliverablePrefix(audition: Audition, slate: SlateInfo): String {
         fun token(s: String) = s.uppercase().filter { it.isLetterOrDigit() }
         val parts = slate.name.trim().split(" ").filter { it.isNotBlank() }
         val last = parts.lastOrNull() ?: "ACTOR"
         val first = if (parts.size > 1) parts.first() else ""
         val pieces = listOf(token(last), token(first), token(audition.role), token(audition.project)).filter { it.isNotEmpty() }
-        return (if (pieces.isEmpty()) "ONETAKE" else pieces.joinToString("_")) + ".mp4"
+        return if (pieces.isEmpty()) "ONETAKE" else pieces.joinToString("_")
+    }
+
+    fun deliverableFileName(audition: Audition, slate: SlateInfo): String =
+        deliverablePrefix(audition, slate) + ".mp4"
+
+    fun deliverableZipFileName(audition: Audition, slate: SlateInfo): String =
+        deliverablePrefix(audition, slate) + ".zip"
+
+    data class PackageEntryInfo(
+        val name: String,
+        val kind: String,
+        val sizeBytes: Long,
+        val uri: String?,
+        val isReady: Boolean,
+    )
+
+    fun uriToFile(uriString: String?): File? {
+        if (uriString.isNullOrBlank()) return null
+        return runCatching {
+            if (uriString.startsWith("file://")) {
+                File(uriString.substring("file://".length))
+            } else if (uriString.startsWith("/")) {
+                File(uriString)
+            } else {
+                Uri.parse(uriString).path?.let(::File)
+            }
+        }.getOrNull()
+    }
+
+    fun inspectPackageManifest(
+        context: Context,
+        audition: Audition,
+        takes: List<Take>,
+        slate: SlateInfo,
+        headshots: Map<String, String>,
+    ): List<PackageEntryInfo> {
+        val prefix = deliverablePrefix(audition, slate)
+        val ownTakes = takes.filter { it.auditionId == audition.id }
+        val items = mutableListOf<PackageEntryInfo>()
+
+        // 1. Slate
+        val wantsSlate = audition.pieces.any { it.kind == PieceKind.Slate }
+        if (wantsSlate || audition.slateVideoUri != null) {
+            val file = uriToFile(audition.slateVideoUri)
+            val len = file?.takeIf { it.isFile }?.length() ?: 0L
+            items += PackageEntryInfo(
+                name = "${prefix}_01_SLATE.mp4",
+                kind = "Slate Video",
+                sizeBytes = len,
+                uri = audition.slateVideoUri,
+                isReady = len > 0L,
+            )
+        }
+
+        // 2. Full Length
+        val wantsFull = audition.pieces.any { it.kind == PieceKind.FullLength } || "Full length" in audition.asks
+        if (wantsFull || audition.fullLengthVideoUri != null) {
+            val file = uriToFile(audition.fullLengthVideoUri)
+            val len = file?.takeIf { it.isFile }?.length() ?: 0L
+            items += PackageEntryInfo(
+                name = "${prefix}_02_FULL_LENGTH.mp4",
+                kind = "Full Length Video",
+                sizeBytes = len,
+                uri = audition.fullLengthVideoUri,
+                isReady = len > 0L,
+            )
+        }
+
+        // 3. Scene takes
+        val sceneCount = maxOf(1, audition.scenes.size)
+        for (i in 0 until sceneCount) {
+            val scene = audition.scenes.getOrNull(i)
+            val sceneNum = scene?.number ?: (i + 1)
+            val sceneTakes = ownTakes.filter { (it.sceneIndex ?: 0) == i && it.fileUri != null }
+            val chosen = sceneTakes.firstOrNull { it.isCircled } ?: sceneTakes.firstOrNull()
+            val file = uriToFile(chosen?.fileUri)
+            val len = file?.takeIf { it.isFile }?.length() ?: 0L
+            items += PackageEntryInfo(
+                name = "${prefix}_SCENE_${sceneNum}.mp4",
+                kind = scene?.title ?: "Scene $sceneNum",
+                sizeBytes = len,
+                uri = chosen?.fileUri,
+                isReady = len > 0L,
+            )
+        }
+
+        // 4. Headshots
+        listOf("front" to "FRONT", "left" to "LEFT", "right" to "RIGHT").forEach { (angle, cap) ->
+            val uriStr = headshots[angle]
+            if (uriStr != null || angle == "front") {
+                val file = uriToFile(uriStr)
+                val len = file?.takeIf { it.isFile }?.length() ?: 0L
+                items += PackageEntryInfo(
+                    name = "${prefix}_HEADSHOT_${cap}.jpg",
+                    kind = "$angle Headshot",
+                    sizeBytes = len,
+                    uri = uriStr,
+                    isReady = len > 0L,
+                )
+            }
+        }
+
+        return items
+    }
+
+    fun existingFullTapeFile(context: Context, audition: Audition, slate: SlateInfo): File? {
+        val fileName = deliverableFileName(audition, slate)
+        val outDir = File(MediaStore.directory(context, "exports"), audition.id)
+        val outFile = File(outDir, fileName)
+        return if (outFile.exists()) outFile else null
+    }
+
+    fun existingZipFile(context: Context, audition: Audition, slate: SlateInfo): File? {
+        val fileName = deliverableZipFileName(audition, slate)
+        val outDir = File(MediaStore.directory(context, "exports"), audition.id)
+        val outFile = File(outDir, fileName)
+        return if (outFile.exists()) outFile else null
+    }
+
+    /** Exports the complete audition package as a .zip file containing cleanly named MP4 clips,
+     *  headshot JPEGs, an audition manifest file, and an optional combined full-tape MP4.
+     *  Blocking — run on Dispatchers.IO. */
+    fun exportZipPackage(
+        context: Context,
+        audition: Audition,
+        takes: List<Take>,
+        slate: SlateInfo,
+        headshots: Map<String, String>,
+        includeCombinedTape: Boolean = true,
+        slateAtStart: Boolean = true,
+        isCancelled: () -> Boolean = { false },
+        onProgress: (Float) -> Unit = {},
+    ): File {
+        val manifest = inspectPackageManifest(context, audition, takes, slate, headshots)
+        val validItems = manifest.filter { it.isReady && it.uri != null }
+        if (validItems.isEmpty()) throw ExportException.NothingToExport()
+
+        val fileName = deliverableZipFileName(audition, slate)
+        val outDir = File(MediaStore.directory(context, "exports"), audition.id).apply { mkdirs() }
+        val outFile = File(outDir, fileName)
+        if (outFile.exists()) outFile.delete()
+
+        val tempCombinedFile = if (includeCombinedTape && validItems.count { it.kind.endsWith("Video") || it.name.endsWith(".mp4") } >= 2) {
+            runCatching {
+                export(context, audition, takes, slate, isCancelled = isCancelled, includeSlate = slateAtStart)
+            }.getOrNull()
+        } else null
+
+        val prefix = deliverablePrefix(audition, slate)
+        val totalSteps = validItems.size + 1 + (if (tempCombinedFile != null) 1 else 0)
+        var step = 0
+
+        try {
+            java.util.zip.ZipOutputStream(java.io.FileOutputStream(outFile).buffered()).use { zipOut ->
+                // Write MANIFEST.txt
+                val manifestEntry = java.util.zip.ZipEntry("MANIFEST.txt")
+                zipOut.putNextEntry(manifestEntry)
+                val manifestContent = buildString {
+                    appendLine("ONETAKE AUDITION PACKAGE")
+                    appendLine("========================")
+                    appendLine("Project: ${audition.project}")
+                    appendLine("Role: ${audition.role}")
+                    appendLine("Actor: ${slate.name}")
+                    if (slate.representation.isNotBlank()) appendLine("Representation: ${slate.representation}")
+                    if (slate.height.isNotBlank()) appendLine("Height: ${slate.height}")
+                    if (slate.basedIn.isNotBlank()) appendLine("Location: ${slate.basedIn}")
+                    appendLine("Date: ${java.time.LocalDateTime.now()}")
+                    appendLine("Destination: ${audition.destination.label}")
+                    appendLine()
+                    appendLine("PACKAGE CONTENTS:")
+                    validItems.forEach { item ->
+                        appendLine("- ${item.name} (${item.sizeBytes / 1024} KB) - ${item.kind}")
+                    }
+                    if (tempCombinedFile != null) {
+                        appendLine("- ${prefix}_FULL_TAPE.mp4 (${tempCombinedFile.length() / 1024} KB) - Complete Assembled Tape")
+                    }
+                }
+                zipOut.write(manifestContent.toByteArray())
+                zipOut.closeEntry()
+                step++
+                onProgress(step.toFloat() / totalSteps)
+
+                // Write valid media files
+                val buffer = ByteArray(64 * 1024)
+                for (item in validItems) {
+                    if (isCancelled()) throw CancellationException("Export cancelled")
+                    val file = uriToFile(item.uri)
+                    if (file != null && file.exists()) {
+                        val entry = java.util.zip.ZipEntry(item.name)
+                        zipOut.putNextEntry(entry)
+                        java.io.FileInputStream(file).use { input ->
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read <= 0) break
+                                zipOut.write(buffer, 0, read)
+                            }
+                        }
+                        zipOut.closeEntry()
+                    }
+                    step++
+                    onProgress(step.toFloat() / totalSteps)
+                }
+
+                // If combined tape exists, add it as well
+                if (tempCombinedFile != null && tempCombinedFile.exists()) {
+                    if (isCancelled()) throw CancellationException("Export cancelled")
+                    val entry = java.util.zip.ZipEntry("${prefix}_FULL_TAPE.mp4")
+                    zipOut.putNextEntry(entry)
+                    java.io.FileInputStream(tempCombinedFile).use { input ->
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read <= 0) break
+                            zipOut.write(buffer, 0, read)
+                        }
+                    }
+                    zipOut.closeEntry()
+                    step++
+                    onProgress(step.toFloat() / totalSteps)
+                }
+            }
+        } catch (e: Exception) {
+            outFile.delete()
+            throw e
+        } finally {
+            tempCombinedFile?.delete()
+        }
+
+        return outFile
     }
 
     /** Blocking — callers should run this on Dispatchers.IO. Returns the exported file.

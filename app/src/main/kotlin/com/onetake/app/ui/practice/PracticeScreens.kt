@@ -37,7 +37,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DirectionsWalk
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
@@ -284,7 +284,7 @@ private fun PracticePieceActionSheet(
             )
 
             PracticeActionRow(
-                icon = Icons.Filled.DirectionsWalk,
+                icon = Icons.AutoMirrored.Filled.DirectionsWalk,
                 title = "Hands-Free Audio Walk",
                 subtitle = "Continuous looped TTS reading in your earphones",
                 onClick = {

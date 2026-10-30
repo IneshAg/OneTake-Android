@@ -26,7 +26,14 @@ object TapeChecker {
 
     private class ClipInfo(val label: String, val uri: String, val durationMs: Long, val landscape: Boolean?, val hasAudio: Boolean)
 
-    fun run(context: Context, audition: Audition, takes: List<Take>, headshots: Map<String, String>, slate: SlateInfo): List<Check> {
+    fun run(
+        context: Context,
+        audition: Audition,
+        takes: List<Take>,
+        headshots: Map<String, String>,
+        slate: SlateInfo,
+        slateAtStart: Boolean = true,
+    ): List<Check> {
         val checks = mutableListOf<Check>()
         val ownTakes = takes.filter { it.auditionId == audition.id }
         val wantsSlate = audition.pieces.any { it.kind == PieceKind.Slate }
@@ -35,16 +42,27 @@ object TapeChecker {
         if (audition.pieces.any { it.kind == PieceKind.Headshot }) {
             val ok = headshots.values.any { exists(it) }
             checks += Check("Headshot", ok, if (ok) "${headshots.size} of 3 angles saved" else "No headshot saved yet")
+            if ("Both profiles" in audition.asks) {
+                val hasProfiles = headshots.containsKey("left") && headshots.containsKey("right")
+                checks += Check("Both profiles", hasProfiles, if (hasProfiles) "Left and right profiles saved" else "Casting asked for both profiles — add left & right in Profile")
+            }
         }
         if (wantsSlate) {
             val ok = exists(audition.slateVideoUri)
-            checks += Check("Slate recorded", ok, if (ok) "Opens the tape" else "Not recorded yet", audition.slateVideoUri)
+            val slatePos = if (slateAtStart) "Opens the tape" else "Plays at end of tape"
+            checks += Check("Slate recorded", ok, if (ok) slatePos else "Not recorded yet", audition.slateVideoUri)
             val details = slate.name.isNotBlank()
             checks += Check("Slate details", details, if (details) slate.spoken else "Add your name in Profile so the slate prompt has it")
+            if (ok) {
+                checks += takeChecks(context, "Slate", audition.slateVideoUri!!)
+            }
         }
         if (wantsFullLength) {
             val ok = exists(audition.fullLengthVideoUri)
             checks += Check("Full length", ok, if (ok) "Recorded" else "Casting asked for one — not recorded yet", audition.fullLengthVideoUri)
+            if (ok) {
+                checks += takeChecks(context, "Full length", audition.fullLengthVideoUri!!)
+            }
         }
 
         val clips = mutableListOf<ClipInfo>()
@@ -61,9 +79,9 @@ object TapeChecker {
                 chosen.isCircled -> Check(title, true, "Take ${chosen.number} circled", chosen.fileUri)
                 else -> Check(title, true, "Take ${chosen.number} will be sent — none circled", chosen.fileUri)
             }
-            if (chosen != null) {
+            if (chosen?.fileUri != null) {
                 clipInfo(context, "Take ${chosen.number}", chosen.fileUri!!)?.let(clips::add)
-                checks += takeChecks(context, title, chosen)
+                checks += takeChecks(context, "$title · take ${chosen.number}", chosen.fileUri!!)
             }
         }
 
@@ -92,10 +110,8 @@ object TapeChecker {
         return checks
     }
 
-    /** Sound and framing inside the take that will be sent for a scene ([TapeAnalysis]). */
-    private fun takeChecks(context: Context, sceneTitle: String, take: Take): List<Check> {
-        val uri = take.fileUri ?: return emptyList()
-        val label = "$sceneTitle · take ${take.number}"
+    /** Sound and framing inside a video clip ([TapeAnalysis]). */
+    private fun takeChecks(context: Context, label: String, uri: String): List<Check> {
         val checks = mutableListOf<Check>()
         TapeAnalysis.sound(context, uri)?.let { sound ->
             checks += when {
@@ -108,7 +124,7 @@ object TapeChecker {
             }
         }
         TapeAnalysis.framing(context, uri)?.let { f ->
-            val inFrame = f.withFace.toDouble() / f.sampled
+            val inFrame = f.withFace.toDouble() / maxOf(1, f.sampled)
             checks += if (inFrame >= 0.8) {
                 Check("In frame · $label", true, "Your face is in shot throughout", uri)
             } else {

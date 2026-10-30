@@ -158,10 +158,13 @@ object TapeAnalysis {
     /** A frame at [timeUs], no larger than [maxSide] on its longest edge. getScaledFrameAtTime is API
      *  27+, and the app supports 26. */
     fun frameAt(retriever: MediaMetadataRetriever, timeUs: Long, maxSide: Int): android.graphics.Bitmap? {
-        if (android.os.Build.VERSION.SDK_INT >= 27) {
-            return retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, maxSide, maxSide)
-        }
-        val full = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return null
+        val full = if (android.os.Build.VERSION.SDK_INT >= 27) {
+            retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, maxSide, maxSide)
+                ?: retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, maxSide, maxSide)
+        } else {
+            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+        } ?: return null
         val scale = maxSide.toFloat() / maxOf(full.width, full.height)
         if (scale >= 1f) return full
         return android.graphics.Bitmap.createScaledBitmap(full, (full.width * scale).toInt(), (full.height * scale).toInt(), true)
@@ -184,8 +187,10 @@ object TapeAnalysis {
             var centred = 0
             var missingAt: Long? = null
             val heights = mutableListOf<Double>()
-            var t = 500L
-            while (t < durationMs) {
+            var t = if (durationMs <= 600L) 0L else 500L
+            var iterations = 0
+            while (t < durationMs && iterations < 35) {
+                iterations++
                 val frame = frameAt(retriever, t * 1000, maxSide = 640)
                 if (frame != null) {
                     // Frames usually come back upright already; only rotate one that is still in the

@@ -1,7 +1,10 @@
 package com.onetake.app.ui.packageview
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -164,6 +167,7 @@ fun PackageScreen(auditionId: String) {
     var exportError by remember { mutableStateOf<String?>(null) }
     var exportJob by remember { mutableStateOf<Job?>(null) }
     var confirmSent by remember { mutableStateOf(false) }
+    var pendingZipToSave by remember { mutableStateOf<File?>(null) }
 
     val a = store.audition(auditionId)
     if (a == null) {
@@ -171,34 +175,100 @@ fun PackageScreen(auditionId: String) {
         return
     }
 
-    /** Real export, not a simulated upload: MediaExporter actually composes the recorded files,
-     *  and only once that succeeds does the share sheet open so the real file can go somewhere. */
-    fun send() {
+    val createDocLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip"),
+    ) { destUri ->
+        val sourceFile = pendingZipToSave
+        if (destUri != null && sourceFile != null && sourceFile.exists()) {
+            scope.launch(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(destUri)?.use { out ->
+                        sourceFile.inputStream().use { input ->
+                            input.copyTo(out)
+                        }
+                    }
+                }.onSuccess {
+                    withContext(Dispatchers.Main) {
+                        haptics.success()
+                        Toast.makeText(context, "Saved ${sourceFile.name} to device", Toast.LENGTH_SHORT).show()
+                    }
+                }.onFailure { err ->
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Could not save file: ${err.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        pendingZipToSave = null
+    }
+
+    /** Real package export: MediaExporter builds a valid .zip archive containing all deliverables
+     *  and hands it directly to the system share sheet. */
+    fun sendZip() {
         val takesForAudition = store.takes.filter { it.auditionId == a.id }
         val slate = store.slate
+        val headshots = store.headshots
         phase = PkgPhase.Sending
         progress = 0f
         exportError = null
         exportJob = scope.launch {
             try {
-                val file = withContext(Dispatchers.IO) {
-                    MediaExporter.export(
-                        context, a, takesForAudition, slate,
+                val file: File = withContext(Dispatchers.IO) {
+                    MediaExporter.exportZipPackage(
+                        context = context,
+                        audition = a,
+                        takes = takesForAudition,
+                        slate = slate,
+                        headshots = headshots,
+                        slateAtStart = store.slateAtStart,
                         isCancelled = { !isActive },
-                        includeSlate = store.slateAtStart,
-                    ) { p -> scope.launch { progress = p } }
+                        onProgress = { p: Float -> progress = p },
+                    )
                 }
                 store.setExportedFile(a.id, Uri.fromFile(file).toString())
                 haptics.success()
-                shareFile(context, file, "OneTake self-tape — ${a.project} (${a.role})")
-                // The share sheet can't tell us whether anything was actually sent, so ask once
-                // the actor is back rather than marking it Sent the moment the sheet opens.
+                shareFile(context, file, "OneTake self-tape package — ${a.project} (${a.role})", "application/zip")
                 phase = PkgPhase.Review
                 confirmSent = true
             } catch (e: CancellationException) {
-                throw e // Cancel goes back to Review (cancelExport) — not to "Couldn't export".
+                throw e
             } catch (e: Exception) {
-                exportError = e.message ?: "Something went wrong composing your tape."
+                exportError = e.message ?: "Something went wrong creating your package."
+                phase = PkgPhase.Failed
+            }
+        }
+    }
+
+    fun saveZipToDevice() {
+        val takesForAudition = store.takes.filter { it.auditionId == a.id }
+        val slate = store.slate
+        val headshots = store.headshots
+        phase = PkgPhase.Sending
+        progress = 0f
+        exportError = null
+        exportJob = scope.launch {
+            try {
+                val file: File = withContext(Dispatchers.IO) {
+                    MediaExporter.exportZipPackage(
+                        context = context,
+                        audition = a,
+                        takes = takesForAudition,
+                        slate = slate,
+                        headshots = headshots,
+                        slateAtStart = store.slateAtStart,
+                        isCancelled = { !isActive },
+                        onProgress = { p: Float -> progress = p },
+                    )
+                }
+                store.setExportedFile(a.id, Uri.fromFile(file).toString())
+                haptics.success()
+                phase = PkgPhase.Review
+                pendingZipToSave = file
+                createDocLauncher.launch(file.name)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                exportError = e.message ?: "Something went wrong preparing your package."
                 phase = PkgPhase.Failed
             }
         }
@@ -219,7 +289,6 @@ fun PackageScreen(auditionId: String) {
                         includeSlate = store.slateAtStart,
                     ) { p -> scope.launch { progress = p } }
                 }
-                store.setExportedFile(a.id, Uri.fromFile(file).toString())
                 haptics.success()
                 phase = PkgPhase.Review
                 viewFile(context, file)
@@ -251,11 +320,12 @@ fun PackageScreen(auditionId: String) {
         when (phase) {
             PkgPhase.Review -> PkgReview(
                 a = a,
-                onSend = { send() },
+                onSendZip = { sendZip() },
+                onSaveZip = { saveZipToDevice() },
                 onExportAndPreview = { exportAndPreview() },
             )
             PkgPhase.Sending -> PkgSendProgress(progress = progress, onCancel = { cancelExport() })
-            PkgPhase.Failed -> PkgSendFailed(message = exportError, onBack = { cancelExport() }, onRetry = { send() })
+            PkgPhase.Failed -> PkgSendFailed(message = exportError, onBack = { cancelExport() }, onRetry = { sendZip() })
             PkgPhase.Sent -> PkgSent(a, onDone = done)
         }
     }
@@ -291,7 +361,8 @@ fun PackageScreen(auditionId: String) {
 @Composable
 private fun PkgReview(
     a: Audition,
-    onSend: () -> Unit,
+    onSendZip: () -> Unit,
+    onSaveZip: () -> Unit,
     onExportAndPreview: () -> Unit,
 ) {
     val store = LocalAppStore.current
@@ -303,12 +374,12 @@ private fun PkgReview(
     var showExportPrompt by remember { mutableStateOf(false) }
 
     val cardShape = remember { RoundedCornerShape(24.dp) }
-    val pkgFileName = remember(a, store.slate.name) { MediaExporter.deliverableFileName(a, store.slate) }
+    val zipPkgFileName = remember(a, store.slate.name) { MediaExporter.deliverableZipFileName(a, store.slate) }
     val auditionTakes = store.takes.filter { it.auditionId == a.id }
 
-    val checks by produceState<List<TapeChecker.Check>?>(null, a, auditionTakes, store.headshots, store.slate) {
+    val checks by produceState<List<TapeChecker.Check>?>(null, a, auditionTakes, store.headshots, store.slate, store.slateAtStart) {
         value = withContext(Dispatchers.IO) {
-            TapeChecker.run(context.applicationContext, a, auditionTakes, store.headshots, store.slate)
+            TapeChecker.run(context.applicationContext, a, auditionTakes, store.headshots, store.slate, store.slateAtStart)
         }
     }
     val issuesCount = checks?.count { !it.passed } ?: 0
@@ -374,9 +445,9 @@ private fun PkgReview(
             ) {
                 PkgRow(
                     icon = Icons.Outlined.Movie,
-                    title = pkgFileName,
-                    detail = "Named for ${a.destination.label} · 1080p MP4",
-                    value = "Details",
+                    title = zipPkgFileName,
+                    detail = "Self-tape package (.zip) · ${a.destination.label}",
+                    value = "Manifest",
                     titleWeight = FontWeight.SemiBold,
                     titleSmall = true,
                     showDivider = true,
@@ -422,21 +493,23 @@ private fun PkgReview(
                     onClick = { previewPiece = PkgPiecePreview.Slate(a.slateVideoUri) },
                     showDivider = true,
                 )
-                val exportedFile = fileUriToFile(a.exportedFileUri)
-                if (exportedFile != null && exportedFile.exists()) {
+                val fullTapeFile = remember(a.id, store.slate.name) {
+                    MediaExporter.existingFullTapeFile(context, a, store.slate)
+                }
+                if (fullTapeFile != null && fullTapeFile.exists()) {
                     PkgRow(
                         icon = Icons.Outlined.PlayArrow,
-                        title = "Preview the whole tape",
-                        detail = "Watch the full deliverable in order",
+                        title = "Preview full tape",
+                        detail = "Watch stitched deliverable in order",
                         value = "Play",
-                        onClick = { viewFile(context, exportedFile) },
+                        onClick = { viewFile(context, fullTapeFile) },
                         showDivider = false,
                     )
                 } else {
                     PkgRow(
                         icon = Icons.Outlined.PlayArrow,
-                        title = "Preview the whole tape",
-                        detail = "Compose and watch before sending",
+                        title = "Preview full tape",
+                        detail = "Stitch and watch all clips before sending",
                         value = "Generate",
                         onClick = { showExportPrompt = true },
                         showDivider = false,
@@ -453,10 +526,15 @@ private fun PkgReview(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             PrimaryButton(
-                "Send to ${a.destination.label}",
-                onClick = onSend,
+                "Send .zip package",
+                onClick = onSendZip,
                 icon = Icons.AutoMirrored.Filled.Send,
                 iconTrailing = true,
+            )
+            SecondaryButton(
+                "Save .zip to device",
+                onClick = onSaveZip,
+                icon = Icons.Filled.Upload,
             )
             PlainButton("Choose different takes", onClick = { nav.push(Route.Takes(a.id)) })
         }
@@ -542,7 +620,7 @@ private fun PkgReview(
                 )
                 is PkgPiecePreview.DeliverableDetails -> PkgDeliverableDetailsSheet(
                     a = a,
-                    fileName = pkgFileName,
+                    zipFileName = zipPkgFileName,
                     takes = auditionTakes,
                     onClose = closeSheet,
                 )
@@ -914,24 +992,26 @@ private fun PkgAudioSheet(
 
     data class AudioPiece(val label: String, val uri: String?, val sound: TapeAnalysis.Sound?)
 
-    val pieces = remember(a, takes) {
-        val list = mutableListOf<AudioPiece>()
-        if (a.slateVideoUri != null) {
-            val snd = TapeAnalysis.sound(context, a.slateVideoUri)
-            list.add(AudioPiece("Slate", a.slateVideoUri, snd))
-        }
-        if (a.fullLengthVideoUri != null) {
-            val snd = TapeAnalysis.sound(context, a.fullLengthVideoUri)
-            list.add(AudioPiece("Full length", a.fullLengthVideoUri, snd))
-        }
-        a.scenes.forEachIndexed { i, scene ->
-            val chosen = takes.firstOrNull { it.sceneIndex == i && it.isCircled } ?: takes.firstOrNull { it.sceneIndex == i }
-            if (chosen?.fileUri != null) {
-                val snd = TapeAnalysis.sound(context, chosen.fileUri)
-                list.add(AudioPiece("${scene.title} · Take ${chosen.number}", chosen.fileUri, snd))
+    val piecesState by produceState<List<AudioPiece>?>(null, a, takes) {
+        value = withContext(Dispatchers.IO) {
+            val list = mutableListOf<AudioPiece>()
+            if (a.slateVideoUri != null) {
+                val snd = TapeAnalysis.sound(context.applicationContext, a.slateVideoUri)
+                list.add(AudioPiece("Slate", a.slateVideoUri, snd))
             }
+            if (a.fullLengthVideoUri != null) {
+                val snd = TapeAnalysis.sound(context.applicationContext, a.fullLengthVideoUri)
+                list.add(AudioPiece("Full length", a.fullLengthVideoUri, snd))
+            }
+            a.scenes.forEachIndexed { i, scene ->
+                val chosen = takes.firstOrNull { it.sceneIndex == i && it.isCircled } ?: takes.firstOrNull { it.sceneIndex == i }
+                if (chosen?.fileUri != null) {
+                    val snd = TapeAnalysis.sound(context.applicationContext, chosen.fileUri)
+                    list.add(AudioPiece("${scene.title} · Take ${chosen.number}", chosen.fileUri, snd))
+                }
+            }
+            list
         }
-        list
     }
 
     Column(
@@ -959,21 +1039,34 @@ private fun PkgAudioSheet(
                 .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, RoundedCornerShape(18.dp))
                 .padding(vertical = 6.dp),
         ) {
-            if (pieces.isEmpty()) {
+            val pieces = piecesState
+            if (pieces == null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(Icons.Filled.GraphicEq, null, tint = c.accent, modifier = Modifier.size(20.dp))
+                    Text("Analyzing audio tracks…", style = OT.type.footnote, color = c.labelSecondary)
+                }
+            } else if (pieces.isEmpty()) {
                 Text("No recordings with audio tracks found yet.", style = OT.type.footnote, color = c.labelTertiary, modifier = Modifier.padding(16.dp))
             } else {
-                pieces.forEachIndexed { idx, p ->
+                for ((idx, p) in pieces.withIndex()) {
                     val isDistorted = p.sound?.clippedAtMs != null
                     val isQuiet = p.sound != null && p.sound.loudestDb < -32
+                    val isSilent = p.sound != null && p.sound.loudestDb < -50
+                    val hasNoSound = p.sound == null
                     val statusText = when {
-                        p.sound == null -> "Audio track present · clear"
+                        hasNoSound -> "No audio track detected"
+                        isSilent -> "Silent track (no audio detected)"
                         isDistorted -> "Distortion detected"
                         isQuiet -> "Quiet voice (-${(-p.sound.loudestDb).toInt()} dBFS)"
                         else -> "Clear level (-${(-p.sound.loudestDb).toInt()} dBFS)"
                     }
                     val statusTint = when {
-                        isDistorted -> c.warning
-                        isQuiet -> c.warning
+                        hasNoSound || isSilent -> c.warning
+                        isDistorted || isQuiet -> c.warning
                         else -> c.success
                     }
                     Row(
@@ -1000,14 +1093,28 @@ private fun PkgAudioSheet(
 @Composable
 private fun PkgDeliverableDetailsSheet(
     a: Audition,
-    fileName: String,
+    zipFileName: String,
     takes: List<Take>,
     onClose: () -> Unit,
 ) {
+    val store = LocalAppStore.current
+    val context = LocalContext.current
     val c = OT.colors
     val cardShape = RoundedCornerShape(18.dp)
     val totalDuration = totalDurationLabel(a, takes)
-    val sizeLabel = exportedSizeLabel(a)
+
+    val manifestEntries = remember(a, takes, store.headshots, store.slate) {
+        MediaExporter.inspectPackageManifest(
+            context = context,
+            audition = a,
+            takes = takes,
+            slate = store.slate,
+            headshots = store.headshots,
+        )
+    }
+
+    val totalBytes = manifestEntries.filter { it.isReady }.sumOf { it.sizeBytes }
+    val packageSizeLabel = if (totalBytes > 0) "${(totalBytes / 1_048_576L).coerceAtLeast(1)} MB uncompressed" else "Pending recordings"
 
     Column(
         Modifier
@@ -1018,11 +1125,11 @@ private fun PkgDeliverableDetailsSheet(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Deliverable File", style = OT.type.title, color = c.labelPrimary, modifier = Modifier.weight(1f))
+            Text("Deliverable Package", style = OT.type.title, color = c.labelPrimary, modifier = Modifier.weight(1f))
             CircleIconButton(Icons.Filled.Close, "Close", onClick = onClose)
         }
         Text(
-            "Formatted to the naming convention and video encoding specification required by ${a.destination.label}.",
+            "All audition media files packaged into a single industry-standard .zip archive matching casting specifications.",
             style = OT.type.callout,
             color = c.labelSecondary,
         )
@@ -1036,8 +1143,8 @@ private fun PkgDeliverableDetailsSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("FILE NAME", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
-                Text(fileName, style = OT.type.body.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                Text("ARCHIVE FILE NAME (.ZIP)", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
+                Text(zipFileName, style = OT.type.body.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
             }
             HorizontalDivider(color = Color(0x14FFFFFF), thickness = 0.5.dp)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1047,26 +1154,48 @@ private fun PkgDeliverableDetailsSheet(
             HorizontalDivider(color = Color(0x14FFFFFF), thickness = 0.5.dp)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
-                    Text("VIDEO ENCODING", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
-                    Text("1080p Full HD (H.264/MP4)", style = OT.type.footnote, color = c.labelPrimary)
+                    Text("PACKAGE SIZE", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
+                    Text(packageSizeLabel, style = OT.type.footnote, color = c.labelPrimary)
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text("DURATION", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
                     Text(totalDuration, style = OT.type.footnote, color = c.labelPrimary)
                 }
             }
-            HorizontalDivider(color = Color(0x14FFFFFF), thickness = 0.5.dp)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text("AUDIO CODEC", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
-                    Text("AAC Stereo · 48 kHz", style = OT.type.footnote, color = c.labelPrimary)
+        }
+
+        Text("MANIFEST ENTRIES", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(cardShape)
+                .background(c.surfaceCard)
+                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, cardShape)
+                .padding(vertical = 6.dp),
+        ) {
+            for ((idx, item) in manifestEntries.withIndex()) {
+                val sizeStr = if (item.isReady) "${(item.sizeBytes / 1024L)} KB" else "Not recorded yet"
+                val tint = if (item.isReady) c.success else c.labelTertiary
+                val icon = if (item.isReady) Icons.Filled.CheckCircle else Icons.Outlined.Info
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                        Text(item.name, style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${item.kind} · $sizeStr", style = OT.type.caption, color = if (item.isReady) c.labelSecondary else c.warning)
+                    }
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("FILE SIZE", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
-                    Text(sizeLabel, style = OT.type.footnote, color = c.labelPrimary)
+                if (idx < manifestEntries.lastIndex) {
+                    HorizontalDivider(color = Color(0x14FFFFFF), thickness = 0.5.dp, modifier = Modifier.padding(start = 44.dp))
                 }
             }
         }
+
         PrimaryButton("Done", onClick = onClose)
     }
 }

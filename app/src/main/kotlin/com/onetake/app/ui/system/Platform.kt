@@ -59,22 +59,33 @@ fun fileProviderUri(context: Context, file: File): android.net.Uri =
 
 /** Hands a real exported file to the Android share sheet — another app, Drive, Bluetooth, mail,
  *  whatever's installed. There's no casting-site upload API this app can call directly. */
-fun shareFile(context: Context, file: File, subject: String) {
+fun shareFile(
+    context: Context,
+    file: File,
+    subject: String,
+    mimeType: String = if (file.name.endsWith(".zip", ignoreCase = true)) "application/zip" else "video/mp4",
+) {
     val uri = fileProviderUri(context, file)
     val send = Intent(Intent.ACTION_SEND).apply {
-        type = "video/mp4"
+        type = mimeType
         putExtra(Intent.EXTRA_STREAM, uri)
         putExtra(Intent.EXTRA_SUBJECT, subject)
+        clipData = android.content.ClipData.newRawUri(subject, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(send, null))
 }
 
-/** Opens a real exported file in the device's default video player. */
-fun viewFile(context: Context, file: File) {
+/** Opens a real exported file in the device's default viewer or player. */
+fun viewFile(
+    context: Context,
+    file: File,
+    mimeType: String = if (file.name.endsWith(".zip", ignoreCase = true)) "application/zip" else "video/mp4",
+) {
     val uri = fileProviderUri(context, file)
     val view = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, "video/mp4")
+        setDataAndType(uri, mimeType)
+        clipData = android.content.ClipData.newRawUri(file.name, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     runCatching { context.startActivity(view) }

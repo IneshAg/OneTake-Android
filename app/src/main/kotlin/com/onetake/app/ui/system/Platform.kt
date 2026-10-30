@@ -117,19 +117,29 @@ class ReaderTrackPlayer(private val context: Context) {
     /** 0–1, applied to every recording played (Profile → Reader volume while shooting). */
     var volume: Float = 1f
 
-    fun play(sceneId: String, readerIndex: Int) {
+    fun play(sceneId: String, readerIndex: Int, onDone: () -> Unit = {}) {
         val f = ReaderFiles.file(context, sceneId, readerIndex)
-        if (!f.exists()) return
+        if (!f.exists()) {
+            onDone()
+            return
+        }
         stop()
         val mp = MediaPlayer()
         runCatching {
             mp.setDataSource(f.absolutePath)
-            mp.setOnCompletionListener { it.release(); if (player === it) player = null }
+            mp.setOnCompletionListener {
+                it.release()
+                if (player === it) player = null
+                onDone()
+            }
             mp.prepare()
             mp.setVolume(volume, volume)
             mp.start()
             player = mp
-        }.onFailure { mp.release() } // empty/corrupt recording → stay silent instead of crashing
+        }.onFailure {
+            mp.release()
+            onDone()
+        } // empty/corrupt recording → stay silent instead of crashing
     }
 
     fun playOrSynthesize(

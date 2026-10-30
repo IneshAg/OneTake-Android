@@ -41,7 +41,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -52,7 +51,9 @@ import com.onetake.app.LocalNavigator
 import com.onetake.app.models.formatDuration
 import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.system.KeepScreenOn
+import com.onetake.app.ui.system.playAndAwait
 import com.onetake.app.ui.system.rememberHaptics
+import com.onetake.app.ui.system.rememberReaderPlayer
 import com.onetake.app.ui.system.rememberTtsEngine
 import com.onetake.app.ui.system.speakAndAwait
 import com.onetake.app.ui.theme.OT
@@ -66,6 +67,7 @@ fun AudioWalkScreen(
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val haptics = rememberHaptics()
+    val readerPlayer = rememberReaderPlayer()
     val tts = rememberTtsEngine()
     val c = OT.colors
 
@@ -94,32 +96,53 @@ fun AudioWalkScreen(
     var lineIndex by remember { mutableIntStateOf(0) }
     var loopCount by remember { mutableIntStateOf(1) }
     var isPlaying by remember { mutableStateOf(true) }
+    var speakMyLines by remember { mutableStateOf(true) }
 
     DisposableEffect(Unit) {
-        onDispose { tts.stop() }
+        onDispose {
+            readerPlayer.stop()
+            tts.stop()
+        }
     }
 
-    // Playback loop
-    LaunchedEffect(lineIndex, isPlaying) {
+    // Playback loop: uses recorded reader voice for partner lines when available (falling back to TTS),
+    // and either speaks actor lines via TTS or leaves a timed active-recall gap.
+    LaunchedEffect(lineIndex, isPlaying, speakMyLines, store.readerVolume) {
         if (!isPlaying) {
+            readerPlayer.stop()
             tts.stop()
             return@LaunchedEffect
         }
         val currentLine = lines.getOrNull(lineIndex) ?: return@LaunchedEffect
-        val words = currentLine.text.split(Regex("\\s+")).size
+        val words = currentLine.text.split(Regex("\\s+")).count { it.isNotBlank() }.coerceAtLeast(1)
         val pacingMs = LineLearningMode.calculateSpokenPacingMillis(words)
 
-        // Wait for the line to actually finish — a fixed timer cut long lines off mid-sentence —
-        // with the estimated pacing as a floor if TTS isn't available.
         val started = System.currentTimeMillis()
-        tts.speakAndAwait(currentLine.text, timeoutMs = pacingMs * 3 + 2_000)
-        delay((pacingMs - (System.currentTimeMillis() - started)).coerceAtLeast(300))
+        if (!currentLine.isMine) {
+            val readerIdx = lines.take(lineIndex).count { !it.isMine }
+            readerPlayer.volume = store.readerVolumeLevel
+            tts.volume = store.readerVolumeLevel
+            readerPlayer.playAndAwait(
+                sceneId = scene.id,
+                readerIndex = readerIdx,
+                text = currentLine.text,
+                ttsEngine = tts,
+                timeoutMs = pacingMs * 3 + 2_500L,
+            )
+            delay((pacingMs - (System.currentTimeMillis() - started)).coerceAtLeast(300L))
+        } else if (speakMyLines) {
+            tts.volume = 1f
+            tts.speakAndAwait(currentLine.text, timeoutMs = pacingMs * 3 + 2_500L)
+            delay((pacingMs - (System.currentTimeMillis() - started)).coerceAtLeast(300L))
+        } else {
+            val gapMs = LineLearningMode.calculateAudioGapMillis(words)
+            delay(gapMs)
+        }
 
         if (isPlaying) {
             if (lineIndex + 1 < lines.size) {
                 lineIndex += 1
             } else {
-                // Loop around
                 lineIndex = 0
                 loopCount += 1
                 haptics.tick()
@@ -141,12 +164,32 @@ fun AudioWalkScreen(
         Row(
             Modifier.fillMaxWidth().heightIn(min = 56.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             CircleIconButton(Icons.Filled.Close, "Close", onClick = {
+                readerPlayer.stop()
                 tts.stop()
                 nav.back()
             })
             Spacer(Modifier.weight(1f))
+            // Mode toggle: Speak my lines vs Leave silent gap for my lines
+            Box(
+                Modifier
+                    .clip(CircleShape)
+                    .background(if (speakMyLines) c.surfaceCard else c.accentSoft)
+                    .border(0.5.dp, if (speakMyLines) c.separator else c.accent, CircleShape)
+                    .clickable(role = Role.Switch) {
+                        haptics.tick()
+                        speakMyLines = !speakMyLines
+                    }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    text = if (speakMyLines) "Read all lines" else "Gap for my lines",
+                    style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                    color = if (speakMyLines) c.labelPrimary else c.accent,
+                )
+            }
             // Loop count pill
             Row(
                 Modifier
@@ -207,7 +250,8 @@ fun AudioWalkScreen(
             )
             Spacer(Modifier.height(16.dp))
             Text(
-                text = "Line ${lineIndex + 1} of ${lines.size}",
+                text = "Line ${lineIndex + 1} of ${lines.size}" +
+                    if (isMine && !speakMyLines) " · speak your line now" else "",
                 style = OT.type.footnote,
                 color = c.labelTertiary,
             )
@@ -232,6 +276,8 @@ fun AudioWalkScreen(
                     .border(0.5.dp, c.separator, CircleShape)
                     .clickable(role = Role.Button) {
                         haptics.tick()
+                        readerPlayer.stop()
+                        tts.stop()
                         lineIndex = (lineIndex - 1).coerceAtLeast(0)
                     },
                 contentAlignment = Alignment.Center,
@@ -272,6 +318,8 @@ fun AudioWalkScreen(
                     .border(0.5.dp, c.separator, CircleShape)
                     .clickable(role = Role.Button) {
                         haptics.tick()
+                        readerPlayer.stop()
+                        tts.stop()
                         lineIndex = (lineIndex + 1) % lines.size
                     },
                 contentAlignment = Alignment.Center,

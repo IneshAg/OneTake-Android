@@ -130,6 +130,9 @@ import com.onetake.app.ui.components.PlainButton
 import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.system.KeepScreenOn
+import com.onetake.app.ui.system.VoiceCommand
+import com.onetake.app.ui.system.VoiceCommandEngine
+import com.onetake.app.ui.system.VoiceCommandMatcher
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.system.rememberReaderPlayer
 import com.onetake.app.ui.system.rememberTtsEngine
@@ -423,12 +426,7 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                 camera.stopRecording { saveFullLength(it) }
                 lastFullLengthSeconds = seconds
                 lastSavedKind = PieceKind.FullLength
-                stage = ShootStagePlanner.stageAfterFullLength(
-                    wantsSlate = wantsSlate,
-                    hasSlate = hasSlate,
-                    hasScenes = hasScenes,
-                    slateAtStart = store.slateAtStart,
-                )
+                stage = ShootStage.Saved
             }
             ShootStage.Scene -> {
                 lastTakeSeconds = seconds
@@ -449,50 +447,9 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
         }
     }
 
-    val voiceCommander = rememberShootVoiceCommander(
-        onRecordTrigger = {
-            if (voiceEnabled && !recording && countdown == null && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
-                roll()
-            }
-        },
-        onCutTrigger = {
-            if (voiceEnabled && recording && !readerSpeaking) {
-                cut()
-            }
-        },
-    )
-
-    // Strictly arbitrate microphone access between Check's AudioMeter and Shoot's SpeechRecognizer,
-    // and pause SpeechRecognizer while the partner Reader/TTS track is speaking over the loudspeaker.
-    LaunchedEffect(voiceEnabled, micPermissionGranted, stage, readerSpeaking) {
-        if (stage == ShootStage.Check) {
-            voiceCommander.stop()
-            if (micPermissionGranted) {
-                audioMeter.start()
-            } else {
-                audioMeter.stop()
-            }
-        } else {
-            audioMeter.stopAndJoin()
-            val canListenForCommands = voiceEnabled &&
-                micPermissionGranted &&
-                !readerSpeaking &&
-                (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)
-            if (canListenForCommands) {
-                voiceCommander.start()
-            } else {
-                voiceCommander.stop()
-            }
-        }
-    }
-
-    LaunchedEffect(recording) {
-        voiceCommander.setRecordingMode(recording)
-    }
-
     /** Scenes with a take already (saved, or the one just shot whose file is still landing). */
     val shotScenes = store.takes.filter { it.auditionId == auditionId }.mapNotNull { it.sceneIndex }.toSet() +
-        (if (stage == ShootStage.Saved) setOf(sceneIndex) else emptySet())
+        (if (stage == ShootStage.Saved && lastSavedKind == PieceKind.Scene) setOf(sceneIndex) else emptySet())
 
     fun pickScene(i: Int) {
         if (recording || countdown != null) return
@@ -520,6 +477,128 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
     // The scene piece is ticked off by saveTake once the take is really on disk — not here.
     fun finish(goTo: Route) {
         nav.closeCamera(then = goTo)
+    }
+
+    fun advanceFromSlateDone() {
+        val nextStage = ShootStagePlanner.stageAfterSlate(
+            wantsFullLength = wantsFullLength,
+            hasFullLength = hasFullLength,
+            hasScenes = hasScenes,
+        )
+        when (nextStage) {
+            ShootStage.FullLength -> stage = ShootStage.FullLength
+            ShootStage.Scene -> stage = ShootStage.Scene
+            else -> finish(Route.AuditionDetail(auditionId))
+        }
+        haptics.tick()
+    }
+
+    fun advanceFromSaved() {
+        if (lastSavedKind == PieceKind.FullLength) {
+            val nextAfterFull = ShootStagePlanner.stageAfterFullLength(
+                wantsSlate = wantsSlate,
+                hasSlate = hasSlate,
+                hasScenes = hasScenes,
+                slateAtStart = store.slateAtStart,
+            )
+            when (nextAfterFull) {
+                ShootStage.Scene -> stage = ShootStage.Scene
+                ShootStage.Slate -> stage = ShootStage.Slate
+                else -> finish(Route.AuditionDetail(auditionId))
+            }
+        } else {
+            val next = nextUnshotScene()
+            if (next != null) {
+                moveToScene(next)
+            } else {
+                finish(Route.Takes(auditionId))
+            }
+        }
+        haptics.tick()
+    }
+
+    fun redoFromSaved() {
+        if (lastSavedKind == PieceKind.FullLength) {
+            stage = ShootStage.FullLength
+        } else {
+            takeNumber += 1
+            lineIndex = 0
+            stage = ShootStage.Scene
+        }
+        haptics.tick()
+    }
+
+    val activeVoiceCommands = remember(stage, recording, countdown) {
+        when {
+            countdown != null -> emptySet()
+            stage == ShootStage.Check -> emptySet()
+            stage == ShootStage.SlateDone || stage == ShootStage.Saved -> setOf(VoiceCommand.Next, VoiceCommand.Again)
+            recording -> setOf(VoiceCommand.Cut)
+            stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene -> setOf(VoiceCommand.Record)
+            else -> emptySet()
+        }
+    }
+
+    val voiceCommander = rememberShootVoiceCommander(
+        onCommand = { cmd ->
+            if (!voiceEnabled) return@rememberShootVoiceCommander
+            when (cmd) {
+                VoiceCommand.Record -> {
+                    if (!recording && countdown == null && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
+                        roll()
+                    }
+                }
+                VoiceCommand.Cut -> {
+                    if (recording && !readerSpeaking) {
+                        cut()
+                    }
+                }
+                VoiceCommand.Next -> {
+                    if (stage == ShootStage.SlateDone) {
+                        advanceFromSlateDone()
+                    } else if (stage == ShootStage.Saved) {
+                        advanceFromSaved()
+                    }
+                }
+                VoiceCommand.Again -> {
+                    if (stage == ShootStage.SlateDone) {
+                        stage = ShootStage.Slate
+                        haptics.tick()
+                    } else if (stage == ShootStage.Saved) {
+                        redoFromSaved()
+                    }
+                }
+                else -> Unit
+            }
+        },
+    )
+
+    LaunchedEffect(activeVoiceCommands) {
+        voiceCommander.setActiveCommands(activeVoiceCommands)
+    }
+
+    // Strictly arbitrate microphone access between Check's AudioMeter and Shoot's SpeechRecognizer,
+    // and pause SpeechRecognizer while the partner Reader/TTS track is speaking over the loudspeaker.
+    LaunchedEffect(voiceEnabled, micPermissionGranted, stage, readerSpeaking, activeVoiceCommands) {
+        if (stage == ShootStage.Check) {
+            voiceCommander.stop()
+            if (micPermissionGranted) {
+                audioMeter.start()
+            } else {
+                audioMeter.stop()
+            }
+        } else {
+            audioMeter.stopAndJoin()
+            val canListenForCommands = voiceEnabled &&
+                micPermissionGranted &&
+                !readerSpeaking &&
+                activeVoiceCommands.isNotEmpty()
+            if (canListenForCommands) {
+                voiceCommander.start()
+            } else {
+                voiceCommander.stop()
+            }
+        }
     }
 
     val time = camera.elapsed.toInt().let { "%02d:%02d:%02d".format(it / 3600, (it / 60) % 60, it % 60) }
@@ -579,7 +658,7 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                 Spacer(Modifier.weight(1f))
 
                 // Voice trigger toggle & indicator
-                if (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene) {
+                if (stage != ShootStage.Check && voiceCommander.available) {
                     Row(
                         Modifier
                             .heightIn(min = 32.dp)
@@ -865,16 +944,25 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                         }
                         ShootStage.Saved -> {
                             if (lastSavedKind == PieceKind.FullLength) {
+                                val nextAfterFull = ShootStagePlanner.stageAfterFullLength(
+                                    wantsSlate = wantsSlate,
+                                    hasSlate = hasSlate,
+                                    hasScenes = hasScenes,
+                                    slateAtStart = store.slateAtStart,
+                                )
+                                val primaryLabel = when (nextAfterFull) {
+                                    ShootStage.Scene -> "Next: ${audition.scenes.getOrNull(sceneIndex)?.title ?: "scene"}"
+                                    ShootStage.Slate -> "Next: slate"
+                                    else -> "Done"
+                                }
                                 ShootResultCard(
                                     modifier = Modifier.align(Alignment.Center),
                                     eyebrow = "Full length saved",
                                     title = "Full-length shot, in the can.",
                                     detail = "${formatDuration(lastFullLengthSeconds)} · saved",
-                                    primary = (if (hasScenes) "Next: ${audition.scenes.getOrNull(sceneIndex)?.title ?: "scene"}" else "Done") to {
-                                        if (hasScenes) stage = ShootStage.Scene else finish(Route.AuditionDetail(auditionId))
-                                    },
-                                    secondary = "Redo" to { stage = ShootStage.FullLength },
-                                    extras = if (hasScenes) listOf("Done for now" to { finish(Route.AuditionDetail(auditionId)) }) else emptyList(),
+                                    primary = primaryLabel to { advanceFromSaved() },
+                                    secondary = "Redo" to { redoFromSaved() },
+                                    extras = if (nextAfterFull != ShootStage.Saved) listOf("Done for now" to { finish(Route.AuditionDetail(auditionId)) }) else emptyList(),
                                     primaryFirst = true,
                                 )
                             } else {
@@ -940,9 +1028,11 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
             // Hint above the HUD (Figma 16.2p / 17p)
             val hint: Pair<ImageVector, String>? = when {
                 countdown != null -> Icons.Outlined.Timer to "Tap screen to cancel countdown"
-                recording && voiceEnabled -> Icons.Filled.Mic to "Say \"Cut\" · or tap stop button"
-                !recording && voiceEnabled && (stage == ShootStage.Slate || stage == ShootStage.Scene) ->
-                    Icons.Filled.Mic to "Say \"Record\" or \"Action\" from your mark"
+                recording && voiceEnabled -> Icons.Filled.Mic to (voiceCommander.lastHeard ?: "Say \"Cut\" · or tap stop button")
+                !recording && voiceEnabled && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene) ->
+                    Icons.Filled.Mic to (voiceCommander.lastHeard ?: "Say \"Record\" or \"Action\" from your mark")
+                voiceEnabled && (stage == ShootStage.SlateDone || stage == ShootStage.Saved) ->
+                    Icons.Filled.Mic to (voiceCommander.lastHeard ?: "Say \"Next\" or \"Again\"")
                 stage == ShootStage.Slate && recording -> Icons.Filled.GraphicEq to "Say it, then pause"
                 stage == ShootStage.Scene && !recording ->
                     Icons.Filled.Visibility to "Lines sit right under the lens, so your eyeline stays up"
@@ -1060,24 +1150,20 @@ private tailrec fun Context.findShootActivity(): Activity? = when (this) {
 // MARK: - Voice Commander (Hands-free STT for "Record" / "Action" & "Cut" / "Stop")
 
 internal class ShootVoiceCommander(
-    private val context: Context,
-    private val onRecordTrigger: () -> Unit,
-    private val onCutTrigger: () -> Unit,
-    private val onRmsChanged: ((Float) -> Unit)? = null,
+    context: Context,
+    private val onCommand: (VoiceCommand) -> Unit,
+    onRmsChanged: ((Float) -> Unit)? = null,
 ) {
-    val available: Boolean = runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)
-    var isListening by mutableStateOf(false)
-        private set
-    var lastHeard by mutableStateOf<String?>(null)
-        private set
+    private val engine = VoiceCommandEngine(
+        context = context.applicationContext,
+        initialCommands = setOf(VoiceCommand.Record),
+        onCommand = { cmd, _ -> onCommand(cmd) },
+        onRmsChanged = onRmsChanged,
+    )
 
-    private var recognizer: SpeechRecognizer? = null
-    private var wanted = false
-    private var isRecordingMode = false
-    private var consecutiveFatalErrors = 0
-    private var lastTriggerTime = 0L
-    private val handler = Handler(Looper.getMainLooper())
-    private val relisten = Runnable { if (wanted) listen() }
+    val available: Boolean get() = engine.available
+    val isListening: Boolean get() = engine.isListening
+    val lastHeard: String? get() = engine.lastHeard
 
     companion object {
         val RECORD_REGEX = Regex(
@@ -1088,213 +1174,32 @@ internal class ShootVoiceCommander(
         )
 
         fun matchesCommand(text: String, isRecording: Boolean): Boolean {
-            val trimmed = text.trim()
-            if (trimmed.isEmpty()) return false
-            val regex = if (isRecording) STOP_REGEX else RECORD_REGEX
-
-            if (regex.matches(trimmed) || regex.containsMatchIn(trimmed)) return true
-
-            // Check tail words for noise-prefixed utterances in noisy/crowded rooms
-            val words = trimmed.split(Regex("""\s+"""))
-            if (words.size > 1) {
-                val tail1 = words.takeLast(1).joinToString(" ")
-                val tail2 = words.takeLast(2).joinToString(" ")
-                val tail3 = words.takeLast(3).joinToString(" ")
-                if (regex.matches(tail1) || regex.matches(tail2) || regex.matches(tail3)) return true
-            }
-            return false
+            val active = if (isRecording) setOf(VoiceCommand.Cut) else setOf(VoiceCommand.Record)
+            return VoiceCommandMatcher.match(text, active) != null
         }
     }
 
-    private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {
-            isListening = true
-            consecutiveFatalErrors = 0
-        }
-        override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {
-            onRmsChanged?.invoke(rmsdB)
-        }
-        override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
-        override fun onError(error: Int) {
-            isListening = false
-            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
-                wanted = false
-                return
-            }
-            handler.removeCallbacks(relisten)
-            if (!wanted) return
+    fun setActiveCommands(commands: Set<VoiceCommand>) = engine.setActiveCommands(commands)
 
-            when (error) {
-                SpeechRecognizer.ERROR_NO_MATCH,
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                    // Normal silence/speech boundary — keep recognizer alive and restart immediately
-                    consecutiveFatalErrors = 0
-                    runCatching { recognizer?.cancel() }
-                    handler.postDelayed(relisten, 30L)
-                }
-                SpeechRecognizer.ERROR_AUDIO,
-                SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
-                    consecutiveFatalErrors = 0
-                    runCatching { recognizer?.cancel() }
-                    handler.postDelayed(relisten, 80L)
-                }
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
-                    runCatching { recognizer?.cancel() }
-                    handler.postDelayed(relisten, 150L)
-                }
-                SpeechRecognizer.ERROR_CLIENT,
-                SpeechRecognizer.ERROR_SERVER -> {
-                    consecutiveFatalErrors++
-                    runCatching {
-                        recognizer?.cancel()
-                        recognizer?.destroy()
-                    }
-                    recognizer = null
-                    val backoff = (150L * consecutiveFatalErrors).coerceAtMost(1000L)
-                    handler.postDelayed(relisten, backoff)
-                }
-                else -> {
-                    runCatching { recognizer?.cancel() }
-                    handler.postDelayed(relisten, 100L)
-                }
-            }
-        }
-        override fun onResults(results: Bundle?) {
-            isListening = false
-            evaluate(results)
-            handler.removeCallbacks(relisten)
-            if (wanted) handler.postDelayed(relisten, 30L)
-        }
-        override fun onPartialResults(partialResults: Bundle?) {
-            evaluate(partialResults)
-        }
-        override fun onEvent(eventType: Int, params: Bundle?) {}
-    }
+    fun start() = engine.start()
 
-    private fun evaluate(bundle: Bundle?): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastTriggerTime < 1500L) return false
+    fun stop() = engine.stop()
 
-        val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-        if (matches.isEmpty()) return false
-        lastHeard = matches.firstOrNull()
-
-        for (text in matches) {
-            if (matchesCommand(text, isRecordingMode)) {
-                lastTriggerTime = now
-                runCatching { recognizer?.cancel() }
-                if (!isRecordingMode) {
-                    onRecordTrigger()
-                } else {
-                    onCutTrigger()
-                }
-                return true
-            }
-        }
-        return false
-    }
-
-    fun setRecordingMode(recording: Boolean) {
-        if (isRecordingMode != recording) {
-            isRecordingMode = recording
-            lastHeard = null
-            if (wanted) {
-                handler.removeCallbacks(relisten)
-                runCatching { recognizer?.cancel() }
-                handler.postDelayed(relisten, 40L)
-            }
-        }
-    }
-
-    fun start() {
-        if (!available) return
-        wanted = true
-        consecutiveFatalErrors = 0
-        handler.removeCallbacks(relisten)
-        runCatching { recognizer?.cancel() }
-        listen()
-    }
-
-    private fun listen() {
-        if (!wanted) return
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
-
-        val r = recognizer ?: run {
-            val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
-            ) {
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-            } else {
-                SpeechRecognizer.createSpeechRecognizer(context)
-            }
-            rec?.also {
-                it.setRecognitionListener(listener)
-                recognizer = it
-            }
-        } ?: return
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
-            putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            }
-            putExtra("android.speech.extra.DICTATION_MODE", true)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 350L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 100L)
-        }
-        runCatching {
-            r.startListening(intent)
-            isListening = true
-        }.onFailure {
-            isListening = false
-            if (wanted) handler.postDelayed(relisten, 250L)
-        }
-    }
-
-    fun stop() {
-        wanted = false
-        isListening = false
-        handler.removeCallbacks(relisten)
-        runCatching { recognizer?.cancel() }
-    }
-
-    fun destroy() {
-        wanted = false
-        isListening = false
-        handler.removeCallbacks(relisten)
-        runCatching {
-            recognizer?.cancel()
-            recognizer?.destroy()
-        }
-        recognizer = null
-    }
+    fun destroy() = engine.destroy()
 }
 
 @Composable
 private fun rememberShootVoiceCommander(
-    onRecordTrigger: () -> Unit,
-    onCutTrigger: () -> Unit,
+    onCommand: (VoiceCommand) -> Unit,
     onRmsChanged: (Float) -> Unit = {},
 ): ShootVoiceCommander {
     val context = LocalContext.current
-    // The commander outlives recompositions, so route through the latest lambdas — otherwise it
-    // keeps the first composition's closures, where `recording` was captured as false forever.
-    val latestRecord by rememberUpdatedState(onRecordTrigger)
-    val latestCut by rememberUpdatedState(onCutTrigger)
+    val latestOnCommand by rememberUpdatedState(onCommand)
     val latestRms by rememberUpdatedState(onRmsChanged)
     val commander = remember {
         ShootVoiceCommander(
             context = context.applicationContext,
-            onRecordTrigger = { latestRecord() },
-            onCutTrigger = { latestCut() },
+            onCommand = { latestOnCommand(it) },
             onRmsChanged = { latestRms(it) },
         )
     }

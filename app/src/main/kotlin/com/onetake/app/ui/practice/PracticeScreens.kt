@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
@@ -105,8 +107,10 @@ import com.onetake.app.ui.components.ReadinessDashes
 import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.system.KeepScreenOn
+import com.onetake.app.ui.system.VoiceCommand
 import com.onetake.app.ui.system.fileProviderUri
 import com.onetake.app.ui.system.rememberHaptics
+import com.onetake.app.ui.system.rememberVoiceCommandEngine
 import java.io.File
 import com.onetake.app.ui.components.SFSymbols
 import com.onetake.app.ui.practice.components.PracticeTopBar
@@ -680,6 +684,8 @@ fun PracticeTakeScreen(practicePieceId: String? = null) {
     val tts = com.onetake.app.ui.system.rememberTtsEngine()
     val scope = rememberCoroutineScope()
     var front by remember { mutableStateOf(true) }
+    var voiceEnabled by remember { mutableStateOf(true) }
+    var readerSpeaking by remember { mutableStateOf(false) }
     var lineIndex by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     var countdown by remember { mutableStateOf<Int?>(null) }
     var countdownJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -721,18 +727,23 @@ fun PracticeTakeScreen(practicePieceId: String? = null) {
         tts.volume = store.readerVolumeLevel
         val line = sceneLines.getOrNull(lineIndex)
         if (recording && scene != null && line != null && !line.isMine) {
+            readerSpeaking = true
             val targetIdx = lineIndex
             val readerIdx = sceneLines.take(lineIndex).count { !it.isMine }
             runCatching {
                 reader.playOrSynthesize(scene.id, readerIdx, line.text, tts) {
                     scope.launch {
+                        readerSpeaking = false
                         if (recording && lineIndex == targetIdx && lineIndex < sceneLines.lastIndex) {
                             lineIndex = targetIdx + 1
                         }
                     }
                 }
+            }.onFailure {
+                readerSpeaking = false
             }
         } else {
+            readerSpeaking = false
             reader.stop()
             tts.stop()
         }
@@ -775,6 +786,32 @@ fun PracticeTakeScreen(practicePieceId: String? = null) {
         }
     }
 
+    fun stopPracticeTake() {
+        if (!recording) return
+        haptics.impact()
+        val pieceId = piece?.id
+        camera.stopRecording { uri -> if (pieceId != null) savePracticeTake(uri, pieceId) }
+    }
+
+    val activeVoiceCommands = remember(recording, countdown) {
+        when {
+            countdown != null -> emptySet()
+            recording -> setOf(VoiceCommand.Cut)
+            else -> setOf(VoiceCommand.Record)
+        }
+    }
+    val voiceEngine = rememberVoiceCommandEngine(
+        activeCommands = activeVoiceCommands,
+        enabled = voiceEnabled && camera.hasMicPermission && !readerSpeaking,
+        onCommand = { cmd, _ ->
+            when (cmd) {
+                VoiceCommand.Record -> if (!recording && countdown == null) rollPractice()
+                VoiceCommand.Cut -> if (recording) stopPracticeTake()
+                else -> Unit
+            }
+        },
+    )
+
     RecordStartErrorDialog(camera)
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
         CameraBackground(camera, Modifier.fillMaxSize(), front = front)
@@ -793,6 +830,30 @@ fun PracticeTakeScreen(practicePieceId: String? = null) {
             ) {
                 CircleIconButton(Icons.Filled.Close, "Close", onClick = { nav.closeCamera() }, onDark = true)
                 Spacer(Modifier.weight(1f))
+                if (voiceEngine.available) {
+                    Row(
+                        Modifier
+                            .heightIn(min = 32.dp)
+                            .clip(CircleShape)
+                            .background(OT.camera.glass)
+                            .clickable(role = Role.Button) { voiceEnabled = !voiceEnabled }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            if (voiceEnabled) Icons.Filled.Mic else Icons.Filled.MicOff,
+                            contentDescription = if (voiceEnabled) "Voice commands on" else "Voice commands off",
+                            tint = if (voiceEnabled && voiceEngine.isListening) OT.colors.accent else if (voiceEnabled) Color.White else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text(
+                            if (voiceEnabled) "Voice" else "Muted",
+                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (voiceEnabled) Color.White else Color.White.copy(alpha = 0.5f),
+                        )
+                    }
+                }
                 if (!recording) {
                     CameraPill(
                         text = if (timerSeconds == 0) "Instant" else "${timerSeconds}s timer",
@@ -880,6 +941,16 @@ fun PracticeTakeScreen(practicePieceId: String? = null) {
                 }
                 Spacer(Modifier.height(6.dp))
             }
+            if (voiceEnabled && voiceEngine.available && countdown == null) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CameraPill(
+                        text = voiceEngine.lastHeard ?: if (recording) "Say \"Cut\" to stop" else "Say \"Action\" or tap record",
+                        icon = Icons.Filled.Mic,
+                        background = Color.Black.copy(alpha = 0.55f),
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+            }
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 CameraPill("Practice · no slate, never sent", icon = Icons.Filled.Lock, background = Color.Black.copy(alpha = 0.55f))
             }
@@ -888,11 +959,7 @@ fun PracticeTakeScreen(practicePieceId: String? = null) {
                 PracticeRecordButton(recording) {
                     when {
                         countdown != null -> cancelCountdown()
-                        recording -> {
-                            haptics.impact()
-                            val pieceId = piece?.id
-                            camera.stopRecording { uri -> if (pieceId != null) savePracticeTake(uri, pieceId) }
-                        }
+                        recording -> stopPracticeTake()
                         else -> rollPractice()
                     }
                 }

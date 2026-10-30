@@ -179,7 +179,25 @@ fun ReaderScreen(auditionId: String, sceneIndex: Int = 0) {
     var playingLine by remember { mutableStateOf<Int?>(null) }
     var volumeMenu by remember { mutableStateOf(false) }
 
+    LaunchedEffect(store.readerVolume) {
+        player.volume = store.readerVolumeLevel
+    }
+
     DisposableEffect(Unit) { onDispose { player.stop() } }
+
+    fun toggleLinePlayback(lineIdx: Int) {
+        player.volume = store.readerVolumeLevel
+        if (playingLine == lineIdx) {
+            player.stop()
+            playingLine = null
+        } else {
+            playingLine = lineIdx
+            player.play(sceneId, lineIdx) {
+                if (playingLine == lineIdx) playingLine = null
+            }
+            haptics.tick()
+        }
+    }
 
     PushedScreen(
         bottomBar = {
@@ -207,13 +225,7 @@ fun ReaderScreen(auditionId: String, sceneIndex: Int = 0) {
                         .fillMaxWidth()
                         .heightIn(min = 60.dp)
                         .then(
-                            if (recorded) Modifier.clickable {
-                                if (playingLine == i) {
-                                    player.stop(); playingLine = null
-                                } else {
-                                    player.play(sceneId, i); playingLine = i; haptics.tick()
-                                }
-                            } else Modifier
+                            if (recorded) Modifier.clickable { toggleLinePlayback(i) } else Modifier
                         )
                         .padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -223,8 +235,7 @@ fun ReaderScreen(auditionId: String, sceneIndex: Int = 0) {
                         playing = playingLine == i,
                         description = if (recorded) "Play line ${i + 1}" else "Line ${i + 1} not recorded",
                         onClick = {
-                            if (!recorded) return@RdrPlayCircle
-                            if (playingLine == i) { player.stop(); playingLine = null } else { player.play(sceneId, i); playingLine = i }
+                            if (recorded) toggleLinePlayback(i)
                         },
                         background = if (recorded) c.accentSoft else c.fillField,
                         tint = if (recorded) c.accent else c.labelTertiary,
@@ -394,6 +405,7 @@ fun RecordReaderScreen(auditionId: String, sceneIndex: Int = 0) {
 
     LaunchedEffect(playingAll) {
         if (!playingAll) return@LaunchedEffect
+        player.volume = store.readerVolumeLevel
         val t0 = System.currentTimeMillis()
         launch {
             while (true) {

@@ -1052,180 +1052,40 @@ private fun HeadshotChip(title: String, value: String, isGood: Boolean = true) {
 }
 
 /**
- * Hands-free voice recognition listener for headshot capture. Recognizes "now", "say now", "take", "shoot", "cheese", "snap", etc.
+ * Hands-free voice recognition listener for headshot capture.
+ * Powered by [com.onetake.app.ui.system.VoiceCommandEngine] with Android 13+ fallback and noisy-room delta matching.
  */
 class HeadshotVoiceCommander(
-    private val context: Context,
-    private val onCaptureTrigger: () -> Unit,
+    context: Context,
+    onCaptureTrigger: () -> Unit,
 ) {
-    var isListening by mutableStateOf(false)
-        private set
-    var lastHeard by mutableStateOf<String?>(null)
-        private set
+    private val engine = com.onetake.app.ui.system.VoiceCommandEngine(
+        context = context,
+        initialCommands = setOf(com.onetake.app.ui.system.VoiceCommand.CapturePhoto),
+        onCommand = { cmd, _ ->
+            if (cmd == com.onetake.app.ui.system.VoiceCommand.CapturePhoto) {
+                onCaptureTrigger()
+            }
+        },
+    )
 
-    private var recognizer: SpeechRecognizer? = null
-    private val handler = Handler(Looper.getMainLooper())
-    private var wanted = false
-    private var lastTriggerTime = 0L
-    private var consecutiveFatalErrors = 0
+    val isListening: Boolean
+        get() = engine.isListening
+
+    val lastHeard: String?
+        get() = engine.lastHeard
 
     companion object {
         val CAPTURE_REGEX = Regex(
-            """(?i)\b(?:(?:say|okay|ok|and|ready|click)\s+)?(?:now|take(?:\s+it|\s+photo|\s+picture)?|shoot(?:\s+it)?|capture|cheese|smile|ready|snap|click|photo|picture)\b"""
+            """(?i)\b(?:(?:say|okay|ok|and|ready|click|right)\s+)?(?:now|take(?:\s+it|\s+a?\s*photo|\s+a?\s*picture)?|shoot(?:\s+it|\s+now)?|capture(?:\s+now)?|cheese|smile|ready|snap|click|photo|picture)\b"""
         )
     }
 
-    private val relisten = Runnable {
-        if (wanted) listen()
-    }
+    fun start() = engine.start()
 
-    private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {
-            isListening = true
-            consecutiveFatalErrors = 0
-        }
-        override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {}
-        override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
-        override fun onError(error: Int) {
-            isListening = false
-            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
-                wanted = false
-                return
-            }
-            handler.removeCallbacks(relisten)
-            if (!wanted) return
+    fun stop() = engine.stop()
 
-            when (error) {
-                SpeechRecognizer.ERROR_NO_MATCH,
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                    consecutiveFatalErrors = 0
-                    runCatching { recognizer?.cancel() }
-                    handler.postDelayed(relisten, 30L)
-                }
-                SpeechRecognizer.ERROR_AUDIO,
-                SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
-                    consecutiveFatalErrors = 0
-                    runCatching { recognizer?.cancel() }
-                    handler.postDelayed(relisten, 80L)
-                }
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
-                    runCatching { recognizer?.cancel() }
-                    handler.postDelayed(relisten, 150L)
-                }
-                SpeechRecognizer.ERROR_CLIENT,
-                SpeechRecognizer.ERROR_SERVER -> {
-                    consecutiveFatalErrors++
-                    runCatching {
-                        recognizer?.cancel()
-                        recognizer?.destroy()
-                    }
-                    recognizer = null
-                    val backoff = (150L * consecutiveFatalErrors).coerceAtMost(1000L)
-                    handler.postDelayed(relisten, backoff)
-                }
-                else -> {
-                    runCatching { recognizer?.cancel() }
-                    handler.postDelayed(relisten, 100L)
-                }
-            }
-        }
-        override fun onResults(results: Bundle?) {
-            isListening = false
-            val triggered = evaluate(results)
-            handler.removeCallbacks(relisten)
-            if (wanted && !triggered) handler.postDelayed(relisten, 30L)
-        }
-        override fun onPartialResults(partialResults: Bundle?) {
-            evaluate(partialResults)
-        }
-        override fun onEvent(eventType: Int, params: Bundle?) {}
-    }
-
-    private fun evaluate(bundle: Bundle?): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastTriggerTime < 1500L) return false
-
-        val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-        val matched = matches.firstOrNull { CAPTURE_REGEX.containsMatchIn(it) }
-        if (matched != null) {
-            lastTriggerTime = now
-            lastHeard = "Heard: \"$matched\""
-            stop()
-            onCaptureTrigger()
-            return true
-        }
-        return false
-    }
-
-    fun start() {
-        if (wanted) return
-        wanted = true
-        lastHeard = null
-        consecutiveFatalErrors = 0
-        listen()
-    }
-
-    fun stop() {
-        wanted = false
-        isListening = false
-        handler.removeCallbacks(relisten)
-        runCatching { recognizer?.cancel() }
-    }
-
-    private fun listen() {
-        if (!wanted) return
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
-        val available = runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)
-        if (!available) return
-
-        val r = recognizer ?: run {
-            val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
-            ) {
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-            } else {
-                SpeechRecognizer.createSpeechRecognizer(context)
-            }
-            rec?.also {
-                it.setRecognitionListener(listener)
-                recognizer = it
-            }
-        } ?: return
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
-            putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            }
-            putExtra("android.speech.extra.DICTATION_MODE", true)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 350L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 100L)
-        }
-        runCatching {
-            r.startListening(intent)
-            isListening = true
-        }.onFailure {
-            isListening = false
-            if (wanted) handler.postDelayed(relisten, 250L)
-        }
-    }
-
-    fun destroy() {
-        stop()
-        runCatching {
-            recognizer?.cancel()
-            recognizer?.destroy()
-        }
-        recognizer = null
-    }
+    fun destroy() = engine.destroy()
 }
 
 @Composable
@@ -1236,9 +1096,8 @@ fun rememberHeadshotVoiceCommander(
 ): HeadshotVoiceCommander {
     val currentCapture by rememberUpdatedState(onCaptureTrigger)
     val commander = remember { HeadshotVoiceCommander(context, onCaptureTrigger = { currentCapture() }) }
-    DisposableEffect(enabled) {
+    LaunchedEffect(enabled) {
         if (enabled) commander.start() else commander.stop()
-        onDispose { commander.stop() }
     }
     DisposableEffect(commander) {
         onDispose { commander.destroy() }

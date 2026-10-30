@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaMetadataRetriever
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -114,6 +115,7 @@ import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.ToggleRow
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.ReaderFiles
+import com.onetake.app.ui.system.VoiceErrorRecoveryPolicy
 import com.onetake.app.ui.system.playAndAwait
 import com.onetake.app.ui.system.ReaderTrackPlayer
 import com.onetake.app.ui.system.rememberHaptics
@@ -122,6 +124,7 @@ import com.onetake.app.ui.system.rememberTtsEngine
 import com.onetake.app.ui.practice.LineLearningMode
 import com.onetake.app.ui.theme.OT
 import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.delay
 
 // Android port of iOS Features/Prepare/PrepareViews.swift — 11 Prepare, 11.2 Teleprompter, 11.3–11.6 Run lines.
@@ -722,7 +725,7 @@ private fun PrompterSettingsSheet(onDismiss: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    "Because every time I tried",
+                    "Preview of your teleprompter text size",
                     color = Color.White,
                     fontSize = listOf(20, 26, 34)[size].sp,
                     fontWeight = FontWeight.SemiBold,
@@ -756,94 +759,213 @@ private fun PrompterSettingsSheet(onDismiss: () -> Unit) {
 
 // MARK: - Speech follower (android.speech) — the highlight follows your voice
 
-private class RunSpeechFollower(private val context: Context) {
+private class RunSpeechFollower(
+    context: Context,
+    private val onNextLineCue: (() -> Unit)? = null,
+) {
+    private val appContext = context.applicationContext
+
     var spokenWords by mutableIntStateOf(0)
         private set
 
-    val available: Boolean = runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)
+    val available: Boolean = runCatching { SpeechRecognizer.isRecognitionAvailable(appContext) }.getOrDefault(false)
 
     private var recognizer: SpeechRecognizer? = null
+    private var usingOnDevice = false
+    private var forceStandardRecognizer = false
     private var wanted = false
+    private var startInFlight = false
+    private var isListening = false
+    private var consecutiveErrors = 0
     private var base = 0
     private val handler = Handler(Looper.getMainLooper())
     private val relisten = Runnable { if (wanted) listen() }
+    private val startupWatchdog = Runnable {
+        if (wanted && startInFlight && !isListening) {
+            startInFlight = false
+            recreateRecognizer()
+            handler.postDelayed(relisten, 80L)
+        }
+    }
 
-    private fun count(b: Bundle?): Int =
+    private fun wordsIn(b: Bundle?): List<String> =
         b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            ?.split(" ")?.count { it.isNotBlank() } ?: 0
+            ?.trim()
+            ?.split(Regex("""\s+"""))
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+
+    private fun isNextLineCue(words: List<String>): Boolean {
+        if (words.size < 2) return false
+        val tail2 = words.takeLast(2).map { it.lowercase(Locale.US).trimEnd('.', '!', '?', ',') }
+        return tail2 == listOf("next", "line") || tail2 == listOf("skip", "line")
+    }
 
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
+        override fun onReadyForSpeech(params: Bundle?) {
+            handler.removeCallbacks(startupWatchdog)
+            startInFlight = false
+            isListening = true
+            consecutiveErrors = 0
+        }
+        override fun onBeginningOfSpeech() {
+            handler.removeCallbacks(startupWatchdog)
+            startInFlight = false
+            isListening = true
+        }
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
         override fun onError(error: Int) {
-            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+            handler.removeCallbacks(startupWatchdog)
+            handler.removeCallbacks(relisten)
+            startInFlight = false
+            isListening = false
+
+            val isSilence = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+            if (isSilence) consecutiveErrors = 0 else consecutiveErrors += 1
+
+            val decision = VoiceErrorRecoveryPolicy.decide(
+                error = error,
+                usingOnDevice = usingOnDevice,
+                consecutiveErrors = consecutiveErrors,
+            )
+            if (decision.fallbackToStandardRecognizer) {
+                forceStandardRecognizer = true
+            }
+            if (decision.stopPermanently || !wanted) {
                 wanted = false
                 return
             }
-            handler.removeCallbacks(relisten)
-            if (!wanted) return
-
-            if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                runCatching { recognizer?.cancel() }
-                handler.postDelayed(relisten, 30L)
-            } else {
-                runCatching {
-                    recognizer?.cancel()
-                    recognizer?.destroy()
-                }
-                recognizer = null
-                handler.postDelayed(relisten, 250L)
+            if (decision.recreateRecognizer) {
+                recreateRecognizer()
             }
+            handler.postDelayed(relisten, decision.retryDelayMs)
         }
         override fun onResults(results: Bundle?) {
-            base += count(results)
-            spokenWords = base
+            handler.removeCallbacks(startupWatchdog)
             handler.removeCallbacks(relisten)
-            if (wanted) handler.postDelayed(relisten, 50)
+            startInFlight = false
+            isListening = false
+            val words = wordsIn(results)
+            if (wanted && isNextLineCue(words)) {
+                onNextLineCue?.invoke()
+                return
+            }
+            base += words.size
+            spokenWords = base
+            if (wanted) handler.postDelayed(relisten, 30L)
         }
         override fun onPartialResults(partialResults: Bundle?) {
-            if (wanted) spokenWords = base + count(partialResults)
+            if (!wanted) return
+            val words = wordsIn(partialResults)
+            if (isNextLineCue(words)) {
+                onNextLineCue?.invoke()
+                return
+            }
+            spokenWords = base + words.size
         }
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
-    fun start() {
-        if (!available) return
-        wanted = true
+    fun resetLine() {
         base = 0
         spokenWords = 0
+    }
+
+    fun start() {
+        resetLine()
+        resume()
+    }
+
+    fun resume() {
+        if (!available) return
+        base = spokenWords
+        if (wanted && (isListening || startInFlight)) return
+        wanted = true
+        consecutiveErrors = 0
         handler.removeCallbacks(relisten)
-        runCatching { recognizer?.cancel() }
         listen()
     }
 
+    fun pause() {
+        wanted = false
+        startInFlight = false
+        isListening = false
+        base = spokenWords
+        handler.removeCallbacks(startupWatchdog)
+        handler.removeCallbacks(relisten)
+        runCatching { recognizer?.cancel() }
+    }
+
+    private fun recreateRecognizer() {
+        val old = recognizer
+        recognizer = null
+        usingOnDevice = false
+        if (old != null) runCatching { old.destroy() }
+    }
+
+    private fun createBestRecognizer(): SpeechRecognizer? {
+        val canTryOnDevice = !forceStandardRecognizer &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(appContext) }.getOrDefault(false)
+        if (canTryOnDevice) {
+            val onDevice = runCatching { SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext) }.getOrNull()
+            if (onDevice != null) {
+                usingOnDevice = true
+                return onDevice
+            }
+            forceStandardRecognizer = true
+        }
+        usingOnDevice = false
+        return runCatching { SpeechRecognizer.createSpeechRecognizer(appContext) }.getOrNull()
+    }
+
     private fun listen() {
-        val r = recognizer ?: runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
-            ?.also { it.setRecognitionListener(listener); recognizer = it }
-            ?: return
+        if (!wanted || !available) return
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            isListening = false
+            return
+        }
+        val r = recognizer ?: createBestRecognizer()?.also {
+            it.setRecognitionListener(listener)
+            recognizer = it
+        } ?: return
+
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
+            putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
+            if (usingOnDevice && !forceStandardRecognizer && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            }
+            putExtra("android.speech.extra.DICTATION_MODE", true)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3000L)
         }
-        runCatching { r.startListening(intent) }
+        startInFlight = true
+        handler.removeCallbacks(startupWatchdog)
+        handler.postDelayed(startupWatchdog, 4500L)
+        runCatching { r.startListening(intent) }.onFailure {
+            handler.removeCallbacks(startupWatchdog)
+            startInFlight = false
+            isListening = false
+            recreateRecognizer()
+            if (wanted) handler.postDelayed(relisten, 200L)
+        }
     }
 
     fun stop() {
-        wanted = false
-        handler.removeCallbacks(relisten)
-        runCatching { recognizer?.cancel() }
-        base = 0
-        spokenWords = 0
+        pause()
+        resetLine()
     }
 
     fun destroy() {
         stop()
-        runCatching { recognizer?.destroy() }
-        recognizer = null
+        recreateRecognizer()
     }
 }
 
@@ -920,6 +1042,8 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     var runNumber by remember { mutableIntStateOf(PrepPrefs.nextRun(runKey)) }
     var index by rememberSaveable { mutableIntStateOf(0) }
     var level by remember { mutableIntStateOf(0) }
+    var paused by rememberSaveable { mutableStateOf(false) }
+    var pauseStartedAt by remember { mutableLongStateOf(0L) }
     var finished by rememberSaveable { mutableStateOf(false) }
     val needed = remember { mutableStateMapOf<Int, Boolean>() }
     var startedAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -935,7 +1059,13 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
 
     var micGranted by remember { mutableStateOf(prepHasMic(context)) }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { micGranted = it }
-    val follower = remember { RunSpeechFollower(context.applicationContext) }
+    var advanceCallback by remember { mutableStateOf<() -> Unit>({}) }
+    val follower = remember {
+        RunSpeechFollower(
+            context = context.applicationContext,
+            onNextLineCue = { advanceCallback() },
+        )
+    }
     DisposableEffect(follower) { onDispose { follower.destroy() } }
     LaunchedEffect(Unit) {
         if (PrepPrefs.followVoice && follower.available && !micGranted) {
@@ -947,9 +1077,12 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
     fun advance() {
         level = 0
         revealedIndices = emptySet()
+        follower.resetLine()
         if (index + 1 < lines.size) {
             index += 1
         } else {
+            paused = false
+            pauseStartedAt = 0L
             finished = true
             endedAt = System.currentTimeMillis()
             haptics.success()
@@ -958,12 +1091,21 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
             store.recordRun(auditionId, sceneIndex, learned = mine.count { it !in needed }, total = mine.size)
         }
     }
+    advanceCallback = {
+        if (!finished && !paused && lines[safeIndex].isMine) {
+            follower.stop()
+            advance()
+        }
+    }
 
     fun restart(from: Int) {
         player.stop()
         tts.stop()
+        follower.stop()
         index = from
         level = 0
+        paused = false
+        pauseStartedAt = 0L
         revealedIndices = emptySet()
         gapTotalMs = 0L
         gapRemainingMs = 0L
@@ -973,10 +1115,17 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
         runNumber = PrepPrefs.nextRun(runKey)
     }
 
+    LaunchedEffect(safeIndex, runNumber) {
+        follower.resetLine()
+    }
+
     // Reader lines play your own recording or TTS, then move on. Your lines wait for your voice, audio gap, or a tap.
-    LaunchedEffect(safeIndex, finished, runNumber, speechOn) {
-        if (finished) {
-            follower.stop()
+    LaunchedEffect(safeIndex, finished, paused, runNumber, speechOn) {
+        player.volume = store.readerVolumeLevel
+        tts.volume = store.readerVolumeLevel
+        if (finished || paused) {
+            follower.pause()
+            player.stop()
             tts.stop()
             return@LaunchedEffect
         }
@@ -990,32 +1139,38 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
             // estimate), keeping the estimated pacing as a floor when nothing could be played.
             val started = System.currentTimeMillis()
             player.playAndAwait(scene.id, ri, current.text, tts, timeoutMs = pacingMs * 3 + 2_000)
+            if (paused || finished) return@LaunchedEffect
             delay((pacingMs - (System.currentTimeMillis() - started)).coerceAtLeast(250))
-            advance()
+            if (!paused && !finished) advance()
         } else if (mode == PrepLineMode.AudioGap) {
             val words = prepWords(current.text).size
             val gapMs = LineLearningMode.calculateAudioGapMillis(words)
-            gapTotalMs = gapMs
-            gapRemainingMs = gapMs
-            val started = System.currentTimeMillis()
-            while (System.currentTimeMillis() - started < gapMs && !finished) {
-                gapRemainingMs = (gapMs - (System.currentTimeMillis() - started)).coerceAtLeast(0L)
-                delay(50L)
+            if (gapTotalMs <= 0L) {
+                gapTotalMs = gapMs
+                gapRemainingMs = gapMs
             }
-            gapRemainingMs = 0L
-            advance()
+            var lastTick = System.currentTimeMillis()
+            while (gapRemainingMs > 0L && !finished && !paused) {
+                delay(50L)
+                val now = System.currentTimeMillis()
+                gapRemainingMs = (gapRemainingMs - (now - lastTick)).coerceAtLeast(0L)
+                lastTick = now
+            }
+            if (!paused && !finished && gapRemainingMs <= 0L) {
+                advance()
+            }
         } else if (speechOn) {
-            follower.start()
+            follower.resume()
         } else if (!PrepPrefs.followVoice) {
             follower.stop()
             delay(prepWords(current.text).size * 450L + 1500L)
-            advance()
+            if (!paused && !finished) advance()
         }
     }
 
     val spoken = follower.spokenWords
-    LaunchedEffect(spoken) {
-        if (!finished && line.isMine && speechOn && spoken > 0 && spoken >= prepWords(line.text).size) {
+    LaunchedEffect(spoken, paused) {
+        if (!finished && !paused && line.isMine && speechOn && spoken > 0 && spoken >= prepWords(line.text).size) {
             follower.stop()
             advance()
         }
@@ -1026,13 +1181,22 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
             .fillMaxSize()
             .background(c.bgCanvas),
     ) {
-        val elapsedSec = (((if (finished) endedAt else System.currentTimeMillis()) - startedAt) / 1000L).toInt().coerceAtLeast(0)
+        val effectiveNow = when {
+            finished -> endedAt
+            paused && pauseStartedAt > 0L -> pauseStartedAt
+            else -> System.currentTimeMillis()
+        }
+        val elapsedSec = ((effectiveNow - startedAt) / 1000L).toInt().coerceAtLeast(0)
         PrepNavHeader(
             title = "Run $runNumber",
-            subtitle = if (finished) "${formatDuration(elapsedSec)} · ${mode.label}" else mode.label,
+            subtitle = when {
+                finished -> "${formatDuration(elapsedSec)} · ${mode.label}"
+                paused -> "Paused · ${mode.label}"
+                else -> mode.label
+            },
             leadingIcon = Icons.Filled.Close,
             leadingDescription = "Close",
-            onLeading = { player.stop(); tts.stop(); nav.back() },
+            onLeading = { follower.stop(); player.stop(); tts.stop(); nav.back() },
         ) {
             CircleIconButton(Icons.Filled.TextFields, "Text size", onClick = { showPrompter = true })
         }
@@ -1088,14 +1252,14 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
                     Spacer(Modifier.height(28.dp))
                 }
 
-                val status = if (line.isMine) {
-                    when {
+                val status = when {
+                    paused -> "Paused"
+                    line.isMine -> when {
                         !speechOn -> "Your line"
-                        level > 0 -> "Your line · quiet for 3 s"
+                        level > 0 -> "Your line · prompted"
                         else -> "Your line · listening"
                     }
-                } else {
-                    "${prepCapitalized(line.character)} · your recording"
+                    else -> "${prepCapitalized(line.character)} · reader"
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Filled.GraphicEq, null, tint = c.reader, modifier = Modifier.size(20.dp))
@@ -1209,11 +1373,24 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    RunRoundButton(Icons.Filled.Pause, "Pause") {
-                        player.stop()
-                        follower.stop()
-                        finished = true
-                        endedAt = System.currentTimeMillis()
+                    RunRoundButton(
+                        icon = if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                        description = if (paused) "Resume" else "Pause",
+                    ) {
+                        if (!paused) {
+                            paused = true
+                            pauseStartedAt = System.currentTimeMillis()
+                            player.stop()
+                            tts.stop()
+                            follower.pause()
+                        } else {
+                            if (pauseStartedAt > 0L) {
+                                startedAt += (System.currentTimeMillis() - pauseStartedAt)
+                                pauseStartedAt = 0L
+                            }
+                            paused = false
+                        }
+                        haptics.tick()
                     }
                     val label = when {
                         mode == PrepLineMode.Full -> if (level == 1) "Whole line" else "Line?"
@@ -1233,6 +1410,8 @@ fun RunLinesScreen(auditionId: String, sceneIndex: Int) {
                     )
                     RunRoundButton(Icons.Filled.FastForward, "Next line") {
                         player.stop()
+                        tts.stop()
+                        follower.stop()
                         advance()
                     }
                 }

@@ -227,3 +227,20 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - **Unit Test Suite**:
     - Added `MediaExporterZipTest.kt` verifying `ZipFile` entries, `MANIFEST.txt` contents, file naming conventions, and non-zero media payloads.
     - Updated `PackageScreenTest.kt` with `deliverableZipFileName` assertions.
+- **Search, Widget, Notification Deep-Linking & R8 Shrinking Hardening (`SearchScreen.kt`, `ScriptSearchEngine.kt`, `DeadlineReminders.kt`, `MainActivity.kt`, `NextAuditionWidget.kt`, `HeroStageCard.kt`, `RuntimeShaderCache.kt`, `proguard-rules.pro`):**
+  - **Search Engine Scope & Highlight Spans**:
+    - Fully wired `SearchScope.CUES` to isolate reader lines and partner cue dialogue.
+    - Fully wired `SearchScope.CHARACTERS` to isolate character and audition role matches.
+    - Added dynamic text span highlighting using `buildAnnotatedString` and `SpanStyle` to visually illuminate query matches in dialogue results.
+    - Added `READER CUE` visual pill badges to clarify line ownership directly in search results.
+    - Added unit test suite in `ScriptSearchEngineTest.kt` covering `SearchScope.CUES` and `SearchScope.CHARACTERS`.
+  - **Notification Deep-Linking**:
+    - Attached `"com.onetake.app.OPEN_AUDITION"` deep link intent to local deadline reminder notifications in `DeadlineReminders.kt`.
+    - Handled notification intents in `MainActivity.kt` to immediately open the target audition on tap.
+  - **Overdue Handling across Home Screen & Studio**:
+    - Added `NextUp.isOverdue` and updated `NextAuditionWidget` to display overdue auditions with high-visibility urgent red tinting and `"overdue · was due <time>"` copy.
+    - Upgraded `HeroStageCard` to show `"OVERDUE · ACTION REQUIRED"` in urgent red when an unsent audition passes its deadline.
+    - Updated `AuditionsScreen`'s `DUE_THIS_WEEK` filter to check whole calendar day offsets (`0..7`), keeping same-day auditions accessible regardless of the current time.
+  - **Compatibility & Proguard / R8 Shrinking**:
+    - Guarded `RuntimeShader` with `NoOpRuntimeShader` on API < 33, preventing `NoClassDefFoundError` crashes on Android 12 and earlier.
+    - Added Proguard keep rules for `com.onetake.app.models.**` enums (`valueOf`, `values`), Glance AppWidgets, and ML Kit Vision in `proguard-rules.pro` to ensure release APKs shrink safely without serialization failures.

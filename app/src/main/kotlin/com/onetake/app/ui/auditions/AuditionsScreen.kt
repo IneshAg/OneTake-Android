@@ -62,7 +62,10 @@ fun AuditionsScreen(
         val sent = slates.filter { it.status == AuditionStatus.Sent }.sortedByDescending { it.sentDate ?: it.due }
         when (currentFilter) {
             AuditionFilter.ACTIVE -> open
-            AuditionFilter.DUE_THIS_WEEK -> open.filter { Duration.between(now, it.due).toDays() in 0..7 }
+            AuditionFilter.DUE_THIS_WEEK -> open.filter {
+                val days = Duration.between(now.toLocalDate().atStartOfDay(), it.due.toLocalDate().atStartOfDay()).toDays()
+                days in 0..7
+            }
             AuditionFilter.SENT -> sent
             AuditionFilter.ALL -> open + sent
         }

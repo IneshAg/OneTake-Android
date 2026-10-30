@@ -54,6 +54,8 @@ data class NextUp(
         return if (hours < 48) "$hours" to "h" else "${hours / 24}" to "d"
     }
 
+    fun isOverdue(now: LocalDateTime = LocalDateTime.now()): Boolean = now.isAfter(due)
+
     /** "2 of 4 · Scene 1 next", or "Ready to send" once everything's in. */
     val progressLine: String
         get() = nextTitle?.let { "$ready of $total · $it next" } ?: "Ready to send"
@@ -99,12 +101,15 @@ class NextAuditionWidget : GlanceAppWidget() {
                 Text(next.project, maxLines = 1, style = TextStyle(color = primary, fontSize = 16.sp, fontWeight = FontWeight.Bold))
                 Text(next.role, maxLines = 1, style = TextStyle(color = secondary, fontSize = 12.sp))
                 Spacer(GlanceModifier.defaultWeight())
+                val isLate = next.isOverdue()
                 Row(verticalAlignment = Alignment.Bottom) {
                     val (number, unit) = next.timeLeft()
-                    Text(number, style = TextStyle(color = due, fontSize = 26.sp, fontWeight = FontWeight.Bold))
-                    Text(unit, style = TextStyle(color = due, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    val timeColor = if (isLate) ColorProvider(day = Color(0xFFC93B2B), night = Color(0xFFFF453A)) else due
+                    Text(number, style = TextStyle(color = timeColor, fontSize = 26.sp, fontWeight = FontWeight.Bold))
+                    Text(unit, style = TextStyle(color = timeColor, fontSize = 14.sp, fontWeight = FontWeight.Bold))
                     Spacer(GlanceModifier.width(6.dp))
-                    Text("due ${next.due.otDue}", maxLines = 1, style = TextStyle(color = secondary, fontSize = 12.sp))
+                    val dueLabel = if (isLate) "overdue · was due ${next.due.otDue}" else "due ${next.due.otDue}"
+                    Text(dueLabel, maxLines = 1, style = TextStyle(color = if (isLate) timeColor else secondary, fontSize = 12.sp))
                 }
                 Text(next.progressLine, maxLines = 1, style = TextStyle(color = primary, fontSize = 12.sp))
             }

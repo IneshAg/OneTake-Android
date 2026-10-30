@@ -46,6 +46,7 @@ fun HeroStageCard(
 ) {
     val cardShape = remember { RoundedCornerShape(30.dp) }
     val dueText = slate.due.otRelative
+    val isOverdue = slate.status != AuditionStatus.Sent && java.time.LocalDateTime.now().isAfter(slate.due)
 
     Box(
         modifier = modifier
@@ -99,11 +100,15 @@ fun HeroStageCard(
                 .padding(22.dp)
         ) {
             Text(
-                text = if (slate.status == AuditionStatus.Sent) "SENT" else "UP NEXT · IMMEDIATE FOCUS",
+                text = when {
+                    slate.status == AuditionStatus.Sent -> "SENT"
+                    isOverdue -> "OVERDUE · ACTION REQUIRED"
+                    else -> "UP NEXT · IMMEDIATE FOCUS"
+                },
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 0.1.sp,
-                color = OT.colors.accent,
+                color = if (isOverdue) Color(0xFFFF453A) else OT.colors.accent,
             )
 
             Spacer(modifier = Modifier.height(4.dp))

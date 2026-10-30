@@ -78,8 +78,16 @@ object DeadlineReminders {
             KIND_MORNING -> "${a.role} is due today at ${a.due.otTime}. Next: ${a.nextAction.lowercase()}."
             else -> "Two hours left on ${a.role}. Next: ${a.nextAction.lowercase()}."
         }
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            action = "com.onetake.app.OPEN_AUDITION"
+            putExtra("audition_id", auditionId)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
         val open = PendingIntent.getActivity(
-            context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+            context,
+            auditionId.hashCode(),
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.mipmap.ic_launcher)

@@ -49,6 +49,8 @@ class MainActivity : ComponentActivity() {
         SharedNotice.from(intent)?.let { store.incomingShare = it }
         if (intent?.action == NextAuditionWidget.ACTION_OPEN_AUDITION) {
             store.openAuditionRequest = intent.getStringExtra(NextAuditionWidget.EXTRA_AUDITION_ID)
+        } else if (intent?.action == "com.onetake.app.OPEN_AUDITION") {
+            store.openAuditionRequest = intent.getStringExtra("audition_id")
         }
     }
 }

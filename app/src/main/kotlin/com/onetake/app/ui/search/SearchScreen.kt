@@ -40,9 +40,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.onetake.app.LocalAppStore
@@ -52,13 +55,6 @@ import com.onetake.app.TabBarClearance
 import com.onetake.app.ui.components.GLASS_EDGE_COLOR
 import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.theme.OT
-
-enum class SearchScope(val label: String) {
-    ALL("All"),
-    DIALOGUE("Dialogue"),
-    CHARACTERS("Characters"),
-    CUES("Cues"),
-}
 
 /**
  * Dedicated Standalone Search Screen:
@@ -86,6 +82,7 @@ fun SearchScreen(
                         text = line.text,
                         auditionId = audition.id,
                         sceneIndex = sceneIndex,
+                        isMine = line.isMine,
                     )
                 }
             }
@@ -103,15 +100,18 @@ fun SearchScreen(
                     scene = scene.title.ifBlank { "Practice" },
                     text = line.text,
                     practicePieceId = piece.id,
+                    isMine = line.isMine,
                 )
             }
         }
         fromAuditions + fromPractice
     }
 
-    val dialogueMatches = remember(query, dynamicLines) { searchEngine.search(query, dynamicLines) }
-    val slateMatches = remember(query, store.auditions) {
-        if (query.isBlank()) emptyList()
+    val dialogueMatches = remember(query, dynamicLines, selectedScope) {
+        searchEngine.search(query, dynamicLines, selectedScope)
+    }
+    val slateMatches = remember(query, store.auditions, selectedScope) {
+        if (query.isBlank() || selectedScope !in listOf(SearchScope.ALL, SearchScope.CHARACTERS)) emptyList()
         else store.auditions.filter {
             it.role.contains(query, ignoreCase = true) || it.project.contains(query, ignoreCase = true)
         }
@@ -120,8 +120,8 @@ fun SearchScreen(
     val containerShape = remember { RoundedCornerShape(24.dp) }
     val inputShape = remember { RoundedCornerShape(16.dp) }
 
-    val hasDialogueMatches = selectedScope in listOf(SearchScope.ALL, SearchScope.DIALOGUE) && dialogueMatches.isNotEmpty()
-    val hasSlateMatches = selectedScope in listOf(SearchScope.ALL, SearchScope.CHARACTERS) && slateMatches.isNotEmpty()
+    val hasDialogueMatches = dialogueMatches.isNotEmpty()
+    val hasSlateMatches = slateMatches.isNotEmpty()
     val hasResults = query.isNotBlank() && (hasDialogueMatches || hasSlateMatches)
     val scrollState = rememberScrollState()
 
@@ -322,13 +322,31 @@ fun SearchScreen(
                                     }
                                     .padding(horizontal = 18.dp, vertical = 14.dp)
                             ) {
-                                Text(
-                                    text = "${match.scene} · ${match.character}".uppercase(),
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = OT.colors.accent,
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        text = "${match.scene} · ${match.character}".uppercase(),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (!match.isMine) Color(0xFF64D2FF) else OT.colors.accent,
+                                    )
+                                    if (!match.isMine) {
+                                        Text(
+                                            text = "READER CUE",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF64D2FF),
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(Color(0x2664D2FF))
+                                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                                        )
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = match.project,
@@ -337,8 +355,25 @@ fun SearchScreen(
                                     color = Color.White,
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
+                                val lineText = match.line
+                                val span = match.highlightSpan
+                                val annotatedLine = remember(lineText, span) {
+                                    buildAnnotatedString {
+                                        if (!span.isEmpty() && span.first in lineText.indices && span.last in lineText.indices) {
+                                            append("\"")
+                                            append(lineText.substring(0, span.first))
+                                            withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.Bold, background = Color(0x66FF9F0A))) {
+                                                append(lineText.substring(span.first, span.last + 1))
+                                            }
+                                            append(lineText.substring(span.last + 1))
+                                            append("\"")
+                                        } else {
+                                            append("\"$lineText\"")
+                                        }
+                                    }
+                                }
                                 Text(
-                                    text = "\"${match.line}\"",
+                                    text = annotatedLine,
                                     fontSize = 13.sp,
                                     color = Color(0xFFD2D2D7),
                                     lineHeight = 18.sp,

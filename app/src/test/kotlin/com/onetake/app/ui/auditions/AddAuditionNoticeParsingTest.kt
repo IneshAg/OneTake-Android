@@ -127,4 +127,64 @@ class AddAuditionNoticeParsingTest {
         assertEquals("Here's what they want", addReviewTitle(AddAuditionSource.Paste))
         assertEquals("4 items found in the notice. Tap any line to edit, then save.", addReviewSubtitle(AddAuditionSource.Paste, asksCount = 3))
     }
+
+    @Test
+    fun `AddDraft makeAudition syncs FullLength piece respects zero scenes and preserves breakdown metadata`() {
+        val draftWithFullLength = AddDraft(
+            project = "Glass Harbor",
+            role = "Det. Cole",
+            projectType = "TV series",
+            roleSize = "Guest star",
+            castingOffice = "Hart Casting",
+            notes = "Keep delivery grounded",
+            scenes = 1,
+            asks = listOf("Slate first", "Full length", "Both profiles"),
+            rawScriptText = "DET. COLE: Drop the weapon.\nMARCUS: Never.",
+        )
+
+        val audition = draftWithFullLength.makeAudition(hasHeadshot = true)
+        assertEquals("TV series", audition.projectType)
+        assertEquals("Guest star", audition.roleSize)
+        assertEquals("Hart Casting", audition.castingOffice)
+        assertEquals("Keep delivery grounded", audition.notes)
+        assertTrue("Expected PieceKind.FullLength when 'Full length' is in asks", audition.pieces.any { it.kind == PieceKind.FullLength })
+        assertTrue("Expected PieceKind.Slate", audition.pieces.any { it.kind == PieceKind.Slate })
+        assertEquals(1, audition.scenes.size)
+
+        // Setting scenes = 0 in Edit step must produce 0 scene pieces and 0 scenes
+        val slateOnlyDraft = AddDraft(
+            project = "Commercial Ident",
+            role = "Self",
+            scenes = 0,
+            asks = listOf("Slate first", "Full length"),
+        )
+        val slateOnly = slateOnlyDraft.makeAudition(hasHeadshot = false)
+        assertEquals(0, slateOnly.scenes.size)
+        assertTrue(slateOnly.pieces.none { it.kind == PieceKind.Scene })
+        assertTrue(slateOnly.pieces.any { it.kind == PieceKind.FullLength })
+    }
+
+    @Test
+    fun `addParseNotice maps SidesOnly characters and preserves single-character sides`() {
+        val singleCharSides = """
+            INT. INTERROGATION ROOM - NIGHT
+
+            DETECTIVE COLE
+            You think I didn't check the harbour logs before walking in here?
+
+            DETECTIVE COLE
+            Every container on Pier 9 had your signature on the manifest.
+        """.trimIndent()
+
+        val draft = addParseNotice(singleCharSides)
+        assertEquals(DocumentKind.SidesOnly, draft.kind)
+        assertEquals(listOf("DETECTIVE COLE"), draft.detectedCharacters)
+        assertEquals("DETECTIVE COLE", draft.role)
+
+        val audition = draft.makeAudition(hasHeadshot = false)
+        assertEquals("DETECTIVE COLE", audition.role)
+        assertEquals(1, audition.scenes.size)
+        assertEquals(2, audition.scenes.first().lines.size)
+        assertTrue(audition.scenes.first().lines.all { it.isMine })
+    }
 }

@@ -928,7 +928,7 @@ private fun DetailTextField(value: String, onValueChange: (String) -> Unit, plac
 
 // MARK: - Revised sides
 
-/** New pages from casting: paste them, or select a photo or file. The scenes are
+/** New pages from casting: scan, select photos or PDFs, or paste them. The scenes are
  *  replaced and the scene pieces start again; takes already shot stay in Takes. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -941,23 +941,63 @@ private fun DetailRevisedSidesSheet(a: Audition, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
     var reading by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
+    var pendingScanFile by remember { mutableStateOf<java.io.File?>(null) }
+
+    fun appendReadText(read: String) {
+        val trimmed = read.trim()
+        if (trimmed.isEmpty()) {
+            problem = "Couldn't read any text from that. Try a clearer photo, or paste the text."
+        } else {
+            text = if (text.isBlank()) trimmed else "$text\n\n$trimmed"
+            problem = null
+        }
+    }
 
     fun readUri(uri: android.net.Uri?) {
         if (uri == null) return
         reading = true
         problem = null
         scope.launch {
-            val read = com.onetake.app.ocr.OcrManager.recognizeTextFromUri(context, uri).getOrNull().orEmpty().trim()
+            val read = com.onetake.app.ocr.OcrManager.recognizeTextFromUri(context, uri).getOrNull().orEmpty()
             reading = false
-            if (read.isEmpty()) problem = "Couldn't read any text from that. Try a clearer photo, or paste the text." else text = read
+            appendReadText(read)
         }
     }
     val fileLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
     ) { readUri(it) }
     val photoLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
-    ) { readUri(it) }
+        androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia(10),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            reading = true
+            problem = null
+            scope.launch {
+                val read = com.onetake.app.ocr.OcrManager.recognizeTextFromUris(context, uris).getOrNull().orEmpty()
+                reading = false
+                appendReadText(read)
+            }
+        }
+    }
+    val scanLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.TakePicture(),
+    ) { captured ->
+        val file = pendingScanFile
+        pendingScanFile = null
+        if (captured && file != null && file.exists()) {
+            reading = true
+            problem = null
+            scope.launch {
+                val uri = com.onetake.app.ui.system.fileProviderUri(context, file)
+                val read = com.onetake.app.ocr.OcrManager.recognizeTextFromUri(context, uri).getOrNull().orEmpty()
+                runCatching { file.delete() }
+                reading = false
+                appendReadText(read)
+            }
+        } else {
+            runCatching { file?.delete() }
+        }
+    }
 
     val scenes = remember(text, a.role) {
         if (text.isBlank() || com.onetake.app.data.ScriptParser.extractCharacters(text).isEmpty()) emptyList()
@@ -975,15 +1015,38 @@ private fun DetailRevisedSidesSheet(a: Audition, onDismiss: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 LargeTitle("New pages", subtitle = "They replace the scenes in ${a.project}. Takes you've shot stay in Takes.")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DetailChip("Photo", false) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    DetailChip("Scan", false) {
+                        try {
+                            val tempFile = java.io.File(context.cacheDir, "ocr-revised-${System.currentTimeMillis()}.jpg")
+                            pendingScanFile = tempFile
+                            scanLauncher.launch(com.onetake.app.ui.system.fileProviderUri(context, tempFile))
+                        } catch (_: Exception) {
+                            pendingScanFile = null
+                            photoLauncher.launch(
+                                androidx.activity.result.PickVisualMediaRequest(
+                                    androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                                ),
+                            )
+                        }
+                    }
+                    DetailChip("Photos", false) {
                         photoLauncher.launch(
                             androidx.activity.result.PickVisualMediaRequest(
                                 androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
                             ),
                         )
                     }
-                    DetailChip("File", false) { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "image/*")) }
+                    DetailChip("File", false) { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "application/rtf", "text/rtf", "image/*")) }
+                    if (text.isNotBlank()) {
+                        DetailChip("Clear", false) {
+                            text = ""
+                            problem = null
+                        }
+                    }
                 }
                 DetailTextField(text, { text = it; problem = null }, "Or paste the new sides here", minHeight = 160)
                 when {

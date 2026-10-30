@@ -105,7 +105,9 @@ import com.onetake.app.ui.components.ReadinessDashes
 import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.system.KeepScreenOn
+import com.onetake.app.ui.system.fileProviderUri
 import com.onetake.app.ui.system.rememberHaptics
+import java.io.File
 import com.onetake.app.ui.components.SFSymbols
 import com.onetake.app.ui.practice.components.PracticeTopBar
 import com.onetake.app.ui.practice.components.CompactDrillGrid
@@ -245,18 +247,38 @@ private fun PracticeSourceStep(
     var textInput by rememberSaveable { mutableStateOf(initialText) }
     var titleInput by rememberSaveable { mutableStateOf("Practice Scene") }
     var isOcrProcessing by remember { mutableStateOf(false) }
+    var pendingScanFile by remember { mutableStateOf<File?>(null) }
 
-    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
-        if (bitmap != null) {
+    fun applyImportedScript(imported: String) {
+        val cleaned = imported.trim()
+        if (cleaned.isBlank()) return
+        val combined = if (textInput.isBlank()) cleaned else "$textInput\n\n$cleaned"
+        textInput = combined
+        if (titleInput.isBlank() || titleInput == "Practice Scene") {
+            val suggested = ScriptParser.parseScenes(combined, myCharacter = "Me")
+                .firstOrNull()
+                ?.title
+                ?.takeIf { it.isNotBlank() && !it.startsWith("Scene ", ignoreCase = true) }
+            if (suggested != null) {
+                titleInput = suggested
+            }
+        }
+    }
+
+    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
+        val file = pendingScanFile
+        pendingScanFile = null
+        if (captured && file != null && file.exists()) {
             isOcrProcessing = true
             scope.launch {
-                val result = OcrManager.recognizeTextFromBitmap(bitmap)
-                val text = result.getOrNull().orEmpty().trim()
-                if (text.isNotBlank()) {
-                    textInput = text
-                }
+                val uri = fileProviderUri(context, file)
+                val result = OcrManager.recognizeTextFromUri(context, uri)
+                runCatching { file.delete() }
+                applyImportedScript(result.getOrNull().orEmpty())
                 isOcrProcessing = false
             }
+        } else {
+            runCatching { file?.delete() }
         }
     }
 
@@ -265,24 +287,18 @@ private fun PracticeSourceStep(
             isOcrProcessing = true
             scope.launch {
                 val result = OcrManager.recognizeTextFromUri(context, uri)
-                val text = result.getOrNull().orEmpty().trim()
-                if (text.isNotBlank()) {
-                    textInput = text
-                }
+                applyImportedScript(result.getOrNull().orEmpty())
                 isOcrProcessing = false
             }
         }
     }
 
-    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) {
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
+        if (uris.isNotEmpty()) {
             isOcrProcessing = true
             scope.launch {
-                val result = OcrManager.recognizeTextFromUri(context, uri)
-                val text = result.getOrNull().orEmpty().trim()
-                if (text.isNotBlank()) {
-                    textInput = text
-                }
+                val result = OcrManager.recognizeTextFromUris(context, uris)
+                applyImportedScript(result.getOrNull().orEmpty())
                 isOcrProcessing = false
             }
         }
@@ -328,6 +344,38 @@ private fun PracticeSourceStep(
             )
             Spacer(Modifier.height(16.dp))
 
+            // Editable Scene Title
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(c.surfaceCard)
+                    .border(0.5.dp, c.separator, RoundedCornerShape(16.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    "SCENE TITLE",
+                    style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp),
+                    color = c.labelSecondary,
+                )
+                BasicTextField(
+                    value = titleInput,
+                    onValueChange = { titleInput = it },
+                    singleLine = true,
+                    textStyle = OT.type.headline.copy(color = c.labelPrimary),
+                    cursorBrush = SolidColor(c.accent),
+                    modifier = Modifier.fillMaxWidth(),
+                    decorationBox = { inner ->
+                        if (titleInput.isBlank()) {
+                            Text("Scene title", style = OT.type.headline, color = c.labelTertiary)
+                        }
+                        inner()
+                    },
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+
             // Script Input Box (Obsidian Studio Surface)
             Column(
                 Modifier
@@ -347,6 +395,13 @@ private fun PracticeSourceStep(
                     )
                     if (isOcrProcessing) {
                         Text("Reading script with OCR…", style = OT.type.caption, color = c.accent)
+                    } else if (textInput.isNotBlank()) {
+                        Text(
+                            "Clear",
+                            style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                            color = c.danger,
+                            modifier = Modifier.clip(CircleShape).clickable { textInput = "" }.padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
                     }
                 }
                 BasicTextField(
@@ -373,7 +428,7 @@ private fun PracticeSourceStep(
                             .clickable {
                                 val clipText = clipboard.getText()?.text
                                 if (!clipText.isNullOrBlank()) {
-                                    textInput = clipText
+                                    applyImportedScript(clipText)
                                 }
                             }
                             .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -389,8 +444,11 @@ private fun PracticeSourceStep(
                             .background(c.fillQuiet)
                             .clickable {
                                 try {
-                                    scanLauncher.launch(null)
+                                    val tempFile = File(context.cacheDir, "ocr-practice-${System.currentTimeMillis()}.jpg")
+                                    pendingScanFile = tempFile
+                                    scanLauncher.launch(fileProviderUri(context, tempFile))
                                 } catch (e: Exception) {
+                                    pendingScanFile = null
                                     photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                                 }
                             }
@@ -398,7 +456,11 @@ private fun PracticeSourceStep(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             Icon(Icons.Filled.DocumentScanner, null, tint = c.labelPrimary, modifier = Modifier.size(14.dp))
-                            Text("Scan sides", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                            Text(
+                                if (textInput.isBlank()) "Scan sides" else "+ Scan page",
+                                style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                                color = c.labelPrimary,
+                            )
                         }
                     }
                     Box(
@@ -406,13 +468,27 @@ private fun PracticeSourceStep(
                             .clip(CircleShape)
                             .background(c.fillQuiet)
                             .clickable {
-                                fileLauncher.launch(arrayOf("application/pdf", "image/*", "text/plain"))
+                                photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Filled.Image, null, tint = c.labelSecondary, modifier = Modifier.size(14.dp))
+                            Text("Photos", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
+                        }
+                    }
+                    Box(
+                        Modifier
+                            .clip(CircleShape)
+                            .background(c.fillQuiet)
+                            .clickable {
+                                fileLauncher.launch(arrayOf("application/pdf", "text/plain", "application/rtf", "text/rtf", "image/*"))
                             }
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             Icon(Icons.Filled.Folder, null, tint = c.labelSecondary, modifier = Modifier.size(14.dp))
-                            Text("PDF / Photo", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
+                            Text("PDF / File", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
                         }
                     }
                 }
@@ -421,7 +497,7 @@ private fun PracticeSourceStep(
             Spacer(Modifier.height(16.dp))
             PrimaryButton(
                 text = "Continue to character setup",
-                onClick = { if (textInput.isNotBlank()) onPicked(textInput, titleInput) },
+                onClick = { if (textInput.isNotBlank()) onPicked(textInput, titleInput.ifBlank { "Practice Scene" }) },
                 enabled = textInput.isNotBlank(),
             )
 
@@ -496,17 +572,24 @@ private fun PracticeSceneStep(
 
         SectionLabel("Who are you playing?")
         Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            characters.take(3).forEach { char ->
-                val isSelected = playing.equals(char, ignoreCase = true)
-                val lineCount = parsedScene.lines.count { it.character.equals(char, ignoreCase = true) }
-                PracticeCharacterCard(
-                    name = char,
-                    detail = if (isSelected) "You play $char · $lineCount lines" else "$lineCount lines",
-                    selected = isSelected,
-                    modifier = Modifier.weight(1f),
-                    onClick = { playing = char }
-                )
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            characters.chunked(2).forEach { rowChars ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    rowChars.forEach { char ->
+                        val isSelected = playing.equals(char, ignoreCase = true)
+                        val lineCount = parsedScene.lines.count { it.character.equals(char, ignoreCase = true) }
+                        PracticeCharacterCard(
+                            name = char,
+                            detail = if (isSelected) "You play $char · $lineCount lines" else "$lineCount lines",
+                            selected = isSelected,
+                            modifier = Modifier.weight(1f),
+                            onClick = { playing = char }
+                        )
+                    }
+                    if (rowChars.size == 1 && characters.size > 1) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
             }
         }
         Spacer(Modifier.height(16.dp))

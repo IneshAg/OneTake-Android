@@ -113,8 +113,10 @@ import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.SheetHeader
 import com.onetake.app.ui.system.clipboardText
+import com.onetake.app.ui.system.fileProviderUri
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.theme.OT
+import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
@@ -189,38 +191,67 @@ internal data class AddDraft(
     val project: String = "",
     val role: String = "",
     val projectType: String = "Feature film",
+    val roleSize: String = "Lead",
+    val castingOffice: String = "",
+    val notes: String = "",
     val due: LocalDateTime? = null,
     val scenes: Int = 1,
     val asks: List<String> = emptyList(),
     val destination: Destination = Destination.ActorsAccess,
     val rawScriptText: String = "",
     val source: AddAuditionSource = AddAuditionSource.Paste,
+    val kind: DocumentKind = DocumentKind.CastingNotice,
+    val detectedCharacters: List<String> = emptyList(),
 ) {
-    fun makeAudition(hasHeadshot: Boolean = false): Audition {
-        // Use the pasted/scanned text as the scene only when it actually reads like sides — one of
-        // the lines is yours, or there are at least two speakers. Notice prose would otherwise
-        // become a fake "monologue" for the role.
-        val hasCues = rawScriptText.isNotBlank() && ScriptParser.extractCharacters(rawScriptText).isNotEmpty()
-        // One scene per slugline / "SCENE 2" header in the sides.
-        val parsedScenes = if (!hasCues) emptyList() else
-            ScriptParser.parseScenes(rawScriptText, myCharacter = role.ifBlank { "Me" })
-                .filter { scene -> scene.lines.any { it.isMine } || scene.lines.distinctBy { it.character }.size >= 2 }
-        val finalScenes = parsedScenes.ifEmpty { (1..maxOf(1, scenes)).map { ScriptScene.placeholder(it, role) } }
+    fun makeAudition(hasHeadshot: Boolean = false, hasProfiles: Boolean = false): Audition {
+        val effectiveRole = role
+            .ifBlank { if (detectedCharacters.size == 1) detectedCharacters.first() else "" }
+            .ifBlank { "Role" }
 
+        val finalScenes: List<ScriptScene> = if (scenes <= 0) {
+            emptyList()
+        } else {
+            val extractedChars = if (rawScriptText.isNotBlank()) ScriptParser.extractCharacters(rawScriptText) else emptyList()
+            val canParseScript = rawScriptText.isNotBlank() && (
+                extractedChars.isNotEmpty() ||
+                    kind == DocumentKind.SidesOnly ||
+                    source == AddAuditionSource.Type
+                )
+            val parsedScenes = if (!canParseScript) {
+                emptyList()
+            } else {
+                ScriptParser.parseScenes(rawScriptText, myCharacter = effectiveRole)
+                    .filter { it.lines.isNotEmpty() }
+            }
+            parsedScenes.ifEmpty {
+                (1..scenes).map { ScriptScene.placeholder(it, effectiveRole) }
+            }
+        }
+
+        val needsProfiles = "Both profiles" in asks
         val pieces = mutableListOf(
-            Piece(kind = PieceKind.Headshot, title = "Headshot", detail = "Front", isDone = hasHeadshot),
+            Piece(
+                kind = PieceKind.Headshot,
+                title = "Headshot",
+                detail = if (needsProfiles) "Front + profiles" else "Front",
+                isDone = if (needsProfiles) (hasHeadshot && hasProfiles) else hasHeadshot,
+            ),
             Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false),
         )
+        if ("Full length" in asks) {
+            pieces.add(Piece(kind = PieceKind.FullLength, title = "Full length", detail = "Head to feet", isDone = false))
+        }
         for (scene in finalScenes) {
             pieces.add(Piece(kind = PieceKind.Scene, title = scene.title, detail = "", isDone = false))
         }
 
         return Audition(
             project = project.ifBlank { "Untitled audition" },
-            projectType = projectType,
-            role = role.ifBlank { "Role" },
-            roleSize = "Lead",
-            castingOffice = "",
+            projectType = projectType.ifBlank { "Feature film" },
+            role = effectiveRole,
+            roleSize = roleSize.ifBlank { "Lead" },
+            castingOffice = castingOffice.trim(),
+            notes = notes.trim(),
             due = due ?: LocalDateTime.now().plusDays(3),
             asks = asks,
             pieces = pieces,
@@ -232,15 +263,25 @@ internal data class AddDraft(
 }
 
 /** Notice → draft. The rules live in [NoticeParser] (pure, unit-tested). */
-private fun addParseNotice(text: String): AddDraft {
+internal fun addParseNotice(text: String): AddDraft {
     val f = NoticeParser.parse(text)
+    val autoRole = f.role.ifEmpty {
+        if (f.detectedCharacters.size == 1) f.detectedCharacters.first() else ""
+    }
     return AddDraft(
         project = f.project,
-        role = f.role,
+        role = autoRole,
+        projectType = f.projectType.ifBlank { "Feature film" },
+        roleSize = f.roleSize.ifBlank { "Lead" },
+        castingOffice = f.castingOffice,
+        notes = f.notes,
         due = f.due,
+        scenes = maxOf(1, f.sceneCount),
         asks = f.asks,
         destination = f.destination,
         rawScriptText = f.scriptText,
+        kind = f.kind,
+        detectedCharacters = f.detectedCharacters,
     )
 }
 
@@ -256,6 +297,34 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     var path by remember { mutableStateOf(listOf<AddStep>()) }
     var notice by remember { mutableStateOf("") }
     var draft by remember { mutableStateOf(AddDraft()) }
+    var pendingScanFile by remember { mutableStateOf<File?>(null) }
+    var appendNextCapture by remember { mutableStateOf(false) }
+    var isAppendingPage by remember { mutableStateOf(false) }
+
+    fun mergeAdditionalText(additionalText: String, source: AddAuditionSource) {
+        val combined = listOf(notice, additionalText).filter { it.isNotBlank() }.joinToString("\n\n")
+        notice = combined
+        val reparsed = addParseNotice(combined)
+        val mergedAsks = (draft.asks + reparsed.asks).distinct()
+        val mergedRole = draft.role.ifBlank { reparsed.role }
+        draft = draft.copy(
+            project = draft.project.ifBlank { reparsed.project },
+            role = mergedRole,
+            projectType = if (draft.projectType == "Feature film" && reparsed.projectType.isNotBlank()) reparsed.projectType else draft.projectType,
+            roleSize = if (draft.roleSize == "Lead" && reparsed.roleSize.isNotBlank()) reparsed.roleSize else draft.roleSize,
+            castingOffice = draft.castingOffice.ifBlank { reparsed.castingOffice },
+            notes = draft.notes.ifBlank { reparsed.notes },
+            due = draft.due ?: reparsed.due,
+            asks = mergedAsks,
+            rawScriptText = reparsed.rawScriptText.ifBlank {
+                listOf(draft.rawScriptText, additionalText).filter { it.isNotBlank() }.joinToString("\n\n")
+            },
+            scenes = maxOf(draft.scenes, reparsed.scenes),
+            detectedCharacters = (draft.detectedCharacters + reparsed.detectedCharacters).distinct(),
+            kind = reparsed.kind,
+            source = source,
+        )
+    }
 
     fun startReading(text: String, source: AddAuditionSource = AddAuditionSource.Paste) {
         if (text.isBlank()) {
@@ -267,38 +336,73 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
         path = listOf(AddStep.Reading)
     }
 
-    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) {
-            notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
-            draft = draft.copy(source = AddAuditionSource.Photo)
-            path = listOf(AddStep.Reading)
-            scope.launch {
-                val result = OcrManager.recognizeTextFromUri(context, uri)
-                val text = result.getOrNull().orEmpty().trim()
-                if (text.isBlank()) {
-                    path = listOf(AddStep.CouldNotRead)
-                } else {
-                    notice = text
-                    draft = addParseNotice(text).copy(source = AddAuditionSource.Photo)
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
+        val shouldAppend = appendNextCapture
+        appendNextCapture = false
+        if (uris.isNotEmpty()) {
+            if (shouldAppend) {
+                isAppendingPage = true
+                scope.launch {
+                    val result = OcrManager.recognizeTextFromUris(context, uris)
+                    val text = result.getOrNull().orEmpty().trim()
+                    isAppendingPage = false
+                    if (text.isNotBlank()) {
+                        mergeAdditionalText(text, draft.source)
+                    }
+                }
+            } else {
+                notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
+                draft = draft.copy(source = AddAuditionSource.Photo)
+                path = listOf(AddStep.Reading)
+                scope.launch {
+                    val result = OcrManager.recognizeTextFromUris(context, uris)
+                    val text = result.getOrNull().orEmpty().trim()
+                    if (text.isBlank()) {
+                        path = listOf(AddStep.CouldNotRead)
+                    } else {
+                        notice = text
+                        draft = addParseNotice(text).copy(source = AddAuditionSource.Photo)
+                    }
                 }
             }
         }
     }
-    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
-        if (bitmap != null) {
-            notice = ""
-            draft = draft.copy(source = AddAuditionSource.Scan)
-            path = listOf(AddStep.Reading)
-            scope.launch {
-                val result = OcrManager.recognizeTextFromBitmap(bitmap)
-                val text = result.getOrNull().orEmpty().trim()
-                if (text.isBlank()) {
-                    path = listOf(AddStep.CouldNotRead)
-                } else {
-                    notice = text
-                    draft = addParseNotice(text).copy(source = AddAuditionSource.Scan)
+    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
+        val file = pendingScanFile
+        pendingScanFile = null
+        val shouldAppend = appendNextCapture
+        appendNextCapture = false
+        if (captured && file != null && file.exists()) {
+            val scanUri = fileProviderUri(context, file)
+            if (shouldAppend) {
+                isAppendingPage = true
+                scope.launch {
+                    val result = OcrManager.recognizeTextFromUri(context, scanUri)
+                    runCatching { file.delete() }
+                    val text = result.getOrNull().orEmpty().trim()
+                    isAppendingPage = false
+                    if (text.isNotBlank()) {
+                        mergeAdditionalText(text, draft.source)
+                    }
+                }
+            } else {
+                notice = ""
+                draft = draft.copy(source = AddAuditionSource.Scan)
+                path = listOf(AddStep.Reading)
+                scope.launch {
+                    val result = OcrManager.recognizeTextFromUri(context, scanUri)
+                    runCatching { file.delete() }
+                    val text = result.getOrNull().orEmpty().trim()
+                    if (text.isBlank()) {
+                        path = listOf(AddStep.CouldNotRead)
+                    } else {
+                        notice = text
+                        draft = addParseNotice(text).copy(source = AddAuditionSource.Scan)
+                    }
                 }
             }
+        } else {
+            runCatching { file?.delete() }
         }
     }
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -328,8 +432,8 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
         path = listOf(AddStep.Reading)
         val parts = buildList {
             share.text?.let { add(it) }
-            share.uris.forEach { uri ->
-                OcrManager.recognizeTextFromUri(context, uri).getOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
+            if (share.uris.isNotEmpty()) {
+                OcrManager.recognizeTextFromUris(context, share.uris).getOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
             }
         }
         val text = parts.joinToString("\n\n").trim()
@@ -342,21 +446,33 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     }
 
     val pickPhoto: () -> Unit = {
+        appendNextCapture = false
         photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
-    // "Scan" = a photo of the pages with the system camera; falls back to the photo picker
-    // if no camera app is available or camera permission hasn't been granted yet.
-    val scan: () -> Unit = {
+    fun launchCameraScan(append: Boolean) {
+        appendNextCapture = append
         try {
-            scanLauncher.launch(null)
+            val tempFile = File(context.cacheDir, "ocr-scan-${System.currentTimeMillis()}.jpg")
+            pendingScanFile = tempFile
+            scanLauncher.launch(fileProviderUri(context, tempFile))
         } catch (e: Exception) {
-            pickPhoto()
+            pendingScanFile = null
+            photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
         }
+    }
+    // "Scan" = full-resolution photo of the pages with the system camera; falls back to the photo picker
+    // if no camera app is available.
+    val scan: () -> Unit = { launchCameraScan(append = false) }
+    val scanAnotherPage: () -> Unit = { launchCameraScan(append = true) }
+    val addAnotherPhoto: () -> Unit = {
+        appendNextCapture = true
+        photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
     fun save() {
         val hasHeadshot = store.hasHeadshot("front") || store.headshotsTaken > 0
-        val audition = draft.makeAudition(hasHeadshot = hasHeadshot)
+        val hasProfiles = store.hasHeadshot("left") && store.hasHeadshot("right")
+        val audition = draft.makeAudition(hasHeadshot = hasHeadshot, hasProfiles = hasProfiles)
         store.add(audition)
         onDismiss()
         nav.resetTo(AppTab.Auditions)
@@ -377,7 +493,7 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
                 onPaste = { startReading(runCatching { clipboardText(context) }.getOrNull().orEmpty(), AddAuditionSource.Paste) },
                 onPhoto = pickPhoto,
                 onScan = scan,
-                onFile = { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "application/rtf", "text/rtf")) },
+                onFile = { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "application/rtf", "text/rtf", "image/*")) },
                 onType = {
                     draft = AddDraft(source = AddAuditionSource.Type)
                     path = path + AddStep.Review
@@ -388,7 +504,12 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
                 source = draft.source,
                 onCancel = onDismiss,
                 onDone = { result ->
-                    if (result.project.isEmpty() && result.role.isEmpty()) {
+                    val foundNothing = result.project.isEmpty() &&
+                        result.role.isEmpty() &&
+                        result.rawScriptText.isBlank() &&
+                        result.due == null &&
+                        result.asks.isEmpty()
+                    if (foundNothing) {
                         path = listOf(AddStep.CouldNotRead)
                     } else {
                         draft = result.copy(source = draft.source)
@@ -407,7 +528,10 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
             AddStep.Review -> AddReviewStep(
                 draft = draft,
                 slateName = store.slate.name,
+                isAppendingPage = isAppendingPage,
                 onChange = { draft = it },
+                onScanAnotherPage = scanAnotherPage,
+                onAddAnotherPhoto = addAnotherPhoto,
                 onBack = { path = path.dropLast(1) },
                 onEdit = { path = path + AddStep.EditAsks },
                 onSave = { save() },
@@ -536,11 +660,22 @@ private fun AddReadingStep(
     var found by remember(notice) { mutableIntStateOf(0) }
     val haptics = rememberHaptics()
     val done by rememberUpdatedState(onDone)
+    val roleSummary = when {
+        parsed.role.isNotEmpty() -> parsed.role
+        parsed.detectedCharacters.isNotEmpty() -> "${parsed.detectedCharacters.size} characters detected"
+        else -> "not in the notice"
+    }
+    val sidesSummary = when {
+        parsed.rawScriptText.isNotBlank() && parsed.scenes == 1 -> "1 scene · dialogue extracted"
+        parsed.rawScriptText.isNotBlank() -> "${parsed.scenes} scenes · dialogue extracted"
+        parsed.scenes == 1 -> "1 scene"
+        else -> "${parsed.scenes} scenes"
+    }
     val rows = listOf(
-        "Project" to parsed.project.ifEmpty { "not in the notice" },
-        "Your role" to parsed.role.ifEmpty { "not in the notice" },
+        "Project" to parsed.project.ifEmpty { if (parsed.kind == DocumentKind.SidesOnly) "sides page" else "not in the notice" },
+        "Your role" to roleSummary,
         "Due" to (parsed.due?.format(addDueLong) ?: "no date given"),
-        "Sides" to if (parsed.scenes == 1) "1 scene" else "${parsed.scenes} scenes",
+        "Sides" to sidesSummary,
         "What they asked for" to when (parsed.asks.size) {
             0 -> "nothing specific"
             1 -> "1 thing"
@@ -1064,11 +1199,17 @@ private fun AddAskIconView(ask: String, tint: Color, size: Dp) {
     )
 }
 
+private val addProjectTypes = listOf("Feature film", "TV series", "Commercial", "Short film", "Theatre", "Voiceover")
+private val addRoleSizes = listOf("Lead", "Supporting", "Guest star", "Co-star", "Day player", "Principal")
+
 @Composable
 private fun AddReviewStep(
     draft: AddDraft,
     slateName: String,
+    isAppendingPage: Boolean,
     onChange: (AddDraft) -> Unit,
+    onScanAnotherPage: () -> Unit,
+    onAddAnotherPhoto: () -> Unit,
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onSave: () -> Unit,
@@ -1076,6 +1217,11 @@ private fun AddReviewStep(
     val c = OT.colors
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
+
+    val parsedLineCount = remember(draft.rawScriptText, draft.role) {
+        if (draft.rawScriptText.isBlank()) 0
+        else ScriptParser.parseScenes(draft.rawScriptText, myCharacter = draft.role.ifBlank { "Role" }).sumOf { it.lines.size }
+    }
 
     Column(Modifier.fillMaxWidth().fillMaxHeight()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1105,6 +1251,67 @@ private fun AddReviewStep(
                 subtitle = addReviewSubtitle(draft.source, draft.asks.size),
             )
 
+            // Multi-page scan / photo append bar
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .heightIn(min = 38.dp)
+                        .clip(CircleShape)
+                        .background(c.accentSoft)
+                        .clickable(enabled = !isAppendingPage, role = Role.Button, onClick = onScanAnotherPage)
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Outlined.DocumentScanner, null, tint = c.accent, modifier = Modifier.size(16.dp))
+                        Text(
+                            if (isAppendingPage) "Reading page…" else "+ Scan another page",
+                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                            color = c.accent,
+                        )
+                    }
+                }
+                Box(
+                    Modifier
+                        .heightIn(min = 38.dp)
+                        .clip(CircleShape)
+                        .background(c.fillField)
+                        .clickable(enabled = !isAppendingPage, role = Role.Button, onClick = onAddAnotherPhoto)
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Outlined.Image, null, tint = c.labelPrimary, modifier = Modifier.size(16.dp))
+                        Text(
+                            "+ Add photos",
+                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                            color = c.labelPrimary,
+                        )
+                    }
+                }
+            }
+
+            if (draft.detectedCharacters.size >= 2 || (draft.detectedCharacters.isNotEmpty() && draft.role.isBlank())) {
+                SectionLabel("Who are you reading for?")
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    draft.detectedCharacters.forEach { character ->
+                        AddChip(
+                            text = character,
+                            selected = draft.role.equals(character, ignoreCase = true) ||
+                                ScriptParser.isMyCue(character, draft.role),
+                            onClick = { onChange(draft.copy(role = character)) },
+                        )
+                    }
+                }
+            }
+
             SectionLabel("Due")
             AddDueTimeSection(
                 due = draft.due,
@@ -1115,11 +1322,13 @@ private fun AddReviewStep(
 
             SectionLabel(addAsksSectionTitle(draft.source))
             val roleDetail = when {
+                draft.rawScriptText.isNotBlank() && parsedLineCount > 0 -> "$parsedLineCount lines extracted"
                 draft.rawScriptText.isNotBlank() -> "Your lines found"
                 draft.source == AddAuditionSource.Type -> "Sides to record"
                 else -> "Sides"
             }
-            val cells = listOf(Triple("__role", "${draft.role.ifEmpty { "Your role" }} · ${draft.scenes} scenes", roleDetail)) +
+            val sceneWord = if (draft.scenes == 1) "1 scene" else "${draft.scenes} scenes"
+            val cells = listOf(Triple("__role", "${draft.role.ifEmpty { "Your role" }} · $sceneWord", roleDetail)) +
                 draft.asks.map { Triple(it, it, addAskDetail(it, slateName, draft.role)) }
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 cells.chunked(2).forEach { pair ->
@@ -1145,7 +1354,39 @@ private fun AddReviewStep(
 
             SectionLabel("Details", Modifier.padding(top = 4.dp))
             AddTextField(draft.project, "Project") { onChange(draft.copy(project = it)) }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                addProjectTypes.forEach { type ->
+                    AddChip(
+                        text = type,
+                        selected = draft.projectType.equals(type, ignoreCase = true),
+                        onClick = { onChange(draft.copy(projectType = type)) },
+                    )
+                }
+            }
             AddTextField(draft.role, "Role") { onChange(draft.copy(role = it)) }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                addRoleSizes.forEach { size ->
+                    AddChip(
+                        text = size,
+                        selected = draft.roleSize.equals(size, ignoreCase = true),
+                        onClick = { onChange(draft.copy(roleSize = size)) },
+                    )
+                }
+            }
+            AddTextField(draft.castingOffice, "Casting office (optional)") { onChange(draft.copy(castingOffice = it)) }
+            AddTextField(
+                value = draft.notes,
+                placeholder = "Notes from casting (optional)",
+                singleLine = false,
+                minHeight = 68.dp,
+            ) { onChange(draft.copy(notes = it)) }
+
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -1155,8 +1396,75 @@ private fun AddReviewStep(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Scenes: ${draft.scenes}", style = OT.type.body, color = c.labelPrimary, modifier = Modifier.weight(1f))
-                AddStepper(draft.scenes, 0..6) { onChange(draft.copy(scenes = it)) }
+                AddStepper(draft.scenes, 0..10) { onChange(draft.copy(scenes = it)) }
             }
+
+            // Sides / Script Preview & Editor
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(c.fillField)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Sides script", style = OT.type.headline, color = c.labelPrimary)
+                        Text(
+                            if (draft.rawScriptText.isNotBlank() && parsedLineCount > 0)
+                                "$parsedLineCount dialogue lines ready for teleprompter & reader"
+                            else
+                                "Optional — paste or edit dialogue lines (NAME: line)",
+                            style = OT.type.footnote,
+                            color = c.labelTertiary,
+                        )
+                    }
+                    if (draft.rawScriptText.isNotBlank()) {
+                        Text(
+                            "Clear",
+                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                            color = c.danger,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { onChange(draft.copy(rawScriptText = "", detectedCharacters = emptyList())) }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
+                }
+                BasicTextField(
+                    value = draft.rawScriptText,
+                    onValueChange = { updatedText ->
+                        val chars = if (updatedText.isNotBlank()) ScriptParser.extractCharacters(updatedText) else emptyList()
+                        val detectedSceneCount = if (updatedText.isNotBlank() && chars.isNotEmpty()) {
+                            ScriptParser.parseScenes(updatedText, myCharacter = draft.role.ifBlank { chars.first() }).size
+                        } else {
+                            draft.scenes
+                        }
+                        onChange(
+                            draft.copy(
+                                rawScriptText = updatedText,
+                                detectedCharacters = chars,
+                                scenes = if (updatedText.isNotBlank() && detectedSceneCount > 0) detectedSceneCount else draft.scenes,
+                            )
+                        )
+                    },
+                    textStyle = OT.type.callout.copy(color = c.labelPrimary, lineHeight = 20.sp),
+                    cursorBrush = SolidColor(c.accent),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 84.dp, max = 220.dp),
+                    decorationBox = { inner ->
+                        if (draft.rawScriptText.isEmpty()) {
+                            Text(
+                                "CHARACTER: Dialogue line…",
+                                style = OT.type.callout,
+                                color = c.labelTertiary,
+                            )
+                        }
+                        inner()
+                    },
+                )
+            }
+
             ListRow(
                 title = draft.destination.label,
                 detail = draft.destination.spec,
@@ -1202,12 +1510,18 @@ private fun AddReviewStep(
 }
 
 @Composable
-private fun AddTextField(value: String, placeholder: String, onValueChange: (String) -> Unit) {
+private fun AddTextField(
+    value: String,
+    placeholder: String,
+    singleLine: Boolean = true,
+    minHeight: Dp = 50.dp,
+    onValueChange: (String) -> Unit,
+) {
     val c = OT.colors
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
-        singleLine = true,
+        singleLine = singleLine,
         textStyle = OT.type.body.copy(color = c.labelPrimary),
         cursorBrush = SolidColor(c.accent),
         modifier = Modifier.fillMaxWidth(),
@@ -1215,11 +1529,11 @@ private fun AddTextField(value: String, placeholder: String, onValueChange: (Str
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 50.dp)
+                    .heightIn(min = minHeight)
                     .clip(RoundedCornerShape(14.dp))
                     .background(c.fillField)
-                    .padding(horizontal = 14.dp),
-                contentAlignment = Alignment.CenterStart,
+                    .padding(horizontal = 14.dp, vertical = if (singleLine) 0.dp else 12.dp),
+                contentAlignment = if (singleLine) Alignment.CenterStart else Alignment.TopStart,
             ) {
                 if (value.isEmpty()) Text(placeholder, style = OT.type.body, color = c.labelTertiary)
                 inner()

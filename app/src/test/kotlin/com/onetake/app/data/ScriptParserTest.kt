@@ -97,4 +97,69 @@ class ScriptParserTest {
         assertTrue(ScriptParser.extractCharacters("Submit by Oct 30 at 10:00 AM").isEmpty())
         assertFalse(ScriptParser.isMyCue("AN", "Anaya"))
     }
+
+    @Test
+    fun `honorific prefixes match character first or last name without false-matching other doctors`() {
+        assertTrue("Dr. Sarah Jenkins should match cue SARAH", ScriptParser.isMyCue("SARAH", "Dr. Sarah Jenkins"))
+        assertTrue("Dr. Sarah Jenkins should match cue DR. JENKINS", ScriptParser.isMyCue("DR. JENKINS", "Dr. Sarah Jenkins"))
+        assertTrue("Det. Cole should match cue COLE", ScriptParser.isMyCue("COLE", "Det. Cole"))
+        assertFalse("Dr. Sarah Jenkins must NEVER match DR. PATEL", ScriptParser.isMyCue("DR. PATEL", "Dr. Sarah Jenkins"))
+        assertTrue("Exact 2-letter role Bo should match cue BO", ScriptParser.isMyCue("BO", "Bo"))
+    }
+
+    @Test
+    fun `page numbers transitions watermarks and shouted all-caps dialogue do not become characters`() {
+        val trickySides = """
+            24.
+            CONFIDENTIAL
+            BLUE REV. (10/29/26)
+
+            14 INT. HOSPITAL CORRIDOR - NIGHT 14
+
+            DR. SARAH JENKINS (V.O.)
+            Keep moving!
+            STOP!
+            Don't open that door.
+
+            COP #1
+            Hands where I can see them!
+            GET BACK!
+
+            (CONTINUED)
+            CONTINUED:
+        """.trimIndent()
+
+        val chars = ScriptParser.extractCharacters(trickySides)
+        assertEquals(listOf("DR. SARAH JENKINS", "COP #1"), chars)
+
+        val scene = ScriptParser.parse(trickySides, myCharacter = "Dr. Sarah Jenkins")
+        assertEquals(2, scene.lines.size)
+        assertTrue(scene.lines[0].isMine)
+        assertEquals("Keep moving! STOP! Don't open that door.", scene.lines[0].text)
+        assertFalse(scene.lines[1].isMine)
+        assertEquals("COP #1", scene.lines[1].character)
+        assertEquals("Hands where I can see them! GET BACK!", scene.lines[1].text)
+    }
+
+    @Test
+    fun `colon format preserves wrapped multi-line dialogue turns`() {
+        val wrappedColon = """
+            MAYA: I waited outside the courthouse for two hours
+            and nobody from your office bothered to show up.
+            COLE: The hearing was moved to Thursday morning
+            at the last minute.
+            MAYA: Then pick up the phone next time.
+        """.trimIndent()
+
+        val scene = ScriptParser.parse(wrappedColon, myCharacter = "Maya")
+        assertEquals(3, scene.lines.size)
+        assertEquals(
+            "I waited outside the courthouse for two hours and nobody from your office bothered to show up.",
+            scene.lines[0].text,
+        )
+        assertEquals(
+            "The hearing was moved to Thursday morning at the last minute.",
+            scene.lines[1].text,
+        )
+    }
 }

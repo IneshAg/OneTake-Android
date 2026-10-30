@@ -36,7 +36,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Keyboard
@@ -48,8 +51,14 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.TheaterComedy
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import com.onetake.app.models.formatDuration
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.SolidColor
@@ -130,6 +139,7 @@ fun PracticeScreen(
     val c = OT.colors
     val isRepertoireEmpty = store.practice.isEmpty()
     val scrollState = rememberScrollState()
+    var selectedPiece by remember { mutableStateOf<PracticePiece?>(null) }
 
     Column(
         modifier = modifier
@@ -201,10 +211,241 @@ fun PracticeScreen(
             PracticeRepertoireList(
                 pieces = store.practice,
                 onPieceClick = { piece ->
-                    nav.push(Route.RunLines(piece.id, 0))
+                    selectedPiece = piece
                 },
                 onAddScriptClick = { nav.push(Route.PracticeSetup) },
             )
+        }
+    }
+
+    selectedPiece?.let { piece ->
+        PracticePieceActionSheet(
+            piece = piece,
+            onDismiss = { selectedPiece = null },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PracticePieceActionSheet(
+    piece: PracticePiece,
+    onDismiss: () -> Unit,
+) {
+    val store = LocalAppStore.current
+    val nav = LocalNavigator.current
+    val haptics = rememberHaptics()
+    val c = OT.colors
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showEdit by remember { mutableStateOf(false) }
+    var showDelete by remember { mutableStateOf(false) }
+    val practiceTakes = store.takes.filter { it.auditionId == piece.id }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = state,
+        containerColor = c.surfaceCard,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = OT.dims.gutter)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(piece.title, style = OT.type.title, color = c.labelPrimary)
+                    Text("${piece.detail} · ${piece.linesLearned} of ${piece.linesTotal} lines off-book", style = OT.type.footnote, color = c.labelTertiary)
+                }
+                CircleIconButton(Icons.Filled.Close, "Close", onClick = onDismiss)
+            }
+
+            OTDivider()
+
+            PracticeActionRow(
+                icon = Icons.Filled.PlayArrow,
+                title = "Run Lines (Voice Rehearsal)",
+                subtitle = "Speak your cues and listen to your reader partner",
+                onClick = {
+                    onDismiss()
+                    nav.push(Route.RunLines(piece.id, 0))
+                },
+            )
+
+            PracticeActionRow(
+                icon = Icons.Filled.Edit,
+                title = "Prepare & Read Script",
+                subtitle = "Full sides, line cues, teleprompter speed and edits",
+                onClick = {
+                    onDismiss()
+                    nav.push(Route.Prepare(piece.id, 0))
+                },
+            )
+
+            PracticeActionRow(
+                icon = Icons.Filled.DirectionsWalk,
+                title = "Hands-Free Audio Walk",
+                subtitle = "Continuous looped TTS reading in your earphones",
+                onClick = {
+                    onDismiss()
+                    nav.push(Route.AudioWalk(piece.id, 0))
+                },
+            )
+
+            PracticeActionRow(
+                icon = Icons.Filled.PhotoCamera,
+                title = "Record Practice Take",
+                subtitle = "Step into camera framing with teleprompter and partner audio",
+                onClick = {
+                    onDismiss()
+                    nav.openCamera(CameraFlow.PracticeTake(piece.id))
+                },
+            )
+
+            if (practiceTakes.isNotEmpty()) {
+                PracticeActionRow(
+                    icon = Icons.Filled.Movie,
+                    title = "View Practice Takes (${practiceTakes.size})",
+                    subtitle = "Compare takes, trim clips, review performance",
+                    onClick = {
+                        onDismiss()
+                        nav.push(Route.Takes(piece.id))
+                    },
+                )
+            }
+
+            PracticeActionRow(
+                icon = Icons.Filled.Edit,
+                title = "Edit Piece Details",
+                subtitle = "Change script title or character role",
+                onClick = { showEdit = true },
+            )
+
+            PracticeActionRow(
+                icon = Icons.Filled.Delete,
+                title = "Delete Piece",
+                subtitle = "Permanently remove this script from practice",
+                destructive = true,
+                onClick = { showDelete = true },
+            )
+        }
+    }
+
+    if (showEdit) {
+        PracticePieceEditDialog(
+            piece = piece,
+            onDismiss = {
+                showEdit = false
+                onDismiss()
+            },
+        )
+    }
+
+    if (showDelete) {
+        AlertDialog(
+            onDismissRequest = { showDelete = false },
+            containerColor = c.surfaceCard,
+            title = { Text("Delete “${piece.title}”?", style = OT.type.headline, color = c.labelPrimary) },
+            text = { Text("This will permanently remove the script and any practice takes recorded for it.", style = OT.type.body, color = c.labelSecondary) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDelete = false
+                    store.deletePracticePiece(piece.id)
+                    haptics.tick()
+                    onDismiss()
+                }) {
+                    Text("Delete", color = c.danger, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDelete = false }) {
+                    Text("Cancel", color = c.labelSecondary)
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun PracticePieceEditDialog(
+    piece: PracticePiece,
+    onDismiss: () -> Unit,
+) {
+    val store = LocalAppStore.current
+    val c = OT.colors
+    var title by remember(piece.id) { mutableStateOf(piece.title) }
+    var detail by remember(piece.id) { mutableStateOf(piece.detail) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.surfaceCard,
+        title = { Text("Edit Practice Piece", style = OT.type.headline, color = c.labelPrimary) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Script Title") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = detail,
+                    onValueChange = { detail = it },
+                    label = { Text("Role / Scene Partner") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val t = title.trim().ifEmpty { piece.title }
+                val d = detail.trim().ifEmpty { piece.detail }
+                store.updatePracticePiece(piece.id, title = t, character = d)
+                onDismiss()
+            }) {
+                Text("Save", color = c.accent)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = c.labelSecondary) }
+        },
+    )
+}
+
+@Composable
+private fun PracticeActionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val c = OT.colors
+    val fg = if (destructive) c.danger else c.labelPrimary
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(if (destructive) c.danger.copy(alpha = 0.15f) else Color(0x1AFFFFFF)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, null, tint = fg, modifier = Modifier.size(20.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = OT.type.body.copy(fontWeight = FontWeight.SemiBold), color = fg)
+            Text(subtitle, style = OT.type.caption, color = c.labelTertiary)
         }
     }
 }

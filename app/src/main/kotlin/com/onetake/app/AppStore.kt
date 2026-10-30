@@ -18,6 +18,7 @@ import com.onetake.app.models.Destination
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
 import com.onetake.app.models.PracticePiece
+import com.onetake.app.models.ScriptLine
 import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.SlateInfo
 import com.onetake.app.models.Take
@@ -311,6 +312,71 @@ class AppStore(application: Application) : AndroidViewModel(application) {
             destination = destination,
             notes = notes.trim(),
             scenes = scenes,
+            exportedFileUri = null,
+        )
+    }
+
+    /** Extended details editing: supports projectType, roleSize, minute-accurate due date, deliverables/asks syncing, and status. */
+    fun editDetailsExtended(
+        id: String,
+        project: String,
+        role: String,
+        projectType: String,
+        roleSize: String,
+        castingOffice: String,
+        due: LocalDateTime,
+        destination: Destination,
+        notes: String,
+        asks: List<String>,
+        status: AuditionStatus,
+    ) = update(id) { a ->
+        val newRole = role.trim().ifEmpty { a.role }
+        val scenes = if (newRole == a.role) a.scenes else a.scenes.map { scene ->
+            scene.copy(lines = scene.lines.map { it.copy(isMine = ScriptParser.isMyCue(it.character, newRole)) })
+        }
+        val wantsFullLength = asks.any { "full" in it.lowercase() }
+        var pieces = a.pieces
+        if (wantsFullLength && pieces.none { it.kind == PieceKind.FullLength }) {
+            val slateIdx = pieces.indexOfLast { it.kind == PieceKind.Slate }
+            val insertIdx = if (slateIdx >= 0) slateIdx + 1 else 0
+            val fullLengthPiece = Piece(
+                kind = PieceKind.FullLength,
+                title = "Full-length shot",
+                detail = "Head to feet",
+                isDone = !a.fullLengthVideoUri.isNullOrBlank(),
+            )
+            pieces = pieces.toMutableList().apply { add(insertIdx, fullLengthPiece) }
+        } else if (!wantsFullLength && pieces.any { it.kind == PieceKind.FullLength }) {
+            pieces = pieces.filterNot { it.kind == PieceKind.FullLength }
+        }
+
+        val wantsSlate = asks.any { "slate" in it.lowercase() || "ident" in it.lowercase() }
+        if (wantsSlate && pieces.none { it.kind == PieceKind.Slate }) {
+            val slatePiece = Piece(
+                kind = PieceKind.Slate,
+                title = "Slate",
+                detail = "Name, height, city",
+                isDone = !a.slateVideoUri.isNullOrBlank(),
+            )
+            pieces = listOf(slatePiece) + pieces
+        } else if (!wantsSlate && asks.isNotEmpty() && pieces.any { it.kind == PieceKind.Slate }) {
+            pieces = pieces.filterNot { it.kind == PieceKind.Slate }
+        }
+
+        a.copy(
+            project = project.trim().ifEmpty { a.project },
+            role = newRole,
+            projectType = projectType.trim().ifEmpty { a.projectType },
+            roleSize = roleSize.trim().ifEmpty { a.roleSize },
+            castingOffice = castingOffice.trim(),
+            due = due,
+            destination = destination,
+            notes = notes.trim(),
+            scenes = scenes,
+            asks = asks,
+            pieces = pieces,
+            status = status,
+            exportedFileUri = null,
         )
     }
 
@@ -352,11 +418,11 @@ class AppStore(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSlateVideo(auditionId: String, uri: String) = update(auditionId) {
-        it.copy(slateVideoUri = uri)
+        it.copy(slateVideoUri = uri, exportedFileUri = null)
     }
 
     fun setFullLengthVideo(auditionId: String, uri: String) = update(auditionId) {
-        it.copy(fullLengthVideoUri = uri)
+        it.copy(fullLengthVideoUri = uri, exportedFileUri = null)
     }
 
     fun setExportedFile(auditionId: String, uri: String) = update(auditionId) {
@@ -368,6 +434,9 @@ class AppStore(application: Application) : AndroidViewModel(application) {
     fun circle(take: Take) {
         takes = takes.map {
             if (it.auditionId == take.auditionId && it.sceneIndex == take.sceneIndex) it.copy(isCircled = it.id == take.id) else it
+        }
+        take.auditionId?.let { audId ->
+            update(audId) { it.copy(exportedFileUri = null) }
         }
     }
 
@@ -392,10 +461,259 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         val isFirstForScene = take.auditionId != null && take.sceneIndex != null &&
             takes.none { it.auditionId == take.auditionId && it.sceneIndex == take.sceneIndex }
         takes = takes + if (isFirstForScene) take.copy(isCircled = true) else take
+        take.auditionId?.let { audId ->
+            update(audId) { it.copy(exportedFileUri = null) }
+        }
     }
 
     fun updateTake(id: String, transform: (Take) -> Take) {
+        val take = takes.firstOrNull { it.id == id }
         takes = takes.map { if (it.id == id) transform(it) else it }
+        take?.auditionId?.let { audId ->
+            update(audId) { it.copy(exportedFileUri = null) }
+        }
+    }
+
+    fun deleteTake(id: String) {
+        val take = takes.firstOrNull { it.id == id } ?: return
+        val audId = take.auditionId
+        val scIdx = take.sceneIndex
+        val fileToDelete = take.fileUri?.let { runCatching { Uri.parse(it).path }.getOrNull() }?.let(::File)
+
+        val remaining = takes.filterNot { it.id == id }
+        val updatedTakes = if (take.isCircled && audId != null && scIdx != null) {
+            val sameSceneTakes = remaining.filter { it.auditionId == audId && it.sceneIndex == scIdx }
+            if (sameSceneTakes.isNotEmpty() && sameSceneTakes.none { it.isCircled }) {
+                val promoteId = sameSceneTakes.last().id
+                remaining.map { if (it.id == promoteId) it.copy(isCircled = true) else it }
+            } else {
+                remaining
+            }
+        } else {
+            remaining
+        }
+        takes = updatedTakes
+
+        if (audId != null) {
+            update(audId) { it.copy(exportedFileUri = null) }
+        }
+
+        if (fileToDelete != null) {
+            saveScope.launch(Dispatchers.IO) {
+                runCatching { fileToDelete.delete() }
+            }
+        }
+    }
+
+    fun saveTrimmedTake(
+        originalTakeId: String,
+        trimmedFileUri: String,
+        durationSeconds: Int,
+        replaceOriginal: Boolean,
+    ): Take? {
+        val original = takes.firstOrNull { it.id == originalTakeId } ?: return null
+        val audId = original.auditionId
+        val scIdx = original.sceneIndex
+
+        if (audId != null) {
+            update(audId) { it.copy(exportedFileUri = null) }
+        }
+
+        return if (replaceOriginal) {
+            val oldFile = original.fileUri?.let { runCatching { Uri.parse(it).path }.getOrNull() }?.let(::File)
+            val updated = original.copy(
+                fileUri = trimmedFileUri,
+                durationSeconds = durationSeconds,
+            )
+            takes = takes.map { if (it.id == originalTakeId) updated else it }
+            if (oldFile != null && oldFile.absolutePath != Uri.parse(trimmedFileUri).path) {
+                saveScope.launch(Dispatchers.IO) { runCatching { oldFile.delete() } }
+            }
+            updated
+        } else {
+            val nextNumber = if (audId != null && scIdx != null) nextTakeNumber(audId, scIdx) else original.number + 1
+            val newTake = Take(
+                number = nextNumber,
+                durationSeconds = durationSeconds,
+                recordedAt = LocalDateTime.now(),
+                isCircled = false,
+                notes = emptyList(),
+                fileUri = trimmedFileUri,
+                auditionId = audId,
+                sceneIndex = scIdx,
+            )
+            takes = takes + newTake
+            newTake
+        }
+    }
+
+    fun addTakeNote(takeId: String, note: String) {
+        val trimmed = note.trim()
+        if (trimmed.isEmpty()) return
+        updateTake(takeId) { it.copy(notes = it.notes + trimmed) }
+    }
+
+    fun removeTakeNote(takeId: String, index: Int) {
+        updateTake(takeId) { t ->
+            t.copy(notes = t.notes.filterIndexed { i, _ -> i != index })
+        }
+    }
+
+    fun updateScriptLine(
+        auditionId: String,
+        sceneId: String,
+        lineId: String,
+        newCharacter: String,
+        newText: String,
+        isMine: Boolean,
+    ) = update(auditionId) { a ->
+        val scenes = a.scenes.map { s ->
+            if (s.id == sceneId) {
+                val lines = s.lines.map { l ->
+                    if (l.id == lineId) l.copy(character = newCharacter.trim().ifEmpty { l.character }, text = newText.trim(), isMine = isMine) else l
+                }
+                s.copy(lines = lines)
+            } else s
+        }
+        a.copy(scenes = scenes, exportedFileUri = null)
+    }
+
+    fun addScriptLine(
+        auditionId: String,
+        sceneId: String,
+        afterLineId: String?,
+        character: String,
+        text: String,
+        isMine: Boolean,
+    ) = update(auditionId) { a ->
+        val scenes = a.scenes.map { s ->
+            if (s.id == sceneId) {
+                val newLine = ScriptLine(character = character.trim().ifEmpty { "Character" }, text = text.trim(), isMine = isMine)
+                val lines = if (afterLineId == null) {
+                    listOf(newLine) + s.lines
+                } else {
+                    val idx = s.lines.indexOfFirst { it.id == afterLineId }
+                    if (idx >= 0) {
+                        s.lines.toMutableList().apply { add(idx + 1, newLine) }
+                    } else {
+                        s.lines + newLine
+                    }
+                }
+                s.copy(lines = lines)
+            } else s
+        }
+        a.copy(scenes = scenes, exportedFileUri = null)
+    }
+
+    fun deleteScriptLine(
+        auditionId: String,
+        sceneId: String,
+        lineId: String,
+    ) = update(auditionId) { a ->
+        val scenes = a.scenes.map { s ->
+            if (s.id == sceneId) {
+                s.copy(lines = s.lines.filterNot { it.id == lineId })
+            } else s
+        }
+        a.copy(scenes = scenes, exportedFileUri = null)
+    }
+
+    fun addScene(auditionId: String, title: String, heading: String) = update(auditionId) { a ->
+        val nextNum = (a.scenes.maxOfOrNull { it.number } ?: 0) + 1
+        val newScene = ScriptScene(
+            number = nextNum,
+            title = title.trim().ifEmpty { "Scene $nextNum" },
+            heading = heading.trim().ifEmpty { "SCENE $nextNum" },
+            lines = emptyList(),
+            estimatedSeconds = 60,
+        )
+        val updatedScenes = a.scenes + newScene
+        val pieces = a.pieces + Piece(kind = PieceKind.Scene, title = newScene.title, detail = "", isDone = false)
+        a.copy(scenes = updatedScenes, pieces = pieces, exportedFileUri = null)
+    }
+
+    fun renameScene(auditionId: String, sceneId: String, newTitle: String, newHeading: String) = update(auditionId) { a ->
+        val oldScene = a.scenes.firstOrNull { it.id == sceneId }
+        val oldTitle = oldScene?.title
+        val cleanTitle = newTitle.trim().ifEmpty { oldTitle ?: "Scene" }
+        val cleanHeading = newHeading.trim().ifEmpty { oldScene?.heading ?: cleanTitle }
+        val scenes = a.scenes.map { s ->
+            if (s.id == sceneId) s.copy(title = cleanTitle, heading = cleanHeading) else s
+        }
+        val pieces = a.pieces.map { p ->
+            if (p.kind == PieceKind.Scene && oldTitle != null && p.title == oldTitle) p.copy(title = cleanTitle) else p
+        }
+        a.copy(scenes = scenes, pieces = pieces, exportedFileUri = null)
+    }
+
+    fun deleteScene(auditionId: String, sceneId: String) = update(auditionId) { a ->
+        val deletedScene = a.scenes.firstOrNull { it.id == sceneId }
+        val deletedTitle = deletedScene?.title
+        val scenes = a.scenes.filterNot { it.id == sceneId }
+        val pieces = if (deletedTitle != null) a.pieces.filterNot { it.kind == PieceKind.Scene && it.title == deletedTitle } else a.pieces
+        a.copy(scenes = scenes, pieces = pieces, exportedFileUri = null)
+    }
+
+    fun updatePracticeLine(practiceId: String, lineId: String, newCharacter: String, newText: String, isMine: Boolean) {
+        practice = practice.map { p ->
+            if (p.id == practiceId && p.scene != null) {
+                val lines = p.scene.lines.map { l ->
+                    if (l.id == lineId) l.copy(character = newCharacter.trim().ifEmpty { l.character }, text = newText.trim(), isMine = isMine) else l
+                }
+                val mineCount = lines.count { it.isMine }
+                p.copy(scene = p.scene.copy(lines = lines), linesTotal = mineCount, linesLearned = minOf(p.linesLearned, mineCount))
+            } else p
+        }
+    }
+
+    fun addPracticeLine(practiceId: String, afterLineId: String?, character: String, text: String, isMine: Boolean) {
+        practice = practice.map { p ->
+            if (p.id == practiceId && p.scene != null) {
+                val newLine = ScriptLine(character = character.trim().ifEmpty { "Character" }, text = text.trim(), isMine = isMine)
+                val lines = if (afterLineId == null) {
+                    listOf(newLine) + p.scene.lines
+                } else {
+                    val idx = p.scene.lines.indexOfFirst { it.id == afterLineId }
+                    if (idx >= 0) p.scene.lines.toMutableList().apply { add(idx + 1, newLine) } else p.scene.lines + newLine
+                }
+                val mineCount = lines.count { it.isMine }
+                p.copy(scene = p.scene.copy(lines = lines), linesTotal = mineCount, linesLearned = minOf(p.linesLearned, mineCount))
+            } else p
+        }
+    }
+
+    fun deletePracticeLine(practiceId: String, lineId: String) {
+        practice = practice.map { p ->
+            if (p.id == practiceId && p.scene != null) {
+                val lines = p.scene.lines.filterNot { it.id == lineId }
+                val mineCount = lines.count { it.isMine }
+                p.copy(scene = p.scene.copy(lines = lines), linesTotal = mineCount, linesLearned = minOf(p.linesLearned, mineCount))
+            } else p
+        }
+    }
+
+    fun updatePracticePiece(practiceId: String, title: String, character: String) {
+        practice = practice.map { p ->
+            if (p.id == practiceId) {
+                p.copy(
+                    title = title.trim().ifEmpty { p.title },
+                    character = character.trim().ifEmpty { p.character },
+                    scene = p.scene?.copy(title = title.trim().ifEmpty { p.scene.title }),
+                )
+            } else p
+        }
+    }
+
+    fun deletePracticePiece(practiceId: String) {
+        val piece = practice.firstOrNull { it.id == practiceId } ?: return
+        practice = practice.filterNot { it.id == practiceId }
+        val ctx = context
+        saveScope.launch(Dispatchers.IO) {
+            runCatching {
+                val dir = ctx.filesDir ?: return@runCatching
+                File(dir, "practice-$practiceId").deleteRecursively()
+            }
+        }
     }
 
     fun addPractice(piece: PracticePiece) {
@@ -446,6 +764,33 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         updated[angle.lowercase()] = uri
         headshots = updated
         headshotsTaken = headshots.size
+    }
+
+    fun setHeadshot(angle: String, uri: String) = saveHeadshot(angle, uri)
+
+    fun deleteHeadshot(angle: String) {
+        val key = angle.lowercase()
+        val uri = headshots[key]
+        val fileToDelete = uri?.let { runCatching { Uri.parse(it).path }.getOrNull() }?.let(::File)
+
+        val updated = headshots.toMutableMap().apply { remove(key) }
+        headshots = updated
+        headshotsTaken = headshots.size
+
+        if (key == "front") {
+            auditions = auditions.map { a ->
+                val pieces = a.pieces.map { p ->
+                    if (p.kind == PieceKind.Headshot) p.copy(isDone = false) else p
+                }
+                a.copy(pieces = pieces, exportedFileUri = null)
+            }
+        }
+
+        if (fileToDelete != null) {
+            saveScope.launch(Dispatchers.IO) {
+                runCatching { fileToDelete.delete() }
+            }
+        }
     }
 
     fun hasHeadshot(angle: String): Boolean = headshots.containsKey(angle.lowercase())

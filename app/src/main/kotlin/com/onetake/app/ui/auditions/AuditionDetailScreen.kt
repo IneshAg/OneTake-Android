@@ -79,9 +79,11 @@ import com.onetake.app.LocalNavigator
 import com.onetake.app.Navigator
 import com.onetake.app.Route
 import com.onetake.app.models.Audition
+import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
 import com.onetake.app.models.ScriptScene
+import com.onetake.app.models.Take
 import com.onetake.app.models.formatDuration
 import com.onetake.app.models.otDayMonth
 import com.onetake.app.models.otDue
@@ -195,6 +197,10 @@ fun AuditionDetailScreen(auditionId: String) {
             DetailHeader(a)
             DetailPackageSummary(a, onClick = { showPackage = true })
             DetailUpNext(a, nav)
+            val auditionTakes = store.takes.filter { it.auditionId == a.id }
+            if (auditionTakes.isNotEmpty()) {
+                DetailTakesCard(takes = auditionTakes, onClick = { nav.push(Route.Takes(a.id)) })
+            }
             detailThenLine(a)?.let { then ->
                 Row(
                     Modifier
@@ -812,10 +818,68 @@ private fun DetailChip(text: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun DetailTakesCard(takes: List<Take>, onClick: () -> Unit) {
+    val c = OT.colors
+    val containerShape = RoundedCornerShape(24.dp)
+    val circled = takes.firstOrNull { it.isCircled }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(containerShape)
+            .background(c.surfaceCard)
+            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, containerShape)
+            .clickable(onClick = onClick)
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionLabel("Recorded takes · ${takes.size} total")
+            Spacer(Modifier.weight(1f))
+            Text("Review takes", style = OT.type.footnote, color = c.accent)
+            Chevron(Modifier.size(16.dp), tint = c.accent)
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            takes.takeLast(4).reversed().forEach { t ->
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (t.isCircled) c.accentSoft else Color(0x1AFFFFFF))
+                        .border(1.dp, if (t.isCircled) c.accent else Color.Transparent, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        "Take ${t.number}" + if (t.isCircled) " ★" else "",
+                        style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (t.isCircled) c.accent else c.labelPrimary,
+                    )
+                }
+            }
+        }
+        if (circled != null) {
+            Text(
+                "Take ${circled.number} is circled as your preferred send.",
+                style = OT.type.footnote,
+                color = c.labelSecondary,
+            )
+        } else {
+            Text(
+                "No take circled yet. Tap to compare and circle your send.",
+                style = OT.type.footnote,
+                color = c.labelTertiary,
+            )
+        }
+    }
+}
+
 // MARK: - Edit details
 
 /** Everything casting might change after the notice: project, role, casting office, due date and
- *  time, where it's going, and their notes. */
+ *  time, deliverables, where it's going, and their notes. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DetailEditSheet(a: Audition, onDismiss: () -> Unit) {
@@ -824,11 +888,16 @@ private fun DetailEditSheet(a: Audition, onDismiss: () -> Unit) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var project by remember { mutableStateOf(a.project) }
     var role by remember { mutableStateOf(a.role) }
+    var projectType by remember { mutableStateOf(a.projectType) }
+    var roleSize by remember { mutableStateOf(a.roleSize) }
     var office by remember { mutableStateOf(a.castingOffice) }
     var notes by remember { mutableStateOf(a.notes) }
     var dueDate by remember { mutableStateOf(a.due.toLocalDate()) }
     var dueHour by remember { mutableIntStateOf(a.due.hour) }
+    var dueMinute by remember { mutableIntStateOf(a.due.minute) }
     var destination by remember { mutableStateOf(a.destination) }
+    var asks by remember { mutableStateOf(a.asks) }
+    var status by remember { mutableStateOf(a.status) }
     var showPicker by remember { mutableStateOf(false) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = c.bgCanvas) {
@@ -843,16 +912,57 @@ private fun DetailEditSheet(a: Audition, onDismiss: () -> Unit) {
             ) {
                 SectionLabel("Project")
                 DetailTextField(project, { project = it }, "Project")
+
+                SectionLabel("Project type")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Feature", "Series", "Short", "Commercial", "Theatre").forEach { pt ->
+                        DetailChip(pt, projectType == pt) { projectType = pt }
+                    }
+                }
+
                 SectionLabel("Your role")
                 DetailTextField(role, { role = it }, "Role")
+
+                SectionLabel("Role size")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Lead", "Series Regular", "Recurring", "Guest Star", "Co-Star", "Supporting").forEach { rs ->
+                        DetailChip(rs, roleSize == rs) { roleSize = rs }
+                    }
+                }
+
                 SectionLabel("Casting office")
                 DetailTextField(office, { office = it }, "Casting office")
 
-                SectionLabel("Due")
+                SectionLabel("Due date & time")
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DetailChip(dueDate.format(detailChipDate), true) { showPicker = true }
-                    listOf(10, 12, 17, 23).forEach { h ->
-                        DetailChip("%d:00".format(h), dueHour == h) { dueHour = h }
+                    listOf(10 to 0, 12 to 0, 17 to 0, 18 to 30, 23 to 59).forEach { (h, m) ->
+                        val sel = dueHour == h && dueMinute == m
+                        DetailChip("%02d:%02d".format(h, m), sel) {
+                            dueHour = h
+                            dueMinute = m
+                        }
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Minute:", style = OT.type.footnote, color = c.labelSecondary)
+                    listOf(0, 15, 30, 45, 59).forEach { min ->
+                        val on = dueMinute == min
+                        DetailChip(":%02d".format(min), on) { dueMinute = min }
+                    }
+                }
+
+                SectionLabel("Deliverables requested")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Slate first", "Full length", "Both profiles", "Landscape", "Under 3 min").forEach { ask ->
+                        val isChecked = asks.contains(ask)
+                        DetailChip(ask, isChecked) {
+                            asks = if (isChecked) asks - ask else asks + ask
+                        }
                     }
                 }
 
@@ -862,6 +972,13 @@ private fun DetailEditSheet(a: Audition, onDismiss: () -> Unit) {
                 }
                 Text(destination.spec, style = OT.type.footnote, color = c.labelTertiary)
 
+                SectionLabel("Audition status")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AuditionStatus.entries.forEach { s ->
+                        DetailChip(s.name, status == s) { status = s }
+                    }
+                }
+
                 SectionLabel("Notes from casting")
                 DetailTextField(notes, { notes = it }, "e.g. “Less angry, more hurt.”", minHeight = 72)
                 Spacer(Modifier.height(4.dp))
@@ -869,9 +986,18 @@ private fun DetailEditSheet(a: Audition, onDismiss: () -> Unit) {
             PrimaryButton(
                 "Save",
                 onClick = {
-                    store.editDetails(
-                        a.id, project = project, role = role, castingOffice = office,
-                        due = dueDate.atTime(dueHour, 0), destination = destination, notes = notes,
+                    store.editDetailsExtended(
+                        id = a.id,
+                        project = project,
+                        role = role,
+                        projectType = projectType.ifBlank { "Feature" },
+                        roleSize = roleSize.ifBlank { "Supporting" },
+                        castingOffice = office,
+                        due = dueDate.atTime(dueHour, dueMinute),
+                        destination = destination,
+                        notes = notes,
+                        asks = asks,
+                        status = status,
                     )
                     onDismiss()
                 },

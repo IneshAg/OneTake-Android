@@ -15,13 +15,20 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.core.content.ContextCompat
 import com.onetake.app.ui.camera.HeadshotFramingEngine
 import com.onetake.app.ui.system.ReaderFiles
+import com.onetake.app.ui.system.rememberHaptics
+import com.onetake.app.ui.components.OTDivider
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,9 +62,14 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropPortrait
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -65,7 +77,11 @@ import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -551,6 +567,20 @@ fun HeadshotsScreen(auditionId: String? = null) {
     val hasLeft = store.hasHeadshot("left")
     val hasRight = store.hasHeadshot("right")
 
+    var optionsAngle by remember { mutableStateOf<String?>(null) }
+    var cropAngle by remember { mutableStateOf<String?>(null) }
+    var cropSourceUri by remember { mutableStateOf<Uri?>(null) }
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri: Uri? ->
+        if (uri != null && optionsAngle != null) {
+            val angle = optionsAngle!!
+            optionsAngle = null
+            cropAngle = angle
+            cropSourceUri = uri
+        }
+    }
+
     fun onProceed() {
         if (targetAudition != null) {
             store.markDone(PieceKind.Headshot, targetAudition.id)
@@ -628,8 +658,8 @@ fun HeadshotsScreen(auditionId: String? = null) {
                 photoUri = store.headshot("front"),
                 done = hasFront,
                 modifier = Modifier.weight(1.15f).fillMaxHeight(),
-                action = if (hasFront) "Retake" else null,
-                onAction = { nav.openCamera(CameraFlow.Headshot("front")) },
+                action = if (hasFront) "Edit" else "Add",
+                onAction = { optionsAngle = "front" },
             )
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 HeadshotSlot(
@@ -638,8 +668,8 @@ fun HeadshotsScreen(auditionId: String? = null) {
                     done = hasLeft,
                     photoUri = store.headshot("left"),
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    action = if (hasLeft) "Retake" else null,
-                    onAction = { nav.openCamera(CameraFlow.Headshot("left")) },
+                    action = if (hasLeft) "Edit" else "Add",
+                    onAction = { optionsAngle = "left" },
                 )
                 HeadshotSlot(
                     title = "Right profile",
@@ -647,8 +677,8 @@ fun HeadshotsScreen(auditionId: String? = null) {
                     done = hasRight,
                     photoUri = store.headshot("right"),
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    action = if (hasRight) "Retake" else null,
-                    onAction = { nav.openCamera(CameraFlow.Headshot("right")) },
+                    action = if (hasRight) "Edit" else "Add",
+                    onAction = { optionsAngle = "right" },
                 )
             }
         }
@@ -689,6 +719,289 @@ fun HeadshotsScreen(auditionId: String? = null) {
             HeadshotTip(Icons.Filled.WbSunny, "Face a window", "not a lamp", Modifier.weight(1f))
             HeadshotTip(Icons.Filled.CropPortrait, "Plain wall", "an arm’s length behind", Modifier.weight(1f))
             HeadshotTip(Icons.Filled.Smartphone, "Eye level", "a little above is fine", Modifier.weight(1f))
+        }
+    }
+
+    optionsAngle?.let { angle ->
+        HeadshotOptionsSheet(
+            angle = angle,
+            hasPhoto = store.hasHeadshot(angle),
+            onCamera = {
+                optionsAngle = null
+                nav.openCamera(CameraFlow.Headshot(angle))
+            },
+            onGallery = {
+                photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
+            onCrop = {
+                val uriStr = store.headshot(angle)
+                optionsAngle = null
+                if (uriStr != null) {
+                    cropAngle = angle
+                    cropSourceUri = Uri.parse(uriStr)
+                }
+            },
+            onDelete = {
+                optionsAngle = null
+                store.deleteHeadshot(angle)
+            },
+            onDismiss = { optionsAngle = null },
+        )
+    }
+
+    if (cropAngle != null && cropSourceUri != null) {
+        HeadshotCropSheet(
+            angle = cropAngle!!,
+            sourceUri = cropSourceUri!!,
+            onDismiss = {
+                cropAngle = null
+                cropSourceUri = null
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HeadshotOptionsSheet(
+    angle: String,
+    hasPhoto: Boolean,
+    onCamera: () -> Unit,
+    onGallery: () -> Unit,
+    onCrop: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = OT.colors
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val angleTitle = when (angle) {
+        "left" -> "Left Profile"
+        "right" -> "Right Profile"
+        else -> "Front Headshot"
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = state,
+        containerColor = c.surfaceCard,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = OT.dims.gutter)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(angleTitle, style = OT.type.title, color = c.labelPrimary)
+                    Text("Capture fresh with framing assist or select an existing photo.", style = OT.type.footnote, color = c.labelTertiary)
+                }
+                CircleIconButton(Icons.Filled.Close, "Close", onClick = onDismiss)
+            }
+
+            OTDivider()
+
+            HeadshotOptionRow(
+                icon = Icons.Filled.PhotoCamera,
+                title = "Take with Camera",
+                subtitle = "Centered framing guide with live positioning cues",
+                onClick = onCamera,
+            )
+
+            HeadshotOptionRow(
+                icon = Icons.Filled.PhotoLibrary,
+                title = "Choose from Photos",
+                subtitle = "Import from camera roll or portfolio",
+                onClick = onGallery,
+            )
+
+            if (hasPhoto) {
+                HeadshotOptionRow(
+                    icon = Icons.Filled.Crop,
+                    title = "Adjust 4:5 Crop & Rotation",
+                    subtitle = "Interactive pan, zoom, and 90° orientation",
+                    onClick = onCrop,
+                )
+
+                HeadshotOptionRow(
+                    icon = Icons.Filled.Delete,
+                    title = "Remove Headshot",
+                    subtitle = "Delete photo file and unassign angle",
+                    destructive = true,
+                    onClick = onDelete,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeadshotOptionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val c = OT.colors
+    val fg = if (destructive) c.danger else c.labelPrimary
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(if (destructive) c.danger.copy(alpha = 0.15f) else Color(0x1AFFFFFF)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, null, tint = fg, modifier = Modifier.size(20.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = OT.type.body.copy(fontWeight = FontWeight.SemiBold), color = fg)
+            Text(subtitle, style = OT.type.caption, color = c.labelTertiary)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HeadshotCropSheet(
+    angle: String,
+    sourceUri: Uri,
+    onDismiss: () -> Unit,
+) {
+    val store = LocalAppStore.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
+    val c = OT.colors
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var panXNorm by remember { mutableFloatStateOf(0f) }
+    var panYNorm by remember { mutableFloatStateOf(0f) }
+    var extraRotation by remember { mutableIntStateOf(0) }
+    var saving by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(
+        onDismissRequest = { if (!saving) onDismiss() },
+        sheetState = state,
+        containerColor = c.surfaceCard,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = OT.dims.gutter)
+                .padding(bottom = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("4:5 Headshot Crop", style = OT.type.title, color = c.labelPrimary)
+                    Text("Pan, zoom, or rotate to fit the portrait frame.", style = OT.type.footnote, color = c.labelTertiary)
+                }
+                CircleIconButton(Icons.Filled.Close, "Close", onClick = { if (!saving) onDismiss() })
+            }
+
+            Box(
+                Modifier
+                    .fillMaxWidth(0.68f)
+                    .aspectRatio(0.8f)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.Black)
+                    .border(2.dp, c.accent, RoundedCornerShape(20.dp))
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, gestureZoom, _ ->
+                            zoom = (zoom * gestureZoom).coerceIn(1f, 3.5f)
+                            panXNorm = (panXNorm - pan.x / 400f).coerceIn(-0.6f, 0.6f)
+                            panYNorm = (panYNorm - pan.y / 400f).coerceIn(-0.6f, 0.6f)
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                HeadshotImage(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = zoom
+                            scaleY = zoom
+                            translationX = -panXNorm * 200f
+                            translationY = -panYNorm * 200f
+                            rotationZ = extraRotation.toFloat()
+                        },
+                    name = angle,
+                    uri = sourceUri.toString(),
+                    contentDescription = "Headshot preview",
+                )
+            }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Zoom: ${(zoom * 10).toInt() / 10f}x", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.labelSecondary)
+                }
+                Box(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(Color(0x1AFFFFFF))
+                        .clickable { extraRotation = (extraRotation + 90) % 360 }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.RotateRight, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Text("Rotate 90°", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = Color.White)
+                    }
+                }
+            }
+
+            Slider(
+                value = zoom,
+                onValueChange = { zoom = it },
+                valueRange = 1f..3.5f,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            PrimaryButton(
+                text = if (saving) "Saving 4:5 crop…" else "Save 4:5 Headshot",
+                onClick = {
+                    saving = true
+                    scope.launch {
+                        val cropped = HeadshotFramingEngine.processAndCropHeadshot(
+                            context = context,
+                            rawUri = sourceUri,
+                            mirrorHorizontally = false,
+                            extraRotationDegrees = extraRotation,
+                            manualZoom = zoom,
+                            manualPanXNorm = panXNorm,
+                            manualPanYNorm = panYNorm,
+                            deleteRawIfTempFile = false,
+                        )
+                        saving = false
+                        if (cropped != null) {
+                            store.setHeadshot(angle, cropped.toString())
+                            haptics.success()
+                            onDismiss()
+                        } else {
+                            haptics.warning()
+                        }
+                    }
+                },
+                enabled = !saving,
+            )
         }
     }
 }

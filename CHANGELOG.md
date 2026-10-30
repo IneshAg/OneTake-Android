@@ -181,3 +181,25 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
     - **On-Device / Offline Recognition Preference:** Configured `SpeechRecognizer.createOnDeviceSpeechRecognizer` on Android 13+ (API 33+) with `EXTRA_PREFER_OFFLINE`, `EXTRA_MAX_RESULTS, 5`, and tight silence latency parameters for near-zero latency.
     - **Synchronized Across Flows:** Hardened `HeadshotVoiceCommander` ("say now", "now", "shoot", "cheese", "smile", "click", "snap") and `PrepSpeechTrigger` against the same destructive reconnect failure mode.
     - **Expanded Unit Test Suite:** Added `testMatchesCommandWithCrowdedRoomNoise` and `testHeadshotVoiceCommanderRegexes` in `ShootControlTest.kt`.
+- **Comprehensive Editing Overhaul End-to-End (Takes & Video, Auditions, Scripts & Scenes, Practice Repertoire, Headshots):**
+  - **Takes & Video Clip Editor (`TkTrimSheet`, `TakesScreens.kt`, `TakeTrimmer.kt`, `AppStore.kt`):**
+    - Embedded live looping preview player inside `TkTrimSheet` constrained to `[range.start..range.endInclusive]`.
+    - Added tenths-of-a-second clock timestamps (`0:01.4`) and `-0.1s`/`+0.1s` fine nudge buttons for both Start and End cut points.
+    - Added "Save as new take" vs "Replace take" options via `store.saveTrimmedTake`.
+    - Added take deletion (`store.deleteTake`) with confirmation dialog.
+    - Hardened `TakeTrimmer.kt` with `MediaMetadataRetriever` rotation fallback and strictly monotonic B-frame timestamp adjustment.
+    - Interactive 2-player `TkCompareView` with chip pickers to compare any two takes side by side.
+    - Handled empty takes states with direct "Record take" action.
+  - **Audition Detail & Editing (`AuditionDetailScreen.kt`, `AppStore.kt`):**
+    - Added "Recorded takes" card directly in `AuditionDetailScreen` routing to `Route.Takes(a.id)`.
+    - Upgraded `DetailEditSheet` with `projectType` selector, `roleSize` selector, minute-accurate due date and time, deliverables `asks` syncing with `pieces` (including `PieceKind.FullLength` and `PieceKind.Slate`), and audition status toggle ("Mark as Sent" / "Reopen").
+  - **Persistent Script, Scene & Line Editing (`PrepareScreens.kt`, `AppStore.kt`):**
+    - Replaced in-memory edits with persistent `AppStore` mutations: `updateScriptLine`, `addScriptLine`, `deleteScriptLine`, `updatePracticeLine`, `addPracticeLine`, `deletePracticeLine`.
+    - Upgraded `PrepEditDialog` to allow editing line text, changing character, toggling `isMine` ("You" vs "Reader"), adding a line below, or deleting a line.
+    - Added "Takes" capsule button in `PrepareScreen` for instant take inspection.
+  - **Practice Repertoire Management (`PracticeScreens.kt`, `AppStore.kt`):**
+    - Added `PracticePieceActionSheet` on tapping any repertoire piece, giving actors one-tap access to Run Lines, Prepare Script, Hands-Free Audio Walk, Record Practice Take, View Practice Takes, Edit Piece Details, or Delete Piece.
+  - **Headshots Editing & 4:5 Crop Sheet (`ProfileScreens.kt`, `HeadshotFramingEngine.kt`, `AppStore.kt`):**
+    - Upgraded all 3 headshot slots (Front, Left profile, Right profile) with `HeadshotOptionsSheet` supporting Take with Camera, Import from Photos (via Photo Picker), Adjust 4:5 Crop & Rotation, and Delete Headshot.
+    - Added interactive `HeadshotCropSheet` with 4:5 portrait preview, pan gestures, zoom slider, 90° rotation, and saving via `HeadshotFramingEngine.processAndCropHeadshot`.
+  - Added unit test suite `AppStoreEditingTest.kt` verifying all editing mutations and state guarantees.

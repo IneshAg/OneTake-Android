@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RadioButtonChecked
@@ -108,6 +109,7 @@ import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.formatDuration
 import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.components.OTDivider
+import com.onetake.app.ui.components.OTSwitch
 import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.components.PushedScreen
 import com.onetake.app.ui.components.SecondaryButton
@@ -527,6 +529,10 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
                     )
                 }
             }
+            val takesCount = store.takes.count { it.auditionId == (a?.id ?: auditionId) && (it.sceneIndex ?: 0) == sceneIndex }
+            if (takesCount > 0) {
+                PrepCapsule("Takes ($takesCount)", Icons.Filled.Movie, onClick = { nav.push(Route.Takes(a?.id ?: auditionId)) })
+            }
             PrepCapsule("Run lines", Icons.Filled.PlayArrow, onClick = { nav.push(Route.RunLines(auditionId, sceneIndex)) })
             PrepCapsule("Record", Icons.Filled.RadioButtonChecked, filled = true, onClick = {
                 if (a != null) nav.push(Route.ShootMode(a.id, sceneIndex)) else nav.openCamera(CameraFlow.PracticeTake(auditionId))
@@ -535,7 +541,14 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
     }
 
     if (showPrompter) PrompterSettingsSheet(onDismiss = { showPrompter = false })
-    editingLine?.let { line -> PrepEditDialog(line = line, onDismiss = { editingLine = null }) }
+    editingLine?.let { line ->
+        PrepEditDialog(
+            targetId = auditionId,
+            sceneIndex = sceneIndex,
+            line = line,
+            onDismiss = { editingLine = null },
+        )
+    }
 }
 
 @Composable
@@ -656,29 +669,111 @@ private fun PrepEditBanner(onRestore: () -> Unit) {
 }
 
 @Composable
-private fun PrepEditDialog(line: ScriptLine, onDismiss: () -> Unit) {
+private fun PrepEditDialog(
+    targetId: String,
+    sceneIndex: Int,
+    line: ScriptLine,
+    onDismiss: () -> Unit,
+) {
+    val store = LocalAppStore.current
     val c = OT.colors
-    var text by remember(line.id) { mutableStateOf(PrepPrefs.edits[line.id] ?: line.text) }
-    val isHidden = PrepPrefs.hidden[line.id] == true
+    var text by remember(line.id) { mutableStateOf(line.text) }
+    var character by remember(line.id) { mutableStateOf(line.character) }
+    var isMine by remember(line.id) { mutableStateOf(line.isMine) }
+    val isPractice = store.practice.any { it.id == targetId }
+    val sceneId = if (isPractice) "" else store.audition(targetId)?.scenes?.getOrNull(sceneIndex)?.id.orEmpty()
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = c.surfaceCard,
-        title = { Text(if (line.isMine) "${line.character} · YOU" else line.character, style = OT.type.headline, color = c.labelPrimary) },
+        title = { Text(if (isMine) "$character · YOU" else character, style = OT.type.headline, color = c.labelPrimary) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth())
-                TextButton(onClick = {
-                    if (isHidden) PrepPrefs.hidden.remove(line.id) else PrepPrefs.hidden[line.id] = true
-                    onDismiss()
-                }) {
-                    Text(if (isHidden) "Show this line" else "Hide this line", color = c.accent)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = character,
+                    onValueChange = { character = it },
+                    label = { Text("Character name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Spoken dialogue") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth().clickable { isMine = !isMine }.padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column {
+                        Text(if (isMine) "Spoken by you" else "Spoken by reader", style = OT.type.body, color = c.labelPrimary)
+                        Text(if (isMine) "Teleprompter & silence cue" else "TTS or partner line", style = OT.type.caption, color = c.labelTertiary)
+                    }
+                    OTSwitch(checked = isMine, onCheckedChange = { isMine = it })
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = {
+                        val newChar = if (isMine) "READER" else character
+                        if (isPractice) {
+                            store.addPracticeLine(
+                                practiceId = targetId,
+                                afterLineId = line.id,
+                                character = newChar,
+                                text = "",
+                                isMine = !isMine,
+                            )
+                        } else {
+                            store.addScriptLine(
+                                auditionId = targetId,
+                                sceneId = sceneId,
+                                afterLineId = line.id,
+                                character = newChar,
+                                text = "",
+                                isMine = !isMine,
+                            )
+                        }
+                        onDismiss()
+                    }) {
+                        Text("+ Add line below", color = c.accent)
+                    }
+                    TextButton(onClick = {
+                        if (isPractice) {
+                            store.deletePracticeLine(targetId, line.id)
+                        } else {
+                            store.deleteScriptLine(targetId, sceneId, line.id)
+                        }
+                        onDismiss()
+                    }) {
+                        Text("Delete", color = c.danger)
+                    }
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = {
                 val t = text.trim()
-                if (t.isEmpty() || t == line.text) PrepPrefs.edits.remove(line.id) else PrepPrefs.edits[line.id] = t
+                val ch = character.trim().ifEmpty { line.character }
+                if (isPractice) {
+                    store.updatePracticeLine(
+                        practiceId = targetId,
+                        lineId = line.id,
+                        newCharacter = ch,
+                        newText = t,
+                        isMine = isMine,
+                    )
+                } else {
+                    store.updateScriptLine(
+                        auditionId = targetId,
+                        sceneId = sceneId,
+                        lineId = line.id,
+                        newCharacter = ch,
+                        newText = t,
+                        isMine = isMine,
+                    )
+                }
                 onDismiss()
             }) { Text("Save", color = c.accent) }
         },

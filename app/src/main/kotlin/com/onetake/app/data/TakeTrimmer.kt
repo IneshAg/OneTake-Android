@@ -45,8 +45,23 @@ object TakeTrimmer {
                 val outTracks = tracks.associateWith { i ->
                     val format = extractor.getTrackFormat(i)
                     // MediaMuxer drops the rotation unless it's set again, so portrait takes would turn sideways.
-                    if (i == video && format.containsKey(MediaFormat.KEY_ROTATION)) {
-                        muxer.setOrientationHint(format.getInteger(MediaFormat.KEY_ROTATION))
+                    if (i == video) {
+                        var rot = if (format.containsKey(MediaFormat.KEY_ROTATION)) format.getInteger(MediaFormat.KEY_ROTATION) else null
+                        if (rot == null) {
+                            rot = runCatching {
+                                android.media.MediaMetadataRetriever().run {
+                                    try {
+                                        setDataSource(context, source)
+                                        extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull()
+                                    } finally {
+                                        release()
+                                    }
+                                }
+                            }.getOrNull()
+                        }
+                        if (rot != null) {
+                            muxer.setOrientationHint(rot)
+                        }
                     }
                     muxer.addTrack(format)
                 }
@@ -59,6 +74,7 @@ object TakeTrimmer {
                     val buffer = ByteBuffer.allocate(maxOf(maxInput, 1 shl 20))
                     extractor.selectTrack(track)
                     extractor.seekTo(cutUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                    var lastPtsUs = -1L
                     while (true) {
                         val size = extractor.readSampleData(buffer, 0)
                         if (size < 0) break
@@ -66,9 +82,11 @@ object TakeTrimmer {
                         // A little past the end before stopping, since frames needn't arrive in time order.
                         if (pts > endUs + 500_000) break
                         if (pts in cutUs..endUs) {
-                            info.set(0, size, pts - cutUs, extractor.sampleFlags)
+                            val adjPts = maxOf(lastPtsUs + 1, pts - cutUs)
+                            info.set(0, size, adjPts, extractor.sampleFlags)
                             muxer.writeSampleData(out, buffer, info)
-                            lengthUs = maxOf(lengthUs, pts - cutUs)
+                            lastPtsUs = adjPts
+                            lengthUs = maxOf(lengthUs, adjPts)
                         }
                         if (!extractor.advance()) break
                     }

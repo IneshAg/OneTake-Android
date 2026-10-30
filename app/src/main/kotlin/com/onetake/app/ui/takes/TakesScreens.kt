@@ -57,6 +57,8 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -328,13 +330,20 @@ fun TakesScreen(auditionId: String) {
                 .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            SecondaryButton("Go again", onClick = { showOneMore = true }, modifier = Modifier.width(130.dp))
-            PrimaryButton(
-                if (circled != null) "Send take ${circled.number}" else "Check & send",
-                onClick = { nav.push(Route.TapeCheck(auditionId)) },
-                modifier = Modifier.weight(1f),
-                enabled = takes.isNotEmpty(),
-            )
+            if (takes.isEmpty()) {
+                PrimaryButton(
+                    "Record take",
+                    onClick = { nav.push(Route.ShootMode(auditionId, sceneIndex)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                SecondaryButton("Go again", onClick = { showOneMore = true }, modifier = Modifier.width(130.dp))
+                PrimaryButton(
+                    if (circled != null) "Send take ${circled.number}" else "Check & send",
+                    onClick = { nav.push(Route.TapeCheck(auditionId)) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 
@@ -683,9 +692,11 @@ private fun TkCompareView(
     val cam = OT.camera
     val c = OT.colors
     val circled = takes.firstOrNull { it.isCircled }
-    val left = circled ?: current ?: takes.firstOrNull()
-    val right = (if (current != null && current.id != left?.id) current else takes.lastOrNull { it.id != left?.id }) ?: left
-    val pair = listOfNotNull(left, right)
+    var leftId by remember { mutableStateOf(circled?.id ?: current?.id ?: takes.firstOrNull()?.id) }
+    var rightId by remember { mutableStateOf((takes.firstOrNull { it.id != leftId } ?: takes.lastOrNull())?.id) }
+    val left = takes.firstOrNull { it.id == leftId } ?: takes.firstOrNull()
+    val right = (takes.firstOrNull { it.id == rightId } ?: takes.lastOrNull { it.id != left?.id }) ?: left
+    val pair = listOfNotNull(left?.let { it to 0 }, right?.let { it to 1 })
     val compareSubtitle = if (left != null && right != null && left.id != right.id) "Take ${left.number} vs Take ${right.number}" else "Compare takes"
 
     Column(Modifier.fillMaxSize().background(cam.bg)) {
@@ -700,8 +711,25 @@ private fun TkCompareView(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                pair.forEach { t ->
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                pair.forEach { (t, side) ->
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            takes.forEach { candidate ->
+                                val isSelected = if (side == 0) candidate.id == left?.id else candidate.id == right?.id
+                                Box(
+                                    Modifier
+                                        .clip(CircleShape)
+                                        .background(if (isSelected) c.accent else Color(0xFF222228))
+                                        .clickable {
+                                            if (side == 0) leftId = candidate.id else rightId = candidate.id
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text("T${candidate.number}", style = OT.type.caption.copy(fontWeight = FontWeight.Bold), color = if (isSelected) Color.White else cam.label2)
+                                }
+                            }
+                        }
                         Box(
                             Modifier
                                 .fillMaxWidth()
@@ -722,6 +750,17 @@ private fun TkCompareView(
                             style = OT.type.footnote,
                             color = cam.label2,
                         )
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (t.isCircled) c.accent.copy(alpha = 0.2f) else Color(0xFF2C2C32))
+                                .clickable { onCircle(t) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(if (t.isCircled) "Circled" else "Circle Take ${t.number}", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = if (t.isCircled) c.accent else Color.White)
+                        }
                     }
                 }
             }
@@ -733,8 +772,8 @@ private fun TkCompareView(
                     color = cam.label2,
                     modifier = Modifier.weight(1f),
                 )
-                val other = pair.firstOrNull { !it.isCircled }
-                if (other != null) {
+                val other = if (left?.isCircled == true) right else left
+                if (other != null && !other.isCircled) {
                     Box(
                         Modifier
                             .heightIn(min = 48.dp)
@@ -989,8 +1028,8 @@ private fun TkFindingRow(
 
 // MARK: - Trim
 
-/** Drag the ends to cut the walk-in and walk-out; the take's file is replaced by the cut (see
- *  [com.onetake.app.data.TakeTrimmer]), so playback, Tape check and the package all use it. */
+/** Drag the ends to cut the walk-in and walk-out; trimmed file can replace the original or save
+ *  as a new take (see [com.onetake.app.data.TakeTrimmer]). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
@@ -1006,9 +1045,24 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
     var range by remember(durationMs) { mutableStateOf(0f..durationMs.toFloat()) }
     var saving by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    fun save() {
+    val trimPlayer = remember(take.id) { TkPlayerState() }
+    var isTrimPlaying by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isTrimPlaying, range.start, range.endInclusive) {
+        while (isTrimPlaying) {
+            val cur = trimPlayer.view?.currentPosition ?: 0
+            if (cur < range.start.toInt() || cur >= range.endInclusive.toInt()) {
+                trimPlayer.view?.seekTo(range.start.toInt())
+                trimPlayer.positionMs = range.start.toInt()
+            }
+            delay(100)
+        }
+    }
+
+    fun save(replaceOriginal: Boolean) {
         val src = source ?: return
         val start = range.start.toLong()
         val end = range.endInclusive.toLong()
@@ -1017,7 +1071,6 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
         scope.launch {
             val original = src.path?.let { java.io.File(it) }
             val dir = original?.parentFile ?: context.filesDir
-            // A new name, so anything keyed on the file (thumbnails, Tape check) sees the change.
             val dest = java.io.File(dir, "take-${take.number}-trim-${java.util.UUID.randomUUID().toString().take(8)}.mp4")
             val trimmed = withContext(Dispatchers.IO) {
                 com.onetake.app.data.TakeTrimmer.trim(context.applicationContext, src, start, end, dest)
@@ -1028,10 +1081,12 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                 haptics.warning()
                 return@launch
             }
-            store.updateTake(take.id) {
-                it.copy(fileUri = Uri.fromFile(trimmed.file).toString(), durationSeconds = (trimmed.durationMs / 1000).toInt())
-            }
-            original?.takeIf { it != trimmed.file }?.delete()
+            store.saveTrimmedTake(
+                originalTakeId = take.id,
+                trimmedFileUri = Uri.fromFile(trimmed.file).toString(),
+                durationSeconds = (trimmed.durationMs / 1000).toInt(),
+                replaceOriginal = replaceOriginal,
+            )
             haptics.success()
             onClose()
         }
@@ -1043,46 +1098,153 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
         containerColor = c.bgCanvas,
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = OT.dims.gutter).padding(bottom = 24.dp),
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = OT.dims.gutter)
+                .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text("Trim take ${take.number}", style = OT.type.title, color = c.labelPrimary)
             Text(
-                "Drag the ends to cut the walk-in and the walk-out. The trimmed take replaces this one.",
+                "Fine-tune the walk-in and walk-out with live preview. Save as a new take or replace.",
                 style = OT.type.footnote,
                 color = c.labelTertiary,
             )
             if (durationMs <= 0L) {
                 Text("Reading the take…", style = OT.type.callout, color = c.labelSecondary)
             } else {
+                TkPlayerCard(
+                    modifier = Modifier.fillMaxWidth().height(190.dp),
+                    state = trimPlayer,
+                    fileUri = take.fileUri,
+                    isPlaying = isTrimPlaying,
+                    onTogglePlay = { isTrimPlaying = !isTrimPlaying },
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     TkTrimFrame(source, range.start.toLong(), Modifier.weight(1f))
                     TkTrimFrame(source, range.endInclusive.toLong(), Modifier.weight(1f))
                 }
                 RangeSlider(
                     value = range,
-                    onValueChange = { range = it },
+                    onValueChange = {
+                        range = it
+                        trimPlayer.view?.seekTo(it.start.toInt())
+                        trimPlayer.positionMs = it.start.toInt()
+                    },
                     valueRange = 0f..durationMs.toFloat(),
                     enabled = !saving,
                 )
-                Row(Modifier.fillMaxWidth()) {
-                    Text("Start ${tkClock(range.start.toLong())}", style = OT.type.footnote, color = c.labelSecondary)
-                    Spacer(Modifier.weight(1f))
-                    Text("${tkClock((range.endInclusive - range.start).toLong())} kept", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
-                    Spacer(Modifier.weight(1f))
-                    Text("End ${tkClock(range.endInclusive.toLong())}", style = OT.type.footnote, color = c.labelSecondary)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(horizontalAlignment = Alignment.Start) {
+                        Text("Start: ${tkClockTenths(range.start.toLong())}", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                        Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            NudgeButton("-0.1s") {
+                                val s = (range.start - 100f).coerceAtLeast(0f)
+                                range = s..range.endInclusive
+                                trimPlayer.view?.seekTo(s.toInt())
+                                trimPlayer.positionMs = s.toInt()
+                            }
+                            NudgeButton("+0.1s") {
+                                val s = (range.start + 100f).coerceAtMost(range.endInclusive - 500f)
+                                range = s..range.endInclusive
+                                trimPlayer.view?.seekTo(s.toInt())
+                                trimPlayer.positionMs = s.toInt()
+                            }
+                        }
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("${tkClockTenths((range.endInclusive - range.start).toLong())} kept", style = OT.type.footnote.copy(fontWeight = FontWeight.Bold), color = c.accent)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("End: ${tkClockTenths(range.endInclusive.toLong())}", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
+                        Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            NudgeButton("-0.1s") {
+                                val e = (range.endInclusive - 100f).coerceAtLeast(range.start + 500f)
+                                range = range.start..e
+                                trimPlayer.view?.seekTo(e.toInt())
+                                trimPlayer.positionMs = e.toInt()
+                            }
+                            NudgeButton("+0.1s") {
+                                val e = (range.endInclusive + 100f).coerceAtMost(durationMs.toFloat())
+                                range = range.start..e
+                                trimPlayer.view?.seekTo(e.toInt())
+                                trimPlayer.positionMs = e.toInt()
+                            }
+                        }
+                    }
                 }
             }
             if (failed) {
                 Text("Couldn't trim this take. The original is untouched.", style = OT.type.footnote, color = c.danger)
             }
-            PrimaryButton(
-                if (saving) "Trimming…" else "Save trim",
-                onClick = ::save,
-                enabled = !saving && durationMs > 0L && range.endInclusive - range.start >= 1000f,
-            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SecondaryButton(
+                    if (saving) "Saving…" else "Replace take ${take.number}",
+                    onClick = { save(replaceOriginal = true) },
+                    enabled = !saving && durationMs > 0L && range.endInclusive - range.start >= 500f,
+                    modifier = Modifier.weight(1f),
+                )
+                PrimaryButton(
+                    if (saving) "Saving…" else "Save as new take",
+                    onClick = { save(replaceOriginal = false) },
+                    enabled = !saving && durationMs > 0L && range.endInclusive - range.start >= 500f,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { showDeleteConfirm = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("Delete take ${take.number}", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.danger)
+            }
             PlainButton("Cancel", onClick = { if (!saving) onClose() })
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            containerColor = c.surfaceCard,
+            title = { Text("Delete Take ${take.number}?", style = OT.type.headline, color = c.labelPrimary) },
+            text = { Text("This will permanently remove Take ${take.number} and delete its video file.", style = OT.type.body, color = c.labelSecondary) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    store.deleteTake(take.id)
+                    haptics.tick()
+                    onClose()
+                }) {
+                    Text("Delete", color = c.danger, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel", color = c.labelSecondary)
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun NudgeButton(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF222228))
+            .border(0.5.dp, Color(0x33FFFFFF), RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = Color.White)
     }
 }
 
@@ -1132,3 +1294,11 @@ private fun tkDurationMs(context: android.content.Context, uri: Uri): Long = run
 }.getOrDefault(0L)
 
 private fun tkClock(ms: Long): String = (ms / 1000).let { "%d:%02d".format(it / 60, it % 60) }
+
+private fun tkClockTenths(ms: Long): String {
+    val totalSec = ms / 1000
+    val m = totalSec / 60
+    val s = totalSec % 60
+    val tenths = ((ms % 1000) / 100).coerceIn(0, 9)
+    return "%d:%02d.%d".format(m, s, tenths)
+}

@@ -5,8 +5,8 @@ plugins {
 }
 
 // Release builds take their version from the git tag (.github/workflows/release.yml sets
-// VERSION_NAME); everything else builds as 0.1.0.
-val appVersionName = System.getenv("VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.1.0"
+// VERSION_NAME); everything else builds as 0.2.0.
+val appVersionName = System.getenv("VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.2.0"
 /** 1.2.3 → 10203, so each release's versionCode is higher than the one before. */
 val appVersionCode = appVersionName.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
     .let { it.getOrElse(0) { 0 } * 10_000 + it.getOrElse(1) { 0 } * 100 + it.getOrElse(2) { 0 } }

@@ -91,10 +91,15 @@ computer's webcam.
 ### CI and releases
 - **Android CI** (`.github/workflows/ci.yml`) runs on every push and pull request: unit tests, a debug
   APK (downloadable from the run), and the minified release build.
-- **Release** (`.github/workflows/release.yml`) runs when you push a tag like `v0.2.0`; the version name
-  and code come from the tag. Add the repository secrets `ONETAKE_KEYSTORE_BASE64`,
-  `ONETAKE_KEYSTORE_PASSWORD`, `ONETAKE_KEY_ALIAS` and `ONETAKE_KEY_PASSWORD` to publish a signed APK and
-  an AAB for Google Play; without them the release carries a debug-signed APK.
+- **Automated Release** (`.github/workflows/release.yml`) builds and publishes GitHub releases with R8 minification,
+  checksums (`SHA256SUMS.txt`), APKs, and Google Play AABs. It triggers either automatically when pushing a tag
+  like `v0.2.0`, or on-demand via GitHub Actions **Run workflow** (`workflow_dispatch`).
+- **Local Release Script** (`./scripts/release.sh 0.2.0`): runs the test suite, builds release APK & bundle,
+  generates checksums in `dist/`, and tags the local git commit.
+
+To sign release builds, add the repository secrets `ONETAKE_KEYSTORE_BASE64`, `ONETAKE_KEYSTORE_PASSWORD`,
+`ONETAKE_KEY_ALIAS`, and `ONETAKE_KEY_PASSWORD`. Without them, releases include production-optimized unsigned
+and installable debug APKs.
 
 ---
 

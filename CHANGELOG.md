@@ -265,3 +265,13 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - **Unit Tests**:
     - Added tests in `LiveTapeCheckEngineTest.kt` for backlighting detection and row-stride region luminance.
     - Added tests in `VoiceCommandEngineTest.kt` for director shorthand commands ("Roll", "Let's go", "Done", "Please stop", "That's wrap").
+
+---
+
+### [Release: `v0.2.0`] — November 2026
+- **Version Bump:** `0.1.0` -> `0.2.0` (`versionCode = 200`).
+- **Automated Release Pipeline (`.github/workflows/release.yml`, `scripts/release.sh`):**
+  - Upgraded GitHub Actions `release.yml` with manual and automated dispatch (`workflow_dispatch` + push tags `v*`).
+  - Automatically builds production-ready R8-shrunk APKs, Play Store AAB bundles, and computes cryptographic verification checksums (`SHA256SUMS.txt`).
+  - Added standalone local automated release script `scripts/release.sh` supporting one-command test verification, multi-variant compilation, and git tagging.
+  - Added `dist/` to `.gitignore` to keep release build outputs isolated from source control.

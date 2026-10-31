@@ -594,6 +594,8 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                 !readerSpeaking &&
                 activeVoiceCommands.isNotEmpty()
             if (canListenForCommands) {
+                // Yield to ensure the physical AudioRecord HAL stream has closed cleanly before starting SpeechRecognizer
+                delay(180)
                 voiceCommander.start()
             } else {
                 voiceCommander.stop()
@@ -843,7 +845,7 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                                         },
                                     )
                                     Spacer(Modifier.height(6.dp))
-                                    ShootMiniStatusRow(liveTapeCheck)
+                                    ShootMiniStatusRow(liveTapeCheck, voiceCommander.isListening, VoiceCommand.Record)
                                     Spacer(Modifier.height(6.dp))
                                 }
                                 ShootPromptCard(eyebrow = "Slate · say it to the lens · ≈ 5 s", text = store.slate.spoken)
@@ -862,7 +864,7 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                                         },
                                     )
                                     Spacer(Modifier.height(6.dp))
-                                    ShootMiniStatusRow(liveTapeCheck)
+                                    ShootMiniStatusRow(liveTapeCheck, voiceCommander.isListening, VoiceCommand.Record)
                                     Spacer(Modifier.height(6.dp))
                                 }
                                 ShootPromptCard(eyebrow = "Full-length framing", text = "Step back so head to feet are visible, hold still")
@@ -881,7 +883,7 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                                         },
                                     )
                                     Spacer(Modifier.height(6.dp))
-                                    ShootMiniStatusRow(liveTapeCheck)
+                                    ShootMiniStatusRow(liveTapeCheck, voiceCommander.isListening, VoiceCommand.Record)
                                     Spacer(Modifier.height(6.dp))
                                     ShootScenePicker(audition.scenes, sceneIndex, shotScenes, onPick = ::pickScene)
                                     Spacer(Modifier.height(10.dp))
@@ -1050,6 +1052,13 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                     Modifier.align(Alignment.CenterHorizontally),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    if (voiceEnabled && micPermissionGranted && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
+                        ShootChip(
+                            icon = Icons.Filled.Mic,
+                            text = if (recording) "Say 'Cut'" else "Say 'Action'",
+                            tint = if (voiceCommander.isListening) OT.colors.accent else Color.White,
+                        )
+                    }
                     ShootChip(
                         icon = if (exposureLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
                         text = if (exposureLocked) "Exposure locked" else "Lock exposure",
@@ -1341,7 +1350,17 @@ private fun ShootLiveChip(
 }
 
 @Composable
-private fun ShootMiniStatusRow(check: LiveTapeCheckEngine.LiveTapeCheck) {
+private fun ShootMiniStatusRow(
+    check: LiveTapeCheckEngine.LiveTapeCheck,
+    voiceListening: Boolean = false,
+    activeVoiceCommand: VoiceCommand? = null,
+) {
+    val micLabel = when {
+        voiceListening && activeVoiceCommand == VoiceCommand.Record -> "Say 'Action'"
+        voiceListening && activeVoiceCommand == VoiceCommand.Cut -> "Say 'Cut'"
+        check.isSoundPassed -> "Mic OK"
+        else -> check.soundLabel
+    }
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
@@ -1358,8 +1377,8 @@ private fun ShootMiniStatusRow(check: LiveTapeCheckEngine.LiveTapeCheck) {
             passed = check.isLightPassed,
         )
         ShootMiniStatusBadge(
-            icon = if (check.isSoundPassed) Icons.Filled.GraphicEq else Icons.Filled.Warning,
-            label = if (check.isSoundPassed) "Mic OK" else check.soundLabel,
+            icon = if (voiceListening) Icons.Filled.Mic else (if (check.isSoundPassed) Icons.Filled.GraphicEq else Icons.Filled.Warning),
+            label = micLabel,
             passed = check.isSoundPassed,
         )
     }

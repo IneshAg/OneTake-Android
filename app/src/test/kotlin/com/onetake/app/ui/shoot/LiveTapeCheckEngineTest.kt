@@ -184,6 +184,46 @@ class LiveTapeCheckEngineTest {
         val (statusBright, labelBright) = LiveTapeCheckEngine.evaluateLighting(230.0)
         assertEquals(LiveTapeCheckEngine.LightStatus.TooBright, statusBright)
         assertEquals("Too bright", labelBright)
+
+        // Backlight detection: face in shadow while background is blown out
+        val (statusBacklit, labelBacklit) = LiveTapeCheckEngine.evaluateLighting(faceLuma = 55.0, bgLuma = 220.0)
+        assertEquals(LiveTapeCheckEngine.LightStatus.TooDark, statusBacklit)
+        assertEquals("Backlit — face in shadow", labelBacklit)
+    }
+
+    @Test
+    fun testRegionLuminanceCalculationWithRowStride() {
+        // Frame 4x4 with rowStride = 8 (4 pixels + 4 padding bytes per row)
+        val width = 4
+        val height = 4
+        val rowStride = 8
+        val pixelStride = 1
+        val buffer = ByteBuffer.allocate(rowStride * height)
+
+        // Fill row 0..3: active pixels = 100, padding bytes = 0
+        for (r in 0 until height) {
+            for (c in 0 until width) {
+                buffer.put(r * rowStride + c, 100.toByte())
+            }
+            for (p in width until rowStride) {
+                buffer.put(r * rowStride + p, 0.toByte())
+            }
+        }
+
+        // Region spanning entire 4x4 active area
+        val luma = LiveTapeCheckEngine.calculateRegionLuminance(
+            buffer = buffer,
+            width = width,
+            height = height,
+            rowStride = rowStride,
+            pixelStride = pixelStride,
+            left = 0,
+            top = 0,
+            right = width,
+            bottom = height,
+        )
+        // Must measure exactly 100 without being corrupted by the 0-padding bytes!
+        assertEquals(100.0, luma, 1.0)
     }
 
     @Test

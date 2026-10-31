@@ -97,6 +97,84 @@ object HeadshotFramingEngine {
         private val mainHandler = Handler(Looper.getMainLooper())
         private var lastAnalyzedMs = 0L
 
+        fun analyzeBitmap(bitmap: Bitmap) {
+            if (bitmap.isRecycled) return
+            val now = System.currentTimeMillis()
+            if (now - lastAnalyzedMs < 80L) return
+            lastAnalyzedMs = now
+
+            val bW = bitmap.width
+            val bH = bitmap.height
+            if (bW <= 0 || bH <= 0) return
+
+            val centerRect = Rect(
+                (bW * 0.25f).toInt(),
+                (bH * 0.20f).toInt(),
+                (bW * 0.75f).toInt(),
+                (bH * 0.70f).toInt(),
+            )
+            val centerLuma = LiveTapeCheckEngine.calculateBitmapLuminance(bitmap, centerRect)
+            val wholeLuma = LiveTapeCheckEngine.calculateBitmapLuminance(bitmap, null)
+
+            val angleSnapshot = targetAngle
+            val frontSnapshot = isFrontCamera
+            val aspectSnapshot = viewAspect
+
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            detector.process(inputImage)
+                .addOnSuccessListener { faces ->
+                    val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                    val faceLuma = if (primaryFace != null) {
+                        LiveTapeCheckEngine.calculateBitmapLuminance(bitmap, primaryFace.boundingBox)
+                    } else {
+                        centerLuma
+                    }
+                    val isBacklit = wholeLuma > 195.0 && faceLuma < 75.0
+                    val isLightTooDark = faceLuma < 45.0
+                    val isLightTooBright = faceLuma > 218.0
+                    val isLightGood = !isLightTooDark && !isLightTooBright && !isBacklit
+                    val lightLabel = when {
+                        isBacklit -> "backlit"
+                        isLightTooDark -> "too dark"
+                        isLightTooBright -> "too bright"
+                        else -> "soft and even"
+                    }
+
+                    val guidance = evaluateFraming(
+                        faces = faces,
+                        uprightWidth = bW,
+                        uprightHeight = bH,
+                        targetAngle = angleSnapshot,
+                        isFrontCamera = frontSnapshot,
+                        lightLabel = lightLabel,
+                        isLightGood = isLightGood,
+                        viewAspect = aspectSnapshot,
+                    )
+                    mainHandler.post { onGuidanceUpdate(guidance) }
+                }
+                .addOnFailureListener {
+                    val isBacklit = wholeLuma > 195.0 && centerLuma < 75.0
+                    val isLightTooDark = centerLuma < 45.0
+                    val isLightTooBright = centerLuma > 218.0
+                    val isLightGood = !isLightTooDark && !isLightTooBright && !isBacklit
+                    val lightLabel = when {
+                        isBacklit -> "backlit"
+                        isLightTooDark -> "too dark"
+                        isLightTooBright -> "too bright"
+                        else -> "soft and even"
+                    }
+                    val fallback = FramingGuidance(
+                        headline = "Hold still",
+                        lightLabel = lightLabel,
+                        isLightGood = isLightGood,
+                        angleLabel = "measuring…",
+                        isAngleGood = false,
+                        isCenteredAndReady = false,
+                    )
+                    mainHandler.post { onGuidanceUpdate(fallback) }
+                }
+        }
+
         @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
         override fun analyze(imageProxy: ImageProxy) {
             val now = System.currentTimeMillis()
@@ -113,15 +191,35 @@ object HeadshotFramingEngine {
             }
 
             try {
-                val luma = calculateLuminance(imageProxy.planes[0].buffer).toInt()
-                val isLightTooDark = luma < 45
-                val isLightTooBright = luma > 218
-                val isLightGood = !isLightTooDark && !isLightTooBright
-                val lightLabel = when {
-                    isLightTooDark -> "too dark"
-                    isLightTooBright -> "too bright"
-                    else -> "soft and even"
-                }
+                val yPlane = imageProxy.planes[0]
+                val yBuffer = yPlane.buffer
+                val rowStride = yPlane.rowStride
+                val pixelStride = yPlane.pixelStride
+                val imgW = imageProxy.width
+                val imgH = imageProxy.height
+
+                val centerLuma = LiveTapeCheckEngine.calculateRegionLuminance(
+                    buffer = yBuffer,
+                    width = imgW,
+                    height = imgH,
+                    rowStride = rowStride,
+                    pixelStride = pixelStride,
+                    left = (imgW * 0.25f).toInt(),
+                    top = (imgH * 0.20f).toInt(),
+                    right = (imgW * 0.75f).toInt(),
+                    bottom = (imgH * 0.70f).toInt(),
+                )
+                val sceneLuma = LiveTapeCheckEngine.calculateRegionLuminance(
+                    buffer = yBuffer,
+                    width = imgW,
+                    height = imgH,
+                    rowStride = rowStride,
+                    pixelStride = pixelStride,
+                    left = 0,
+                    top = 0,
+                    right = imgW,
+                    bottom = imgH,
+                )
 
                 val rotation = imageProxy.imageInfo.rotationDegrees
                 val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
@@ -133,6 +231,39 @@ object HeadshotFramingEngine {
 
                 detector.process(inputImage)
                     .addOnSuccessListener { faces ->
+                        val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                        val faceLuma = if (primaryFace != null) {
+                            val box = primaryFace.boundingBox
+                            val sLeft = if (rotation == 90 || rotation == 270) (box.top * imgW / uprightHeight).coerceIn(0, imgW) else box.left
+                            val sTop = if (rotation == 90 || rotation == 270) (box.left * imgH / uprightWidth).coerceIn(0, imgH) else box.top
+                            val sRight = if (rotation == 90 || rotation == 270) (box.bottom * imgW / uprightHeight).coerceIn(sLeft, imgW) else box.right
+                            val sBottom = if (rotation == 90 || rotation == 270) (box.right * imgH / uprightWidth).coerceIn(sTop, imgH) else box.bottom
+                            LiveTapeCheckEngine.calculateRegionLuminance(
+                                buffer = yBuffer,
+                                width = imgW,
+                                height = imgH,
+                                rowStride = rowStride,
+                                pixelStride = pixelStride,
+                                left = sLeft,
+                                top = sTop,
+                                right = sRight,
+                                bottom = sBottom,
+                            )
+                        } else {
+                            centerLuma
+                        }
+
+                        val isBacklit = sceneLuma > 195.0 && faceLuma < 75.0
+                        val isLightTooDark = faceLuma < 45.0
+                        val isLightTooBright = faceLuma > 218.0
+                        val isLightGood = !isLightTooDark && !isLightTooBright && !isBacklit
+                        val lightLabel = when {
+                            isBacklit -> "backlit"
+                            isLightTooDark -> "too dark"
+                            isLightTooBright -> "too bright"
+                            else -> "soft and even"
+                        }
+
                         val guidance = evaluateFraming(
                             faces = faces,
                             uprightWidth = uprightWidth,
@@ -146,6 +277,16 @@ object HeadshotFramingEngine {
                         mainHandler.post { onGuidanceUpdate(guidance) }
                     }
                     .addOnFailureListener {
+                        val isBacklit = sceneLuma > 195.0 && centerLuma < 75.0
+                        val isLightTooDark = centerLuma < 45.0
+                        val isLightTooBright = centerLuma > 218.0
+                        val isLightGood = !isLightTooDark && !isLightTooBright && !isBacklit
+                        val lightLabel = when {
+                            isBacklit -> "backlit"
+                            isLightTooDark -> "too dark"
+                            isLightTooBright -> "too bright"
+                            else -> "soft and even"
+                        }
                         val fallback = FramingGuidance(
                             headline = "Hold still",
                             lightLabel = lightLabel,

@@ -204,6 +204,18 @@ internal object VoiceCommandMatcher {
         listOf("camera", "rolling"),
         listOf("camera", "speed"),
         listOf("mark", "slate"),
+        listOf("roll"),
+        listOf("let's", "roll"),
+        listOf("lets", "roll"),
+        listOf("we're", "rolling"),
+        listOf("let's", "go"),
+        listOf("lets", "go"),
+        listOf("go", "ahead"),
+        listOf("okay", "go"),
+        listOf("ok", "go"),
+        listOf("start", "slate"),
+        listOf("slate", "now"),
+        listOf("slate", "please"),
     )
 
     private val CUT_CUED_PHRASES: List<List<String>> = listOf(
@@ -225,15 +237,26 @@ internal object VoiceCommandMatcher {
         listOf("stop", "recording"),
         listOf("please", "stop", "recording"),
         listOf("okay", "stop", "recording"),
+        listOf("please", "stop"),
+        listOf("okay", "stop"),
+        listOf("ok", "stop"),
+        listOf("stop", "now"),
+        listOf("stop", "it"),
         listOf("stop", "take"),
         listOf("stop", "camera"),
         listOf("that's", "a", "wrap"),
         listOf("thats", "a", "wrap"),
+        listOf("that's", "wrap"),
+        listOf("thats", "wrap"),
+        listOf("it's", "a", "wrap"),
+        listOf("its", "a", "wrap"),
         listOf("wrap", "it"),
         listOf("wrap", "it", "up"),
         listOf("and", "scene"),
         listOf("end", "scene"),
+        listOf("end", "take"),
         listOf("all", "done"),
+        listOf("done"),
     )
 
     private val PHOTO_CUED_PHRASES: List<List<String>> = listOf(
@@ -396,14 +419,14 @@ internal object VoiceCommandMatcher {
         totalTokens: Int,
     ): Boolean = when (command) {
         VoiceCommand.Record -> when (last) {
-            "action", "record", "rolling", "speed" -> prev == null || prev !in RECORD_DISQUALIFYING_LEFT
-            "start", "slate" -> totalTokens == 1
+            "action", "record", "rolling", "roll", "speed", "go" -> prev == null || prev !in RECORD_DISQUALIFYING_LEFT
+            "start", "slate" -> totalTokens <= 2 && (prev == null || prev !in RECORD_DISQUALIFYING_LEFT)
             else -> false
         }
 
         VoiceCommand.Cut -> when (last) {
-            "cut", "wrap" -> prev == null || prev !in CUT_DISQUALIFYING_LEFT
-            "stop", "finished" -> totalTokens == 1
+            "cut", "wrap", "done", "finished" -> prev == null || prev !in CUT_DISQUALIFYING_LEFT
+            "stop" -> totalTokens <= 2 && (prev == null || prev !in CUT_DISQUALIFYING_LEFT)
             else -> false
         }
 
@@ -449,7 +472,7 @@ internal class VoiceSessionTracker {
 
     fun resetForModeChange(currentHypotheses: List<String> = emptyList()) {
         val currentPrimary = currentHypotheses.firstOrNull()?.let { VoiceCommandMatcher.normalizeTokens(it) }
-            ?: lastObservedPrimaryTokens
+            ?: emptyList()
         ignoredPrefixTokenCount = currentPrimary.size
         lastObservedPrimaryTokens = currentPrimary
     }
@@ -700,23 +723,23 @@ class VoiceCommandEngine(
             recognizer = it
         } ?: return
 
+        val currentLocaleTag = Locale.getDefault().toLanguageTag()
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.ACTION_RECOGNIZE_SPEECH, true)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+            // On-device speech recognition models are consistently bundled for en-US across OEM devices
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (usingOnDeviceRecognizer) "en-US" else currentLocaleTag)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
             putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
             if (usingOnDeviceRecognizer && !globalForceStandardRecognizer && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             }
             putExtra("android.speech.extra.DICTATION_MODE", true)
-            // Keep session open across quiet-room pauses (eliminates 50% restart deafness window)
-            // while onPartialResults triggers commands immediately with ~150ms latency.
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 50L)
         }
 
         startInFlight = true

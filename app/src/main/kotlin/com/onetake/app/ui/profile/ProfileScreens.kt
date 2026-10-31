@@ -1123,7 +1123,18 @@ fun HeadshotFlowScreen(initialAngle: String? = null) {
     var front by remember { mutableStateOf(true) }
     var capturing by remember { mutableStateOf(false) }
 
-    var guidance by remember { mutableStateOf<HeadshotFramingEngine.FramingGuidance?>(null) }
+    var guidance by remember {
+        mutableStateOf<HeadshotFramingEngine.FramingGuidance?>(
+            HeadshotFramingEngine.FramingGuidance(
+                headline = "Align your face in the oval",
+                lightLabel = "evaluating…",
+                isLightGood = false,
+                angleLabel = if (startingAngle == HeadshotAngle.Front) "square" else "side on",
+                isAngleGood = false,
+                isCenteredAndReady = false,
+            )
+        )
+    }
 
     com.onetake.app.ui.system.KeepScreenOn()
 

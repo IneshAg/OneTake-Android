@@ -1,6 +1,8 @@
 package com.onetake.app.ui.camera
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Rect
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.Image
@@ -199,6 +201,90 @@ object LiveTapeCheckEngine {
         return if (count > 0) sum.toDouble() / count else 128.0
     }
 
+    /**
+     * Calculates average luminance within a rectangular region of a Y-plane buffer,
+     * strictly respecting rowStride and pixelStride.
+     */
+    fun calculateRegionLuminance(
+        buffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        rowStride: Int,
+        pixelStride: Int,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+    ): Double {
+        if (width <= 0 || height <= 0 || rowStride <= 0) return 128.0
+        val clampedL = left.coerceIn(0, width)
+        val clampedR = right.coerceIn(clampedL, width)
+        val clampedT = top.coerceIn(0, height)
+        val clampedB = bottom.coerceIn(clampedT, height)
+        val regW = clampedR - clampedL
+        val regH = clampedB - clampedT
+        if (regW <= 0 || regH <= 0) return 128.0
+
+        val rowStep = (regH / 30).coerceAtLeast(1)
+        val colStep = (regW / 30).coerceAtLeast(1)
+        val dup = buffer.duplicate()
+        val limit = dup.capacity()
+        var sum = 0L
+        var count = 0
+
+        var r = clampedT
+        while (r < clampedB) {
+            val rowOffset = r * rowStride
+            var c = clampedL
+            while (c < clampedR) {
+                val index = rowOffset + c * pixelStride
+                if (index in 0 until limit) {
+                    val byteVal = dup.get(index).toInt() and 0xFF
+                    sum += byteVal
+                    count++
+                }
+                c += colStep
+            }
+            r += rowStep
+        }
+        return if (count > 0) sum.toDouble() / count else 128.0
+    }
+
+    fun calculateBitmapLuminance(bitmap: Bitmap, box: Rect? = null): Double {
+        if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) return 128.0
+        val w = bitmap.width
+        val h = bitmap.height
+        val l = box?.left?.coerceIn(0, w) ?: 0
+        val r = box?.right?.coerceIn(l, w) ?: w
+        val t = box?.top?.coerceIn(0, h) ?: 0
+        val b = box?.bottom?.coerceIn(t, h) ?: h
+        val regW = r - l
+        val regH = b - t
+        if (regW <= 0 || regH <= 0) return 128.0
+
+        val rowStep = (regH / 30).coerceAtLeast(1)
+        val colStep = (regW / 30).coerceAtLeast(1)
+        var sum = 0.0
+        var count = 0
+
+        var y = t
+        while (y < b) {
+            var x = l
+            while (x < r) {
+                val pixel = bitmap.getPixel(x, y)
+                val red = (pixel shr 16) and 0xFF
+                val green = (pixel shr 8) and 0xFF
+                val blue = pixel and 0xFF
+                val luma = 0.299 * red + 0.587 * green + 0.114 * blue
+                sum += luma
+                count++
+                x += colStep
+            }
+            y += rowStep
+        }
+        return if (count > 0) sum / count else 128.0
+    }
+
     fun evaluateFraming(
         faces: List<Face>,
         uprightWidth: Int,
@@ -308,10 +394,11 @@ object LiveTapeCheckEngine {
         }
     }
 
-    fun evaluateLighting(luma: Double): Pair<LightStatus, String> {
+    fun evaluateLighting(faceLuma: Double, bgLuma: Double = 128.0): Pair<LightStatus, String> {
         return when {
-            luma < 48.0 -> LightStatus.TooDark to "Too dark"
-            luma > 216.0 -> LightStatus.TooBright to "Too bright"
+            bgLuma > 195.0 && faceLuma < 75.0 -> LightStatus.TooDark to "Backlit — face in shadow"
+            faceLuma < 45.0 -> LightStatus.TooDark to "Too dark"
+            faceLuma > 220.0 -> LightStatus.TooBright to "Too bright"
             else -> LightStatus.Balanced to "Light balanced"
         }
     }
@@ -342,10 +429,116 @@ object LiveTapeCheckEngine {
         @Volatile var currentAudioDb: Float = -50f
         @Volatile var micPermissionGranted: Boolean = true
 
+        fun analyzeBitmap(bitmap: Bitmap) {
+            if (bitmap.isRecycled) return
+            val now = System.currentTimeMillis()
+            if (now - lastAnalyzedMs < 85L) return
+            lastAnalyzedMs = now
+
+            val bW = bitmap.width
+            val bH = bitmap.height
+            if (bW <= 0 || bH <= 0) return
+
+            val centerRect = Rect(
+                (bW * 0.25f).toInt(),
+                (bH * 0.20f).toInt(),
+                (bW * 0.75f).toInt(),
+                (bH * 0.70f).toInt(),
+            )
+            val centerLuma = calculateBitmapLuminance(bitmap, centerRect)
+            val wholeLuma = calculateBitmapLuminance(bitmap, null)
+
+            val audioDbSnapshot = currentAudioDb
+            val micGrantedSnapshot = micPermissionGranted
+            val (soundStatus, soundLabel) = evaluateSound(micGrantedSnapshot, audioDbSnapshot)
+            val isSoundGood = soundStatus == SoundStatus.Clear || soundStatus == SoundStatus.QuietRoom
+
+            val frontSnapshot = isFrontCamera
+            val aspectSnapshot = viewAspect
+            val targetSnapshot = framingTarget
+
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            detector.process(inputImage)
+                .addOnSuccessListener { faces ->
+                    val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                    val faceLuma = if (primaryFace != null) {
+                        calculateBitmapLuminance(bitmap, primaryFace.boundingBox)
+                    } else {
+                        centerLuma
+                    }
+                    val (lightStatus, lightLabel) = evaluateLighting(faceLuma = faceLuma, bgLuma = wholeLuma)
+                    val isLightGood = lightStatus == LightStatus.Balanced
+
+                    val (framingStatus, framingLabel) = evaluateFraming(
+                        faces = faces,
+                        uprightWidth = bW,
+                        uprightHeight = bH,
+                        isFrontCamera = frontSnapshot,
+                        viewAspect = aspectSnapshot,
+                        target = targetSnapshot,
+                    )
+                    val (eyelineStatus, eyelineLabel) = evaluateEyeline(
+                        faces = faces,
+                        uprightHeight = bH,
+                        target = targetSnapshot,
+                    )
+
+                    val faceBoxNorm = primaryFace?.let { f ->
+                        sensorToVisibleScreenBox(
+                            faceLeft = f.boundingBox.left.toFloat(),
+                            faceTop = f.boundingBox.top.toFloat(),
+                            faceRight = f.boundingBox.right.toFloat(),
+                            faceBottom = f.boundingBox.bottom.toFloat(),
+                            uprightWidth = bW,
+                            uprightHeight = bH,
+                            isFrontCamera = frontSnapshot,
+                            viewAspect = aspectSnapshot,
+                        )
+                    }
+
+                    val check = LiveTapeCheck(
+                        framing = framingStatus,
+                        framingLabel = framingLabel,
+                        isFramingPassed = framingStatus == FramingStatus.Centered,
+                        eyeline = eyelineStatus,
+                        eyelineLabel = eyelineLabel,
+                        isEyelinePassed = eyelineStatus == EyelineStatus.Good,
+                        light = lightStatus,
+                        lightLabel = lightLabel,
+                        isLightPassed = isLightGood,
+                        sound = soundStatus,
+                        soundLabel = soundLabel,
+                        isSoundPassed = isSoundGood,
+                        audioLevelDb = currentAudioDb,
+                        faceBoxNorm = faceBoxNorm,
+                    )
+                    mainHandler.post { onCheckUpdated(check) }
+                }
+                .addOnFailureListener {
+                    val (lightStatus, lightLabel) = evaluateLighting(faceLuma = centerLuma, bgLuma = wholeLuma)
+                    val fallback = LiveTapeCheck(
+                        framing = FramingStatus.NoFace,
+                        framingLabel = "Hold still",
+                        isFramingPassed = false,
+                        eyeline = EyelineStatus.TooLow,
+                        eyelineLabel = "Set eye level",
+                        isEyelinePassed = false,
+                        light = lightStatus,
+                        lightLabel = lightLabel,
+                        isLightPassed = lightStatus == LightStatus.Balanced,
+                        sound = soundStatus,
+                        soundLabel = soundLabel,
+                        isSoundPassed = isSoundGood,
+                        audioLevelDb = currentAudioDb,
+                    )
+                    mainHandler.post { onCheckUpdated(fallback) }
+                }
+        }
+
         @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
         override fun analyze(imageProxy: ImageProxy) {
             val now = System.currentTimeMillis()
-            if (now - lastAnalyzedMs < 90L) {
+            if (now - lastAnalyzedMs < 85L) {
                 imageProxy.close()
                 return
             }
@@ -358,9 +551,35 @@ object LiveTapeCheckEngine {
             }
 
             try {
-                val luma = calculateLuminance(imageProxy.planes[0].buffer)
-                val (lightStatus, lightLabel) = evaluateLighting(luma)
-                val isLightGood = lightStatus == LightStatus.Balanced
+                val yPlane = imageProxy.planes[0]
+                val yBuffer = yPlane.buffer
+                val rowStride = yPlane.rowStride
+                val pixelStride = yPlane.pixelStride
+                val imgW = imageProxy.width
+                val imgH = imageProxy.height
+
+                val centerLuma = calculateRegionLuminance(
+                    buffer = yBuffer,
+                    width = imgW,
+                    height = imgH,
+                    rowStride = rowStride,
+                    pixelStride = pixelStride,
+                    left = (imgW * 0.25f).toInt(),
+                    top = (imgH * 0.20f).toInt(),
+                    right = (imgW * 0.75f).toInt(),
+                    bottom = (imgH * 0.70f).toInt(),
+                )
+                val sceneLuma = calculateRegionLuminance(
+                    buffer = yBuffer,
+                    width = imgW,
+                    height = imgH,
+                    rowStride = rowStride,
+                    pixelStride = pixelStride,
+                    left = 0,
+                    top = 0,
+                    right = imgW,
+                    bottom = imgH,
+                )
 
                 val audioDbSnapshot = currentAudioDb
                 val micGrantedSnapshot = micPermissionGranted
@@ -377,6 +596,30 @@ object LiveTapeCheckEngine {
 
                 detector.process(inputImage)
                     .addOnSuccessListener { faces ->
+                        val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                        val faceLuma = if (primaryFace != null) {
+                            val box = primaryFace.boundingBox
+                            val sLeft = if (rotation == 90 || rotation == 270) (box.top * imgW / uprightHeight).coerceIn(0, imgW) else box.left
+                            val sTop = if (rotation == 90 || rotation == 270) (box.left * imgH / uprightWidth).coerceIn(0, imgH) else box.top
+                            val sRight = if (rotation == 90 || rotation == 270) (box.bottom * imgW / uprightHeight).coerceIn(sLeft, imgW) else box.right
+                            val sBottom = if (rotation == 90 || rotation == 270) (box.right * imgH / uprightWidth).coerceIn(sTop, imgH) else box.bottom
+                            calculateRegionLuminance(
+                                buffer = yBuffer,
+                                width = imgW,
+                                height = imgH,
+                                rowStride = rowStride,
+                                pixelStride = pixelStride,
+                                left = sLeft,
+                                top = sTop,
+                                right = sRight,
+                                bottom = sBottom,
+                            )
+                        } else {
+                            centerLuma
+                        }
+                        val (lightStatus, lightLabel) = evaluateLighting(faceLuma = faceLuma, bgLuma = sceneLuma)
+                        val isLightGood = lightStatus == LightStatus.Balanced
+
                         val (framingStatus, framingLabel) = evaluateFraming(
                             faces = faces,
                             uprightWidth = uprightWidth,
@@ -391,7 +634,6 @@ object LiveTapeCheckEngine {
                             target = targetSnapshot,
                         )
 
-                        val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
                         val faceBoxNorm = primaryFace?.let { f ->
                             sensorToVisibleScreenBox(
                                 faceLeft = f.boundingBox.left.toFloat(),
@@ -424,6 +666,7 @@ object LiveTapeCheckEngine {
                         mainHandler.post { onCheckUpdated(check) }
                     }
                     .addOnFailureListener {
+                        val (lightStatus, lightLabel) = evaluateLighting(faceLuma = centerLuma, bgLuma = sceneLuma)
                         val fallback = LiveTapeCheck(
                             framing = FramingStatus.NoFace,
                             framingLabel = "Hold still",
@@ -433,7 +676,7 @@ object LiveTapeCheckEngine {
                             isEyelinePassed = false,
                             light = lightStatus,
                             lightLabel = lightLabel,
-                            isLightPassed = isLightGood,
+                            isLightPassed = lightStatus == LightStatus.Balanced,
                             sound = soundStatus,
                             soundLabel = soundLabel,
                             isSoundPassed = isSoundGood,

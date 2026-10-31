@@ -484,10 +484,33 @@ class CameraController(private val context: Context) {
     }
 
     internal suspend fun tick() {
+        var lastPreviewSampleMs = 0L
         while (true) {
             delay(100)
+            val now = SystemClock.elapsedRealtime()
             if (state == State.Recording && recordingStartRealtimeMs > 0L) {
-                elapsed = ((SystemClock.elapsedRealtime() - recordingStartRealtimeMs).coerceAtLeast(0L)) / 1000f
+                elapsed = ((now - recordingStartRealtimeMs).coerceAtLeast(0L)) / 1000f
+            }
+
+            // Guaranteed preview fallback for devices where ImageAnalysis could not be bound alongside VideoCapture
+            if (!isAnalysisActive && currentAnalyzer != null && (state == State.Ready || state == State.Recording)) {
+                if (now - lastPreviewSampleMs >= 140L) {
+                    lastPreviewSampleMs = now
+                    val pv = boundPreviewView
+                    if (pv != null) {
+                        runCatching {
+                            val bitmap = pv.bitmap
+                            if (bitmap != null) {
+                                val analyzer = currentAnalyzer
+                                if (analyzer is LiveTapeCheckEngine.Analyzer) {
+                                    analyzer.analyzeBitmap(bitmap)
+                                } else if (analyzer is HeadshotFramingEngine.LiveAnalyzer) {
+                                    analyzer.analyzeBitmap(bitmap)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -244,3 +244,24 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - **Compatibility & Proguard / R8 Shrinking**:
     - Guarded `RuntimeShader` with `NoOpRuntimeShader` on API < 33, preventing `NoClassDefFoundError` crashes on Android 12 and earlier.
     - Added Proguard keep rules for `com.onetake.app.models.**` enums (`valueOf`, `values`), Glance AppWidgets, and ML Kit Vision in `proguard-rules.pro` to ensure release APKs shrink safely without serialization failures.
+- **Lighting Analysis & Voice Command Architecture Overhaul (`LiveTapeCheckEngine.kt`, `HeadshotFramingEngine.kt`, `Camera.kt`, `VoiceCommandEngine.kt`, `ShootFlowScreen.kt`, `ProfileScreens.kt`):**
+  - **Live Light Check in Headshots, Slate, and Scenes**:
+    - **Stride-Aware Y-Plane & Region Luminance**: Implemented `calculateRegionLuminance` in `LiveTapeCheckEngine` and `HeadshotFramingEngine` respecting buffer `rowStride` and `pixelStride`, eliminating corrupted readings from row padding bytes.
+    - **Face Region & Backlighting Detection**: Light evaluation now samples the primary actor face bounding box (or central actor staging region) against whole-frame scene background luminance. Detects backlighting/silhouettes (`bgLuma > 195 && faceLuma < 75` -> "Backlit — face in shadow") and provides accurate guidance ("Too dark", "Too bright", "Light balanced" / "soft and even").
+    - **Camera Multi-Stream Preview Fallback (`Camera.kt`)**: Added a continuous preview bitmap fallback in `CameraController.tick()` that delivers live frames to analyzers when hardware stream constraints prevent binding 3 simultaneous camera streams (`Preview + VideoCapture + ImageAnalysis`) on constrained front cameras. Guarantees lighting and framing checks never freeze in Slate, Scenes, or Headshots.
+    - **Headshot Guidance Continuity (`ProfileScreens.kt`)**: Initialized guidance state on mount and updated chips continuously so the light chip never freezes on `"measuring…"`.
+  - **Voice Commands in Slate and Scenes**:
+    - **Audio HAL Release Arbitration (`ShootFlowScreen.kt`)**: Added an explicit 180ms delay after `audioMeter.stopAndJoin()` before calling `voiceCommander.start()` when transitioning out of the Check stage, eliminating `SpeechRecognizer.ERROR_AUDIO` race conditions during physical microphone hardware teardown.
+    - **Noise-Resilient Keywords & Phrase Expansion (`VoiceCommandEngine.kt`)**: Added common director and shorthand commands:
+      - Start: `"roll"`, `"let's roll"`, `"lets roll"`, `"we're rolling"`, `"go"`, `"let's go"`, `"lets go"`, `"okay go"`, `"start slate"`, `"slate now"`, `"slate please"`.
+      - Cut: `"cut"`, `"stop"`, `"wrap"`, `"that's a wrap"`, `"that's wrap"`, `"it's a wrap"`, `"please stop"`, `"okay stop"`, `"stop now"`, `"stop it"`, `"done"`, `"finished"`, `"end take"`, `"all done"`.
+      - Shorthand bare matching: Allowed `"roll"`, `"go"`, `"start"`, `"stop"` with natural leading cues (`"okay"`, `"please"`, `"let's"`).
+    - **Responsive SpeechRecognizer Latency & Locale Fallback (`VoiceCommandEngine.kt`)**:
+      - Reduced `EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS` to `50L` (removing the artificial 3-second delay on 1-word commands like "Action!" and "Cut!").
+      - Tuned silence timeouts (`COMPLETE_SILENCE` = `1200L`, `POSSIBLY_COMPLETE` = `800L`) for instant response.
+      - Forced `"en-US"` for on-device recognition to prevent crashes on non-US Android locales.
+    - **Token Unmasking (`VoiceSessionTracker`)**: Fixed `resetForModeChange` to reset `ignoredPrefixTokenCount = 0` when transitioning stages with clean standby buffers, ensuring the first spoken word is never discarded.
+    - **Viewfinder HUD & Status**: Wired live voice listening indicator into `ShootMiniStatusRow` ("Say 'Action'" / "Say 'Cut'") and added a real-time listening pill in the viewfinder controls.
+  - **Unit Tests**:
+    - Added tests in `LiveTapeCheckEngineTest.kt` for backlighting detection and row-stride region luminance.
+    - Added tests in `VoiceCommandEngineTest.kt` for director shorthand commands ("Roll", "Let's go", "Done", "Please stop", "That's wrap").

@@ -67,30 +67,41 @@ object TakeTrimmer {
                 }
                 muxer.start()
                 started = true
+                val maxInput = outTracks.keys.maxOfOrNull { trackIdx ->
+                    runCatching { extractor.getTrackFormat(trackIdx).getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) }.getOrDefault(0)
+                } ?: 0
+                val buffer = ByteBuffer.allocate(maxOf(maxInput, 1 shl 20))
                 val info = MediaCodec.BufferInfo()
-                for ((track, out) in outTracks) {
-                    val format = extractor.getTrackFormat(track)
-                    val maxInput = runCatching { format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) }.getOrDefault(0)
-                    val buffer = ByteBuffer.allocate(maxOf(maxInput, 1 shl 20))
+                val lastPtsByTrack = HashMap<Int, Long>()
+                val finishedTracks = HashSet<Int>()
+
+                for (track in outTracks.keys) {
                     extractor.selectTrack(track)
-                    extractor.seekTo(cutUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-                    var lastPtsUs = -1L
-                    while (true) {
+                }
+                extractor.seekTo(cutUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+
+                while (true) {
+                    val trackIndex = extractor.sampleTrackIndex
+                    if (trackIndex < 0) break
+                    val outTrack = outTracks[trackIndex]
+                    if (outTrack != null) {
                         val size = extractor.readSampleData(buffer, 0)
-                        if (size < 0) break
-                        val pts = extractor.sampleTime
-                        // A little past the end before stopping, since frames needn't arrive in time order.
-                        if (pts > endUs + 500_000) break
-                        if (pts in cutUs..endUs) {
-                            val adjPts = maxOf(lastPtsUs + 1, pts - cutUs)
-                            info.set(0, size, adjPts, extractor.sampleFlags)
-                            muxer.writeSampleData(out, buffer, info)
-                            lastPtsUs = adjPts
-                            lengthUs = maxOf(lengthUs, adjPts)
+                        if (size >= 0) {
+                            val pts = extractor.sampleTime
+                            if (pts > endUs + 500_000) {
+                                finishedTracks.add(trackIndex)
+                            } else if (pts in cutUs..endUs) {
+                                val lastPts = lastPtsByTrack[trackIndex] ?: -1L
+                                val adjPts = maxOf(lastPts + 1, pts - cutUs)
+                                info.set(0, size, adjPts, extractor.sampleFlags)
+                                muxer.writeSampleData(outTrack, buffer, info)
+                                lastPtsByTrack[trackIndex] = adjPts
+                                lengthUs = maxOf(lengthUs, adjPts)
+                            }
                         }
-                        if (!extractor.advance()) break
                     }
-                    extractor.unselectTrack(track)
+                    if (finishedTracks.size >= outTracks.size) break
+                    if (!extractor.advance()) break
                 }
             } finally {
                 if (started) runCatching { muxer.stop() }

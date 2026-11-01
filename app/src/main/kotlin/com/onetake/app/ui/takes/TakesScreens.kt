@@ -66,6 +66,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -474,6 +475,57 @@ class TkPlayerState {
         v.seekTo(ms)
         positionMs = ms
     }
+
+    fun seekToMs(ms: Int) {
+        val v = view ?: return
+        v.seekTo(ms)
+        positionMs = ms
+    }
+}
+
+internal enum class TrimLoopAction {
+    NONE,
+    SEEK_TO_START,
+}
+
+internal fun evaluateTrimLoopAction(
+    currentPos: Int,
+    startMs: Int,
+    endMs: Int,
+    lastSeekTimeMs: Long,
+    currentTimeMs: Long,
+    seekGracePeriodMs: Long = 350L,
+): TrimLoopAction {
+    if (currentTimeMs - lastSeekTimeMs < seekGracePeriodMs) {
+        return TrimLoopAction.NONE
+    }
+    if (currentPos < startMs || currentPos >= endMs) {
+        return TrimLoopAction.SEEK_TO_START
+    }
+    return TrimLoopAction.NONE
+}
+
+internal fun clampTrimRange(
+    newRange: ClosedFloatingPointRange<Float>,
+    currentRange: ClosedFloatingPointRange<Float>,
+    totalDurationMs: Float,
+    minDurationMs: Float = 500f,
+): ClosedFloatingPointRange<Float> {
+    val duration = totalDurationMs.coerceAtLeast(minDurationMs)
+    if (newRange.endInclusive - newRange.start >= minDurationMs) {
+        val s = newRange.start.coerceIn(0f, (duration - minDurationMs).coerceAtLeast(0f))
+        val e = newRange.endInclusive.coerceIn(s + minDurationMs, duration)
+        return s..e
+    }
+    return if (newRange.start != currentRange.start) {
+        val s = newRange.start.coerceIn(0f, (duration - minDurationMs).coerceAtLeast(0f))
+        val e = (s + minDurationMs).coerceAtMost(duration)
+        s..e
+    } else {
+        val e = newRange.endInclusive.coerceIn(minDurationMs, duration)
+        val s = (e - minDurationMs).coerceAtLeast(0f)
+        s..e
+    }
 }
 
 @Composable
@@ -482,6 +534,7 @@ fun TkPlayerCard(
     state: TkPlayerState,
     fileUri: String? = null,
     isPlaying: Boolean = false,
+    looping: Boolean = true,
     onTogglePlay: () -> Unit = {},
 ) {
     val cardShape = RoundedCornerShape(26.dp)
@@ -505,7 +558,7 @@ fun TkPlayerCard(
                             state.positionMs = 0
                             state.durationMs = 0
                             setOnPreparedListener { mp ->
-                                mp.isLooping = true
+                                mp.isLooping = looping
                                 state.durationMs = mp.duration
                             }
                             runCatching { setVideoPath(fileUri) }
@@ -1050,13 +1103,21 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
 
     val trimPlayer = remember(take.id) { TkPlayerState() }
     var isTrimPlaying by remember { mutableStateOf(false) }
+    var lastSeekTimeMs by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(isTrimPlaying, range.start, range.endInclusive) {
         while (isTrimPlaying) {
             val cur = trimPlayer.view?.currentPosition ?: 0
-            if (cur < range.start.toInt() || cur >= range.endInclusive.toInt()) {
-                trimPlayer.view?.seekTo(range.start.toInt())
-                trimPlayer.positionMs = range.start.toInt()
+            val action = evaluateTrimLoopAction(
+                currentPos = cur,
+                startMs = range.start.toInt(),
+                endMs = range.endInclusive.toInt(),
+                lastSeekTimeMs = lastSeekTimeMs,
+                currentTimeMs = System.currentTimeMillis(),
+            )
+            if (action == TrimLoopAction.SEEK_TO_START) {
+                lastSeekTimeMs = System.currentTimeMillis()
+                trimPlayer.seekToMs(range.start.toInt())
             }
             delay(100)
         }
@@ -1119,7 +1180,17 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                     state = trimPlayer,
                     fileUri = take.fileUri,
                     isPlaying = isTrimPlaying,
-                    onTogglePlay = { isTrimPlaying = !isTrimPlaying },
+                    looping = false,
+                    onTogglePlay = {
+                        if (!isTrimPlaying) {
+                            val cur = trimPlayer.view?.currentPosition ?: 0
+                            if (cur < range.start.toInt() || cur >= range.endInclusive.toInt()) {
+                                lastSeekTimeMs = System.currentTimeMillis()
+                                trimPlayer.seekToMs(range.start.toInt())
+                            }
+                        }
+                        isTrimPlaying = !isTrimPlaying
+                    },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     TkTrimFrame(source, range.start.toLong(), Modifier.weight(1f))
@@ -1128,9 +1199,10 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                 RangeSlider(
                     value = range,
                     onValueChange = {
-                        range = it
-                        trimPlayer.view?.seekTo(it.start.toInt())
-                        trimPlayer.positionMs = it.start.toInt()
+                        val clamped = clampTrimRange(it, range, durationMs.toFloat())
+                        range = clamped
+                        lastSeekTimeMs = System.currentTimeMillis()
+                        trimPlayer.seekToMs(clamped.start.toInt())
                     },
                     valueRange = 0f..durationMs.toFloat(),
                     enabled = !saving,
@@ -1142,15 +1214,17 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             NudgeButton("-0.1s") {
                                 val s = (range.start - 100f).coerceAtLeast(0f)
-                                range = s..range.endInclusive
-                                trimPlayer.view?.seekTo(s.toInt())
-                                trimPlayer.positionMs = s.toInt()
+                                val clamped = clampTrimRange(s..range.endInclusive, range, durationMs.toFloat())
+                                range = clamped
+                                lastSeekTimeMs = System.currentTimeMillis()
+                                trimPlayer.seekToMs(clamped.start.toInt())
                             }
                             NudgeButton("+0.1s") {
                                 val s = (range.start + 100f).coerceAtMost(range.endInclusive - 500f)
-                                range = s..range.endInclusive
-                                trimPlayer.view?.seekTo(s.toInt())
-                                trimPlayer.positionMs = s.toInt()
+                                val clamped = clampTrimRange(s..range.endInclusive, range, durationMs.toFloat())
+                                range = clamped
+                                lastSeekTimeMs = System.currentTimeMillis()
+                                trimPlayer.seekToMs(clamped.start.toInt())
                             }
                         }
                     }
@@ -1163,15 +1237,17 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             NudgeButton("-0.1s") {
                                 val e = (range.endInclusive - 100f).coerceAtLeast(range.start + 500f)
-                                range = range.start..e
-                                trimPlayer.view?.seekTo(e.toInt())
-                                trimPlayer.positionMs = e.toInt()
+                                val clamped = clampTrimRange(range.start..e, range, durationMs.toFloat())
+                                range = clamped
+                                lastSeekTimeMs = System.currentTimeMillis()
+                                trimPlayer.seekToMs(clamped.endInclusive.toInt())
                             }
                             NudgeButton("+0.1s") {
                                 val e = (range.endInclusive + 100f).coerceAtMost(durationMs.toFloat())
-                                range = range.start..e
-                                trimPlayer.view?.seekTo(e.toInt())
-                                trimPlayer.positionMs = e.toInt()
+                                val clamped = clampTrimRange(range.start..e, range, durationMs.toFloat())
+                                range = clamped
+                                lastSeekTimeMs = System.currentTimeMillis()
+                                trimPlayer.seekToMs(clamped.endInclusive.toInt())
                             }
                         }
                     }

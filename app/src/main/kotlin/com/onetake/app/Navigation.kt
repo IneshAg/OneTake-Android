@@ -41,6 +41,8 @@ sealed class Route(val path: String) {
     data object Notifications : Route("notifications")
     data object PracticeSetup : Route("practiceSetup")
     data class AudioWalk(val id: String, val sceneIndex: Int = 0) : Route("audioWalk/$id/$sceneIndex")
+    /** Full-screen audition creation & review page (steps after AddAuditionSheet picker). */
+    data object NewAudition : Route("newAudition")
 
     object Pattern {
         const val AUDITION = "audition/{id}"

@@ -2,6 +2,7 @@ package com.onetake.app.ui.auditions
 
 import android.app.Application
 import com.onetake.app.AppStore
+import com.onetake.app.Route
 import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
 import com.onetake.app.models.Piece
@@ -186,5 +187,22 @@ class AddAuditionNoticeParsingTest {
         assertEquals(1, audition.scenes.size)
         assertEquals(2, audition.scenes.first().lines.size)
         assertTrue(audition.scenes.first().lines.all { it.isMine })
+    }
+
+    @Test
+    fun `testNewAuditionStateLifecycleInAppStore and route`() {
+        assertEquals("newAudition", Route.NewAudition.path)
+        val store = AppStore(Application())
+        org.junit.Assert.assertNull(store.newAuditionDraft)
+        assertEquals("", store.newAuditionNotice)
+
+        val draft = AddDraft(project = "Hamlet", role = "Hamlet", source = AddAuditionSource.Type)
+        store.startNewAudition(draft = draft, notice = "Notice text")
+        assertEquals("Hamlet", store.newAuditionDraft?.project)
+        assertEquals("Notice text", store.newAuditionNotice)
+
+        store.clearNewAudition()
+        org.junit.Assert.assertNull(store.newAuditionDraft)
+        assertEquals("", store.newAuditionNotice)
     }
 }

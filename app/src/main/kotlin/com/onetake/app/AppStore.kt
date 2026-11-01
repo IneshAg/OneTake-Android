@@ -22,6 +22,7 @@ import com.onetake.app.models.ScriptLine
 import com.onetake.app.models.ScriptScene
 import com.onetake.app.models.SlateInfo
 import com.onetake.app.models.Take
+import com.onetake.app.ui.auditions.AddDraft
 import com.onetake.app.ui.system.ReaderFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -123,6 +124,21 @@ class AppStore(application: Application) : AndroidViewModel(application) {
     var openAuditionRequest by mutableStateOf<String?>(null)
     /** A notice shared from another app, waiting for Add audition to read it. Not persisted. */
     var incomingShare by mutableStateOf<com.onetake.app.data.SharedNotice?>(null)
+    /** Active audition creation draft for the full-screen NewAudition page. Not persisted. */
+    internal var newAuditionDraft by mutableStateOf<AddDraft?>(null)
+    /** Raw notice text being processed in the audition creation flow. Not persisted. */
+    var newAuditionNotice by mutableStateOf("")
+
+    internal fun startNewAudition(draft: AddDraft, notice: String = "") {
+        newAuditionDraft = draft
+        newAuditionNotice = notice
+    }
+
+    fun clearNewAudition() {
+        newAuditionDraft = null
+        newAuditionNotice = ""
+    }
+
     var liquidGlass: Boolean
         get() = liquidGlassState.value
         set(value) { liquidGlassState.value = value; persist() }

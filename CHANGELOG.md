@@ -270,6 +270,11 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
 
 ### [Release: `v0.2.0`] — November 2026
 - **Version Bump:** `0.1.0` -> `0.2.0` (`versionCode = 200`).
+- **Take Trimming & Preview Playback Fixes (`TakesScreens.kt`, `TakeTrimmer.kt`, `TakesReviewTest.kt`):**
+  - **Eliminated 0.1s Preview Playback Seek Loop**: Fixed `LaunchedEffect` in `TkTrimSheet` which was polling `VideoView.currentPosition` every 100ms and repeatedly calling `seekTo(range.start)` before the asynchronous seek had completed. Implemented `evaluateTrimLoopAction` with a 350ms seek grace period that prevents re-triggering seeks while the native `MediaPlayer` is repositioning.
+  - **Trim Range Clamping**: Added `clampTrimRange` enforcing a minimum 500ms duration gap on `RangeSlider` and nudge buttons, preventing the trim range from collapsing into zero or sub-second micro-loops.
+  - **Single-File Trim Preview Looping**: Disabled `mp.isLooping` in `TkPlayerCard` for the trim sheet so the underlying `MediaPlayer` does not jump back to 0 on file end, allowing the custom trim boundary loop to handle looping cleanly.
+  - **Interleaved Media Muxing**: Refactored `TakeTrimmer.kt` to extract and mux audio and video tracks simultaneously in chronological presentation order (`extractor.sampleTrackIndex`), eliminating out-of-order timestamps and non-interleaved MP4 chunk write corruption in `MediaMuxer`.
 - **Automated Release Pipeline (`.github/workflows/release.yml`, `scripts/release.sh`):**
   - Upgraded GitHub Actions `release.yml` with manual and automated dispatch (`workflow_dispatch` + push tags `v*`).
   - Automatically builds production-ready R8-shrunk APKs, Play Store AAB bundles, and computes cryptographic verification checksums (`SHA256SUMS.txt`).

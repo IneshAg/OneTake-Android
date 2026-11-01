@@ -71,6 +71,7 @@ import androidx.navigation.navArgument
 import com.onetake.app.ui.auditions.AddAuditionSheet
 import com.onetake.app.ui.auditions.AuditionDetailScreen
 import com.onetake.app.ui.auditions.AuditionsScreen
+import com.onetake.app.ui.auditions.NewAuditionScreen
 import com.onetake.app.ui.search.SearchScreen
 import com.onetake.app.ui.onboarding.OnboardingFlow
 import com.onetake.app.ui.packageview.PackageScreen
@@ -126,10 +127,9 @@ private fun RootTabs(
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
     LaunchedEffect(route) { navigator.syncTab(route) }
-    // Something shared to OneTake opens Add audition, which reads it (only once onboarded — this
-    // screen doesn't exist before then, so the share waits).
+    // Something shared to OneTake opens the full-screen NewAudition page directly.
     LaunchedEffect(store.incomingShare) {
-        if (store.incomingShare != null) navigator.showAddAudition()
+        if (store.incomingShare != null) navigator.push(Route.NewAudition)
     }
     // A tap on the home-screen widget opens that audition.
     LaunchedEffect(store.openAuditionRequest) {
@@ -179,6 +179,9 @@ private fun RootTabs(
                 }
                 tabRoot(AppTab.Search) { SearchScreen() }
                 composable(Route.Settings.path) { ProfileScreen() }
+                composable(Route.NewAudition.path) {
+                    NewAuditionScreen(onClose = { navigator.back() })
+                }
 
                 withId(Route.Pattern.AUDITION) { AuditionDetailScreen(it) }
                 withIdScene(Route.Pattern.PREPARE) { id, s -> PrepareScreen(id, s) }

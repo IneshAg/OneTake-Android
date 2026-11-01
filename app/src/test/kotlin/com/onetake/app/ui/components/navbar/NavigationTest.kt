@@ -28,4 +28,9 @@ class NavigationTest {
         assertEquals("theatermasks.fill", com.onetake.app.ui.components.SFSymbols.TheaterMasksFill.name)
         assertEquals("film", com.onetake.app.ui.components.SFSymbols.Film.name)
     }
+
+    @Test
+    fun testRouteNewAuditionDefinition() {
+        assertEquals("newAudition", com.onetake.app.Route.NewAudition.path)
+    }
 }

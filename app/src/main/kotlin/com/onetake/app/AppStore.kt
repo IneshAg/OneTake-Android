@@ -128,15 +128,19 @@ class AppStore(application: Application) : AndroidViewModel(application) {
     internal var newAuditionDraft by mutableStateOf<AddDraft?>(null)
     /** Raw notice text being processed in the audition creation flow. Not persisted. */
     var newAuditionNotice by mutableStateOf("")
+    /** Pending image / document URIs waiting for OCR in NewAudition page. Not persisted. */
+    var pendingNewAuditionUris by mutableStateOf<List<Uri>>(emptyList())
 
-    internal fun startNewAudition(draft: AddDraft, notice: String = "") {
+    internal fun startNewAudition(draft: AddDraft, notice: String = "", uris: List<Uri> = emptyList()) {
         newAuditionDraft = draft
         newAuditionNotice = notice
+        pendingNewAuditionUris = uris
     }
 
     fun clearNewAudition() {
         newAuditionDraft = null
         newAuditionNotice = ""
+        pendingNewAuditionUris = emptyList()
     }
 
     var liquidGlass: Boolean

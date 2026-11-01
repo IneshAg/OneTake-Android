@@ -1,97 +1,48 @@
 package com.onetake.app.ui.auditions
 
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.outlined.AccessibilityNew
-import androidx.compose.material.icons.outlined.Badge
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.DocumentScanner
-import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Keyboard
-import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Portrait
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Smartphone
-import androidx.compose.material.icons.outlined.Timer
-import androidx.compose.material.icons.outlined.Warning
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TimePicker
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.onetake.app.AppTab
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
@@ -102,40 +53,14 @@ import com.onetake.app.models.Destination
 import com.onetake.app.models.Piece
 import com.onetake.app.models.PieceKind
 import com.onetake.app.models.ScriptScene
-import com.onetake.app.models.otTime
-import com.onetake.app.ocr.OcrManager
 import com.onetake.app.ui.components.CircleIconButton
-import com.onetake.app.ui.components.IconRow
-import com.onetake.app.ui.components.LargeTitle
-import com.onetake.app.ui.components.ListRow
-import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.PrimaryButton
 import com.onetake.app.ui.components.SectionLabel
-import com.onetake.app.ui.components.SheetHeader
 import com.onetake.app.ui.system.clipboardText
 import com.onetake.app.ui.system.fileProviderUri
-import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.theme.OT
 import java.io.File
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import java.time.DayOfWeek
-import java.time.Instant
-import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.LocalTime
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
-import java.time.temporal.TemporalAdjusters
-import java.util.Locale
-
-// 06 Add an audition → 6.1 Reading the notice → (6.2 One thing missing) → 6c Here's what they want → 7.0 Detail (0 of 4)
-
-private enum class AddStep { Reading, MissingDate, Review, EditAsks, CouldNotRead }
-
-private val addDueLong = DateTimeFormatter.ofPattern("EEE d MMM, h:mm a", Locale.US)
-private val addDueDay = DateTimeFormatter.ofPattern("EEE d MMM", Locale.US)
 
 enum class AddAuditionSource {
     Paste,
@@ -285,172 +210,68 @@ internal fun addParseNotice(text: String): AddDraft {
     )
 }
 
+/**
+ * 06 Add an audition capture sheet.
+ * Presents only capture source options (Paste, Photo, Scan, File, Type).
+ * Once a source is selected, the bottom sheet dismisses immediately and
+ * navigates to [Route.NewAudition] full-screen page so vertical scrolling
+ * cannot accidentally dismiss or discard entered audition progress.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddAuditionSheet(onDismiss: () -> Unit) {
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    var path by remember { mutableStateOf(listOf<AddStep>()) }
-    var notice by remember { mutableStateOf("") }
-    var draft by remember { mutableStateOf(AddDraft()) }
     var pendingScanFile by remember { mutableStateOf<File?>(null) }
-    var appendNextCapture by remember { mutableStateOf(false) }
-    var isAppendingPage by remember { mutableStateOf(false) }
-
-    fun mergeAdditionalText(additionalText: String, source: AddAuditionSource) {
-        val combined = listOf(notice, additionalText).filter { it.isNotBlank() }.joinToString("\n\n")
-        notice = combined
-        val reparsed = addParseNotice(combined)
-        val mergedAsks = (draft.asks + reparsed.asks).distinct()
-        val mergedRole = draft.role.ifBlank { reparsed.role }
-        draft = draft.copy(
-            project = draft.project.ifBlank { reparsed.project },
-            role = mergedRole,
-            projectType = if (draft.projectType == "Feature film" && reparsed.projectType.isNotBlank()) reparsed.projectType else draft.projectType,
-            roleSize = if (draft.roleSize == "Lead" && reparsed.roleSize.isNotBlank()) reparsed.roleSize else draft.roleSize,
-            castingOffice = draft.castingOffice.ifBlank { reparsed.castingOffice },
-            notes = draft.notes.ifBlank { reparsed.notes },
-            due = draft.due ?: reparsed.due,
-            asks = mergedAsks,
-            rawScriptText = reparsed.rawScriptText.ifBlank {
-                listOf(draft.rawScriptText, additionalText).filter { it.isNotBlank() }.joinToString("\n\n")
-            },
-            scenes = maxOf(draft.scenes, reparsed.scenes),
-            detectedCharacters = (draft.detectedCharacters + reparsed.detectedCharacters).distinct(),
-            kind = reparsed.kind,
-            source = source,
-        )
-    }
-
-    fun startReading(text: String, source: AddAuditionSource = AddAuditionSource.Paste) {
-        if (text.isBlank()) {
-            path = listOf(AddStep.CouldNotRead)
-            return
-        }
-        notice = text
-        draft = addParseNotice(text).copy(source = source)
-        path = listOf(AddStep.Reading)
-    }
 
     val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
-        val shouldAppend = appendNextCapture
-        appendNextCapture = false
         if (uris.isNotEmpty()) {
-            if (shouldAppend) {
-                isAppendingPage = true
-                scope.launch {
-                    val result = OcrManager.recognizeTextFromUris(context, uris)
-                    val text = result.getOrNull().orEmpty().trim()
-                    isAppendingPage = false
-                    if (text.isNotBlank()) {
-                        mergeAdditionalText(text, draft.source)
-                    }
-                }
-            } else {
-                notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
-                draft = draft.copy(source = AddAuditionSource.Photo)
-                path = listOf(AddStep.Reading)
-                scope.launch {
-                    val result = OcrManager.recognizeTextFromUris(context, uris)
-                    val text = result.getOrNull().orEmpty().trim()
-                    if (text.isBlank()) {
-                        path = listOf(AddStep.CouldNotRead)
-                    } else {
-                        notice = text
-                        draft = addParseNotice(text).copy(source = AddAuditionSource.Photo)
-                    }
-                }
-            }
+            store.startNewAudition(
+                draft = AddDraft(source = AddAuditionSource.Photo),
+                notice = "",
+                uris = uris,
+            )
+            onDismiss()
+            nav.push(Route.NewAudition)
         }
     }
+
     val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
         val file = pendingScanFile
         pendingScanFile = null
-        val shouldAppend = appendNextCapture
-        appendNextCapture = false
         if (captured && file != null && file.exists()) {
             val scanUri = fileProviderUri(context, file)
-            if (shouldAppend) {
-                isAppendingPage = true
-                scope.launch {
-                    val result = OcrManager.recognizeTextFromUri(context, scanUri)
-                    runCatching { file.delete() }
-                    val text = result.getOrNull().orEmpty().trim()
-                    isAppendingPage = false
-                    if (text.isNotBlank()) {
-                        mergeAdditionalText(text, draft.source)
-                    }
-                }
-            } else {
-                notice = ""
-                draft = draft.copy(source = AddAuditionSource.Scan)
-                path = listOf(AddStep.Reading)
-                scope.launch {
-                    val result = OcrManager.recognizeTextFromUri(context, scanUri)
-                    runCatching { file.delete() }
-                    val text = result.getOrNull().orEmpty().trim()
-                    if (text.isBlank()) {
-                        path = listOf(AddStep.CouldNotRead)
-                    } else {
-                        notice = text
-                        draft = addParseNotice(text).copy(source = AddAuditionSource.Scan)
-                    }
-                }
-            }
+            store.startNewAudition(
+                draft = AddDraft(source = AddAuditionSource.Scan),
+                notice = "",
+                uris = listOf(scanUri),
+            )
+            onDismiss()
+            nav.push(Route.NewAudition)
         } else {
             runCatching { file?.delete() }
         }
     }
+
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            notice = "" // Reading waits on this — never re-read the previous notice meanwhile.
-            draft = draft.copy(source = AddAuditionSource.PdfOrFile)
-            path = listOf(AddStep.Reading)
-            scope.launch {
-                val result = OcrManager.recognizeTextFromUri(context, uri)
-                val text = result.getOrNull().orEmpty().trim()
-                if (text.isBlank()) {
-                    path = listOf(AddStep.CouldNotRead)
-                } else {
-                    notice = text
-                    draft = addParseNotice(text).copy(source = AddAuditionSource.PdfOrFile)
-                }
-            }
-        }
-    }
-    // A notice shared from another app (MainActivity → AppStore.incomingShare): its text plus whatever
-    // the attached images or PDFs say, read like a photo or file.
-    LaunchedEffect(store.incomingShare) {
-        val share = store.incomingShare ?: return@LaunchedEffect
-        store.incomingShare = null
-        notice = ""
-        draft = draft.copy(source = AddAuditionSource.Share)
-        path = listOf(AddStep.Reading)
-        val parts = buildList {
-            share.text?.let { add(it) }
-            if (share.uris.isNotEmpty()) {
-                OcrManager.recognizeTextFromUris(context, share.uris).getOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
-            }
-        }
-        val text = parts.joinToString("\n\n").trim()
-        if (text.isBlank()) {
-            path = listOf(AddStep.CouldNotRead)
-        } else {
-            notice = text
-            draft = addParseNotice(text).copy(source = AddAuditionSource.Share)
+            store.startNewAudition(
+                draft = AddDraft(source = AddAuditionSource.PdfOrFile),
+                notice = "",
+                uris = listOf(uri),
+            )
+            onDismiss()
+            nav.push(Route.NewAudition)
         }
     }
 
     val pickPhoto: () -> Unit = {
-        appendNextCapture = false
         photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
-    fun launchCameraScan(append: Boolean) {
-        appendNextCapture = append
+
+    val scan: () -> Unit = {
         try {
             val tempFile = File(context.cacheDir, "ocr-scan-${System.currentTimeMillis()}.jpg")
             pendingScanFile = tempFile
@@ -460,102 +281,30 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
             photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
         }
     }
-    // "Scan" = full-resolution photo of the pages with the system camera; falls back to the photo picker
-    // if no camera app is available.
-    val scan: () -> Unit = { launchCameraScan(append = false) }
-    val scanAnotherPage: () -> Unit = { launchCameraScan(append = true) }
-    val addAnotherPhoto: () -> Unit = {
-        appendNextCapture = true
-        photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-    }
-
-    fun save() {
-        val hasHeadshot = store.hasHeadshot("front") || store.headshotsTaken > 0
-        val hasProfiles = store.hasHeadshot("left") && store.hasHeadshot("right")
-        val audition = draft.makeAudition(hasHeadshot = hasHeadshot, hasProfiles = hasProfiles)
-        store.add(audition)
-        onDismiss()
-        nav.resetTo(AppTab.Auditions)
-        nav.push(Route.AuditionDetail(audition.id))
-    }
-
-    val step = path.lastOrNull()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = OT.colors.bgCanvas,
     ) {
-        BackHandler(enabled = path.isNotEmpty()) { path = path.dropLast(1) }
-        when (step) {
-            null -> AddCaptureStep(
-                onClose = onDismiss,
-                onPaste = { startReading(runCatching { clipboardText(context) }.getOrNull().orEmpty(), AddAuditionSource.Paste) },
-                onPhoto = pickPhoto,
-                onScan = scan,
-                onFile = { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "application/rtf", "text/rtf", "image/*")) },
-                onType = {
-                    draft = AddDraft(source = AddAuditionSource.Type)
-                    path = path + AddStep.Review
-                },
-            )
-            AddStep.Reading -> AddReadingStep(
-                notice = notice,
-                source = draft.source,
-                onCancel = onDismiss,
-                onDone = { result ->
-                    val foundNothing = result.project.isEmpty() &&
-                        result.role.isEmpty() &&
-                        result.rawScriptText.isBlank() &&
-                        result.due == null &&
-                        result.asks.isEmpty()
-                    if (foundNothing) {
-                        path = listOf(AddStep.CouldNotRead)
-                    } else {
-                        draft = result.copy(source = draft.source)
-                        path = path + (if (result.due == null) AddStep.MissingDate else AddStep.Review)
-                    }
-                },
-            )
-            AddStep.MissingDate -> AddMissingDateStep(
-                draft = draft,
-                onCancel = onDismiss,
-                onContinue = { due ->
-                    draft = draft.copy(due = due)
-                    path = path + AddStep.Review
-                },
-            )
-            AddStep.Review -> AddReviewStep(
-                draft = draft,
-                slateName = store.slate.name,
-                isAppendingPage = isAppendingPage,
-                onChange = { draft = it },
-                onScanAnotherPage = scanAnotherPage,
-                onAddAnotherPhoto = addAnotherPhoto,
-                onBack = { path = path.dropLast(1) },
-                onEdit = { path = path + AddStep.EditAsks },
-                onSave = { save() },
-            )
-            AddStep.EditAsks -> AddEditAsksStep(
-                draft = draft,
-                slateName = store.slate.name,
-                onCancel = { path = path.dropLast(1) },
-                onDone = {
-                    draft = it
-                    path = path.dropLast(1)
-                },
-            )
-            AddStep.CouldNotRead -> AddErrorStep(
-                onCancel = onDismiss,
-                // Back to capture: re-reading the same text would just fail the same way again.
-                onRetry = { path = emptyList() },
-                onScan = scan,
-                onType = {
-                    draft = AddDraft(source = AddAuditionSource.Type)
-                    path = listOf(AddStep.Review)
-                },
-            )
-        }
+        AddCaptureStep(
+            onClose = onDismiss,
+            onPaste = {
+                val text = runCatching { clipboardText(context) }.getOrNull().orEmpty()
+                val parsed = if (text.isNotBlank()) addParseNotice(text).copy(source = AddAuditionSource.Paste) else AddDraft(source = AddAuditionSource.Paste)
+                store.startNewAudition(draft = parsed, notice = text)
+                onDismiss()
+                nav.push(Route.NewAudition)
+            },
+            onPhoto = pickPhoto,
+            onScan = scan,
+            onFile = { fileLauncher.launch(arrayOf("application/pdf", "text/plain", "application/rtf", "text/rtf", "image/*")) },
+            onType = {
+                store.startNewAudition(draft = AddDraft(source = AddAuditionSource.Type), notice = "")
+                onDismiss()
+                nav.push(Route.NewAudition)
+            },
+        )
     }
 }
 
@@ -643,1151 +392,5 @@ private fun AddWay(icon: ImageVector, title: String, onClick: () -> Unit, modifi
             Icon(icon, null, tint = c.labelPrimary, modifier = Modifier.size(24.dp))
         }
         Text(title, style = OT.type.footnote, color = c.labelSecondary)
-    }
-}
-
-// MARK: - 6.1 Reading the notice
-
-@Composable
-private fun AddReadingStep(
-    notice: String,
-    source: AddAuditionSource,
-    onCancel: () -> Unit,
-    onDone: (AddDraft) -> Unit,
-) {
-    val c = OT.colors
-    val parsed = remember(notice) { addParseNotice(notice) }
-    var found by remember(notice) { mutableIntStateOf(0) }
-    val haptics = rememberHaptics()
-    val done by rememberUpdatedState(onDone)
-    val roleSummary = when {
-        parsed.role.isNotEmpty() -> parsed.role
-        parsed.detectedCharacters.isNotEmpty() -> "${parsed.detectedCharacters.size} characters detected"
-        else -> "not in the notice"
-    }
-    val sidesSummary = when {
-        parsed.rawScriptText.isNotBlank() && parsed.scenes == 1 -> "1 scene · dialogue extracted"
-        parsed.rawScriptText.isNotBlank() -> "${parsed.scenes} scenes · dialogue extracted"
-        parsed.scenes == 1 -> "1 scene"
-        else -> "${parsed.scenes} scenes"
-    }
-    val rows = listOf(
-        "Project" to parsed.project.ifEmpty { if (parsed.kind == DocumentKind.SidesOnly) "sides page" else "not in the notice" },
-        "Your role" to roleSummary,
-        "Due" to (parsed.due?.format(addDueLong) ?: "no date given"),
-        "Sides" to sidesSummary,
-        "What they asked for" to when (parsed.asks.size) {
-            0 -> "nothing specific"
-            1 -> "1 thing"
-            else -> "${parsed.asks.size} things"
-        },
-    )
-
-    LaunchedEffect(notice) {
-        // Blank while a scan/photo is still being recognised: keep showing "reading…" and wait —
-        // the effect restarts once the recognised text arrives.
-        if (notice.isBlank()) return@LaunchedEffect
-        for (i in 1..rows.size) {
-            delay(450)
-            found = i
-            haptics.tick()
-        }
-        delay(300)
-        done(parsed)
-    }
-
-    Column(Modifier.fillMaxWidth().fillMaxHeight()) {
-        SheetHeader("", leading = "Cancel", onLeading = onCancel)
-        Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = OT.dims.gutter)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            val readingTitle = when (source) {
-                AddAuditionSource.Scan -> "Reading your scan…"
-                AddAuditionSource.PdfOrFile -> "Reading the document…"
-                AddAuditionSource.Photo -> "Reading the photo…"
-                else -> "Reading the notice…"
-            }
-            LargeTitle(readingTitle, subtitle = "Extracting details and dates.")
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(c.surfaceSunken)
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(notice, style = OT.type.callout, color = c.labelSecondary, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                val chips = buildList {
-                    if (found >= 2 && parsed.role.isNotEmpty()) add(parsed.role.uppercase())
-                    if (found >= 1 && parsed.project.isNotEmpty()) add(parsed.project.uppercase())
-                    if (found >= 3) parsed.due?.let { add(it.format(addDueDay) + ", " + it.otTime) }
-                }
-                if (chips.isNotEmpty()) {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        chips.forEach {
-                            Text(
-                                it,
-                                style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
-                                color = c.scriptOnHighlight,
-                                maxLines = 1,
-                                modifier = Modifier.clip(CircleShape).background(c.scriptHighlight).padding(horizontal = 10.dp, vertical = 5.dp),
-                            )
-                        }
-                    }
-                }
-            }
-            SectionLabel("Found so far", Modifier.padding(top = 6.dp))
-            Column {
-                rows.forEachIndexed { i, (title, value) ->
-                    val isFound = i < found
-                    Row(
-                        Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Column(Modifier.width(56.dp)) {
-                            Text(
-                                if (isFound) "FOUND" else "READING",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = c.labelTertiary,
-                                maxLines = 1,
-                            )
-                            Text(if (isFound) "✓" else "…", style = OT.type.footnote, color = c.labelPrimary)
-                        }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(title, style = OT.type.body, color = c.labelPrimary)
-                            Text(
-                                when {
-                                    isFound -> value
-                                    i == found -> "reading…"
-                                    else -> "next"
-                                },
-                                style = OT.type.footnote,
-                                color = c.labelTertiary,
-                            )
-                        }
-                        if (isFound) {
-                            Icon(Icons.Filled.Check, "Found", tint = c.accent, modifier = Modifier.size(20.dp))
-                        } else {
-                            CircularProgressIndicator(Modifier.size(18.dp), color = c.labelTertiary, strokeWidth = 2.dp)
-                        }
-                    }
-                    if (i < rows.lastIndex) OTDivider(startIndent = 68.dp)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - 6.2 One thing missing
-
-@Composable
-private fun AddMissingDateStep(draft: AddDraft, onCancel: () -> Unit, onContinue: (LocalDateTime?) -> Unit) {
-    val c = OT.colors
-    val today = remember { LocalDate.now() }
-    val tomorrow = remember { today.plusDays(1) }
-    val friday = remember { today.with(TemporalAdjusters.next(DayOfWeek.FRIDAY)) }
-    var choice by remember { mutableStateOf<Int?>(null) } // 0 tomorrow · 1 Friday · 2 picked · 3 no date yet
-    var picked by remember { mutableStateOf<LocalDate?>(null) }
-    var pickedTime by remember { mutableStateOf(LocalTime.of(10, 0)) }
-    var showDatePicker by remember { mutableStateOf(false) }
-    var showTimePicker by remember { mutableStateOf(false) }
-
-    Column(Modifier.fillMaxWidth().fillMaxHeight()) {
-        SheetHeader("", leading = "Cancel", onLeading = onCancel)
-        Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = OT.dims.gutter)
-                .padding(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            val missingSubtitle = when (draft.source) {
-                AddAuditionSource.Scan -> "Everything else is filled in from your scan."
-                AddAuditionSource.PdfOrFile -> "Everything else is filled in from the PDF."
-                AddAuditionSource.Photo -> "Everything else is filled in from the photo."
-                else -> "Everything else is filled in from the notice."
-            }
-            LargeTitle("One thing missing", subtitle = missingSubtitle)
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(c.surfaceCard)
-                    .border(1.dp, c.due, RoundedCornerShape(20.dp))
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(
-                        Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(c.dueTrack),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Outlined.CalendarMonth, null, tint = c.due, modifier = Modifier.size(22.dp)) }
-                    Column {
-                        val noDateText = when (draft.source) {
-                            AddAuditionSource.Scan -> "The scan didn't give a date."
-                            AddAuditionSource.PdfOrFile -> "The PDF didn't give a date."
-                            AddAuditionSource.Photo -> "The photo didn't give a date."
-                            else -> "The notice didn't give a date."
-                        }
-                        Text("When is it due?", style = OT.type.headline, color = c.labelPrimary)
-                        Text(noDateText, style = OT.type.footnote, color = c.labelSecondary)
-                    }
-                }
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AddChip("Tomorrow", choice == 0) { choice = 0 }
-                    AddChip(friday.format(addDueDay), choice == 1) { choice = 1 }
-                    AddChip(picked?.format(addDueDay) ?: "Pick a date", choice == 2) { showDatePicker = true }
-                    AddChip("No date yet", choice == 3) { choice = 3 }
-                }
-
-                if (choice in 0..2) {
-                    OTDivider()
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Icon(Icons.Filled.Schedule, null, tint = c.due, modifier = Modifier.size(16.dp))
-                            Text("Due time", style = OT.type.footnote, color = c.labelSecondary)
-                        }
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(c.fillField)
-                                .clickable { showTimePicker = true }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                        ) {
-                            Text(pickedTime.otTime, style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold), color = c.due)
-                        }
-                    }
-                    val presetTimes = remember {
-                        listOf(
-                            LocalTime.of(10, 0) to "10:00 AM",
-                            LocalTime.of(12, 0) to "12:00 PM",
-                            LocalTime.of(17, 0) to "5:00 PM",
-                            LocalTime.of(18, 0) to "6:00 PM",
-                            LocalTime.of(21, 0) to "9:00 PM",
-                            LocalTime.of(23, 59) to "11:59 PM",
-                        )
-                    }
-                    Row(
-                        Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        presetTimes.forEach { (time, label) ->
-                            AddChip(
-                                text = label,
-                                selected = pickedTime.hour == time.hour && pickedTime.minute == time.minute,
-                                onClick = { pickedTime = time },
-                            )
-                        }
-                        AddChip(
-                            text = "Custom…",
-                            selected = presetTimes.none { it.first.hour == pickedTime.hour && it.first.minute == pickedTime.minute },
-                            onClick = { showTimePicker = true },
-                        )
-                    }
-                }
-            }
-
-            val sourceSectionLabel = when (draft.source) {
-                AddAuditionSource.Scan -> "From your scan"
-                AddAuditionSource.PdfOrFile -> "From the PDF"
-                AddAuditionSource.Photo -> "From the photo"
-                else -> "From the notice"
-            }
-            SectionLabel(sourceSectionLabel, Modifier.padding(top = 4.dp))
-            Column {
-                AddValueRow(draft.project.ifEmpty { "—" }, "Project")
-                AddValueRow(draft.role.ifEmpty { "—" }, "Your role")
-                val sidesDetail = if (draft.rawScriptText.isNotBlank()) "${draft.scenes} scenes, your lines found" else "${draft.scenes} scenes"
-                AddValueRow(sidesDetail, "Sides")
-                AddValueRow(
-                    draft.asks.joinToString(", ").lowercase().replaceFirstChar { it.titlecase(Locale.US) }.ifEmpty { "—" },
-                    addAsksSectionTitle(draft.source),
-                    showDivider = false,
-                )
-            }
-        }
-        PrimaryButton(
-            if (choice == null) "Choose a due date first" else "Continue",
-            onClick = {
-                val due: LocalDateTime? = when (choice) {
-                    0 -> tomorrow.atTime(pickedTime)
-                    1 -> friday.atTime(pickedTime)
-                    2 -> (picked ?: tomorrow).atTime(pickedTime)
-                    else -> null
-                }
-                onContinue(due)
-            },
-            enabled = choice != null,
-            modifier = Modifier.padding(horizontal = OT.dims.gutter, vertical = 8.dp),
-        )
-    }
-
-    if (showDatePicker) {
-        AddDatePickerDialog(
-            initial = picked ?: tomorrow,
-            onPick = {
-                picked = it
-                choice = 2
-            },
-            onDismiss = { showDatePicker = false },
-        )
-    }
-
-    if (showTimePicker) {
-        AddTimePickerDialog(
-            initial = pickedTime,
-            onPick = { pickedTime = it },
-            onDismiss = { showTimePicker = false },
-        )
-    }
-}
-
-@Composable
-private fun AddValueRow(value: String, label: String, showDivider: Boolean = true) {
-    val c = OT.colors
-    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(value, style = OT.type.body, color = c.labelPrimary)
-        Text(label, style = OT.type.footnote, color = c.labelTertiary)
-    }
-    if (showDivider) OTDivider()
-}
-
-@Composable
-private fun AddChip(text: String, selected: Boolean, onClick: () -> Unit) {
-    val c = OT.colors
-    Box(
-        Modifier
-            .heightIn(min = 44.dp)
-            .clip(CircleShape)
-            .background(if (selected) c.accent else c.surfaceCard)
-            .then(if (selected) Modifier else Modifier.border(0.5.dp, c.separator, CircleShape))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text,
-            style = OT.type.subhead.copy(fontWeight = FontWeight.SemiBold),
-            color = if (selected) c.labelOnAccent else c.labelPrimary,
-            maxLines = 1,
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AddDatePickerDialog(initial: LocalDate, onPick: (LocalDate) -> Unit, onDismiss: () -> Unit) {
-    val c = OT.colors
-    val state = rememberDatePickerState(
-        initialSelectedDateMillis = initial.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli(),
-    )
-    DatePickerDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = {
-                state.selectedDateMillis?.let { onPick(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()) }
-                onDismiss()
-            }) { Text("Done", color = c.accent) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = c.labelSecondary) }
-        },
-    ) { DatePicker(state = state) }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AddTimePickerDialog(initial: LocalTime, onPick: (LocalTime) -> Unit, onDismiss: () -> Unit) {
-    val c = OT.colors
-    val state = rememberTimePickerState(
-        initialHour = initial.hour,
-        initialMinute = initial.minute,
-        is24Hour = false,
-    )
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = c.surfaceCard,
-        title = {
-            Text("Set deadline time", style = OT.type.headline, color = c.labelPrimary)
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                onPick(LocalTime.of(state.hour, state.minute))
-                onDismiss()
-            }) { Text("Done", color = c.accent) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = c.labelSecondary) }
-        },
-        text = {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                TimePicker(state = state)
-            }
-        },
-    )
-}
-
-@Composable
-private fun AddDueTimeSection(
-    due: LocalDateTime?,
-    onChange: (LocalDateTime) -> Unit,
-    onOpenDatePicker: () -> Unit,
-    onOpenTimePicker: () -> Unit,
-) {
-    val c = OT.colors
-    val days = if (due != null) ChronoUnit.DAYS.between(LocalDate.now(), due.toLocalDate()) else null
-    val dayText = when {
-        days == null -> ""
-        days < 0L -> "overdue"
-        days == 0L -> "today"
-        days == 1L -> "tomorrow"
-        else -> "in $days days"
-    }
-
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        // Date card
-        Row(
-            Modifier
-                .weight(1.15f)
-                .clip(RoundedCornerShape(14.dp))
-                .background(c.fillField)
-                .clickable(role = Role.Button, onClick = onOpenDatePicker)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(c.surfaceCard),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Outlined.CalendarMonth, null, tint = c.labelSecondary, modifier = Modifier.size(20.dp))
-            }
-            Column(Modifier.weight(1f)) {
-                Text("Date", style = OT.type.footnote, color = c.labelTertiary)
-                Text(
-                    due?.format(addDueDay) ?: "Set date",
-                    style = OT.type.headline,
-                    color = if (due != null) c.labelPrimary else c.accent,
-                    maxLines = 1,
-                )
-                if (dayText.isNotEmpty()) {
-                    Text(dayText, style = OT.type.caption, color = c.labelSecondary)
-                }
-            }
-        }
-
-        // Time card
-        Row(
-            Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(14.dp))
-                .background(c.fillField)
-                .clickable(role = Role.Button, onClick = onOpenTimePicker)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(c.surfaceCard),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Filled.Schedule, null, tint = c.due, modifier = Modifier.size(20.dp))
-            }
-            Column(Modifier.weight(1f)) {
-                Text("Deadline time", style = OT.type.footnote, color = c.labelTertiary)
-                Text(
-                    due?.otTime ?: "10:00 AM",
-                    style = OT.type.headline,
-                    color = c.due,
-                    maxLines = 1,
-                )
-                Text("Tap to edit", style = OT.type.caption, color = c.labelSecondary)
-            }
-        }
-    }
-
-    // Quick preset time chips
-    val presetTimes = remember {
-        listOf(
-            LocalTime.of(10, 0) to "10:00 AM",
-            LocalTime.of(12, 0) to "12:00 PM",
-            LocalTime.of(17, 0) to "5:00 PM",
-            LocalTime.of(18, 0) to "6:00 PM",
-            LocalTime.of(21, 0) to "9:00 PM",
-            LocalTime.of(23, 59) to "11:59 PM",
-        )
-    }
-    val currentLocalTime = due?.toLocalTime()
-
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        presetTimes.forEach { (time, label) ->
-            val isSelected = currentLocalTime?.hour == time.hour && currentLocalTime.minute == time.minute
-            AddChip(
-                text = label,
-                selected = isSelected,
-                onClick = {
-                    val baseDate = due?.toLocalDate() ?: LocalDate.now().plusDays(1)
-                    onChange(baseDate.atTime(time))
-                },
-            )
-        }
-        AddChip(
-            text = "Custom…",
-            selected = currentLocalTime != null && presetTimes.none { it.first.hour == currentLocalTime.hour && it.first.minute == currentLocalTime.minute },
-            onClick = onOpenTimePicker,
-        )
-    }
-}
-
-// MARK: - 6c Here's what they want (review + save)
-
-private fun addAskIcon(ask: String): ImageVector = when (ask) {
-    "Slate first" -> Icons.Outlined.Badge
-    "Landscape" -> Icons.Outlined.Smartphone
-    "Full length" -> Icons.Outlined.AccessibilityNew
-    "Both profiles" -> Icons.Outlined.Portrait
-    "Under 3 min" -> Icons.Outlined.Timer
-    else -> Icons.AutoMirrored.Filled.Send
-}
-
-private fun addAskDetail(ask: String, slateName: String, role: String): String = when (ask) {
-    "Slate first" -> "Name, height, city"
-    "Landscape" -> "Reader off camera"
-    "Full length" -> "After the slate"
-    "Both profiles" -> "Left and right"
-    "Under 3 min" -> "Tape check warns you"
-    else -> {
-        val parts = slateName.trim().split(" ").filter { it.isNotEmpty() }
-        val last = parts.lastOrNull().orEmpty()
-        val first = parts.firstOrNull().orEmpty()
-        listOf(last, first, role).filter { it.isNotEmpty() }.joinToString("_").uppercase()
-    }
-}
-
-@Composable
-private fun AddAskIconView(ask: String, tint: Color, size: Dp) {
-    Icon(
-        addAskIcon(ask),
-        null,
-        tint = tint,
-        modifier = Modifier.size(size).then(if (ask == "Landscape") Modifier.rotate(90f) else Modifier),
-    )
-}
-
-private val addProjectTypes = listOf("Feature film", "TV series", "Commercial", "Short film", "Theatre", "Voiceover")
-private val addRoleSizes = listOf("Lead", "Supporting", "Guest star", "Co-star", "Day player", "Principal")
-
-@Composable
-private fun AddReviewStep(
-    draft: AddDraft,
-    slateName: String,
-    isAppendingPage: Boolean,
-    onChange: (AddDraft) -> Unit,
-    onScanAnotherPage: () -> Unit,
-    onAddAnotherPhoto: () -> Unit,
-    onBack: () -> Unit,
-    onEdit: () -> Unit,
-    onSave: () -> Unit,
-) {
-    val c = OT.colors
-    var showDatePicker by remember { mutableStateOf(false) }
-    var showTimePicker by remember { mutableStateOf(false) }
-
-    val parsedLineCount = remember(draft.rawScriptText, draft.role) {
-        if (draft.rawScriptText.isBlank()) 0
-        else ScriptParser.parseScenes(draft.rawScriptText, myCharacter = draft.role.ifBlank { "Role" }).sumOf { it.lines.size }
-    }
-
-    Column(Modifier.fillMaxWidth().fillMaxHeight()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = onBack)
-            Spacer(Modifier.weight(1f))
-            Box(
-                Modifier
-                    .heightIn(min = 40.dp)
-                    .clip(CircleShape)
-                    .background(c.fillField)
-                    .clickable(role = Role.Button, onClick = onEdit)
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.Center,
-            ) { Text("Edit", style = OT.type.subhead, color = c.labelPrimary) }
-            Spacer(Modifier.width(8.dp))
-        }
-        Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = OT.dims.gutter)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            LargeTitle(
-                addReviewTitle(draft.source),
-                subtitle = addReviewSubtitle(draft.source, draft.asks.size),
-            )
-
-            // Multi-page scan / photo append bar
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier
-                        .heightIn(min = 38.dp)
-                        .clip(CircleShape)
-                        .background(c.accentSoft)
-                        .clickable(enabled = !isAppendingPage, role = Role.Button, onClick = onScanAnotherPage)
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(Icons.Outlined.DocumentScanner, null, tint = c.accent, modifier = Modifier.size(16.dp))
-                        Text(
-                            if (isAppendingPage) "Reading page…" else "+ Scan another page",
-                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                            color = c.accent,
-                        )
-                    }
-                }
-                Box(
-                    Modifier
-                        .heightIn(min = 38.dp)
-                        .clip(CircleShape)
-                        .background(c.fillField)
-                        .clickable(enabled = !isAppendingPage, role = Role.Button, onClick = onAddAnotherPhoto)
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(Icons.Outlined.Image, null, tint = c.labelPrimary, modifier = Modifier.size(16.dp))
-                        Text(
-                            "+ Add photos",
-                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                            color = c.labelPrimary,
-                        )
-                    }
-                }
-            }
-
-            if (draft.detectedCharacters.size >= 2 || (draft.detectedCharacters.isNotEmpty() && draft.role.isBlank())) {
-                SectionLabel("Who are you reading for?")
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    draft.detectedCharacters.forEach { character ->
-                        AddChip(
-                            text = character,
-                            selected = draft.role.equals(character, ignoreCase = true) ||
-                                ScriptParser.isMyCue(character, draft.role),
-                            onClick = { onChange(draft.copy(role = character)) },
-                        )
-                    }
-                }
-            }
-
-            SectionLabel("Due")
-            AddDueTimeSection(
-                due = draft.due,
-                onChange = { onChange(draft.copy(due = it)) },
-                onOpenDatePicker = { showDatePicker = true },
-                onOpenTimePicker = { showTimePicker = true },
-            )
-
-            SectionLabel(addAsksSectionTitle(draft.source))
-            val roleDetail = when {
-                draft.rawScriptText.isNotBlank() && parsedLineCount > 0 -> "$parsedLineCount lines extracted"
-                draft.rawScriptText.isNotBlank() -> "Your lines found"
-                draft.source == AddAuditionSource.Type -> "Sides to record"
-                else -> "Sides"
-            }
-            val sceneWord = if (draft.scenes == 1) "1 scene" else "${draft.scenes} scenes"
-            val cells = listOf(Triple("__role", "${draft.role.ifEmpty { "Your role" }} · $sceneWord", roleDetail)) +
-                draft.asks.map { Triple(it, it, addAskDetail(it, slateName, draft.role)) }
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                cells.chunked(2).forEach { pair ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        pair.forEach { (key, title, detail) ->
-                            Column(
-                                Modifier.weight(1f).clickable(onClick = onEdit),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                if (key == "__role") {
-                                    Icon(Icons.Outlined.Person, null, tint = c.labelSecondary, modifier = Modifier.size(22.dp))
-                                } else {
-                                    AddAskIconView(key, c.labelSecondary, 22.dp)
-                                }
-                                Text(title, style = OT.type.headline, color = c.labelPrimary)
-                                if (detail.isNotEmpty()) Text(detail, style = OT.type.footnote, color = c.labelTertiary)
-                            }
-                        }
-                        if (pair.size == 1) Spacer(Modifier.weight(1f))
-                    }
-                }
-            }
-
-            SectionLabel("Details", Modifier.padding(top = 4.dp))
-            AddTextField(draft.project, "Project") { onChange(draft.copy(project = it)) }
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                addProjectTypes.forEach { type ->
-                    AddChip(
-                        text = type,
-                        selected = draft.projectType.equals(type, ignoreCase = true),
-                        onClick = { onChange(draft.copy(projectType = type)) },
-                    )
-                }
-            }
-            AddTextField(draft.role, "Role") { onChange(draft.copy(role = it)) }
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                addRoleSizes.forEach { size ->
-                    AddChip(
-                        text = size,
-                        selected = draft.roleSize.equals(size, ignoreCase = true),
-                        onClick = { onChange(draft.copy(roleSize = size)) },
-                    )
-                }
-            }
-            AddTextField(draft.castingOffice, "Casting office (optional)") { onChange(draft.copy(castingOffice = it)) }
-            AddTextField(
-                value = draft.notes,
-                placeholder = "Notes from casting (optional)",
-                singleLine = false,
-                minHeight = 68.dp,
-            ) { onChange(draft.copy(notes = it)) }
-
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(c.fillField)
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Scenes: ${draft.scenes}", style = OT.type.body, color = c.labelPrimary, modifier = Modifier.weight(1f))
-                AddStepper(draft.scenes, 0..10) { onChange(draft.copy(scenes = it)) }
-            }
-
-            // Sides / Script Preview & Editor
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(c.fillField)
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Sides script", style = OT.type.headline, color = c.labelPrimary)
-                        Text(
-                            if (draft.rawScriptText.isNotBlank() && parsedLineCount > 0)
-                                "$parsedLineCount dialogue lines ready for teleprompter & reader"
-                            else
-                                "Optional — paste or edit dialogue lines (NAME: line)",
-                            style = OT.type.footnote,
-                            color = c.labelTertiary,
-                        )
-                    }
-                    if (draft.rawScriptText.isNotBlank()) {
-                        Text(
-                            "Clear",
-                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                            color = c.danger,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { onChange(draft.copy(rawScriptText = "", detectedCharacters = emptyList())) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                        )
-                    }
-                }
-                BasicTextField(
-                    value = draft.rawScriptText,
-                    onValueChange = { updatedText ->
-                        val chars = if (updatedText.isNotBlank()) ScriptParser.extractCharacters(updatedText) else emptyList()
-                        val detectedSceneCount = if (updatedText.isNotBlank() && chars.isNotEmpty()) {
-                            ScriptParser.parseScenes(updatedText, myCharacter = draft.role.ifBlank { chars.first() }).size
-                        } else {
-                            draft.scenes
-                        }
-                        onChange(
-                            draft.copy(
-                                rawScriptText = updatedText,
-                                detectedCharacters = chars,
-                                scenes = if (updatedText.isNotBlank() && detectedSceneCount > 0) detectedSceneCount else draft.scenes,
-                            )
-                        )
-                    },
-                    textStyle = OT.type.callout.copy(color = c.labelPrimary, lineHeight = 20.sp),
-                    cursorBrush = SolidColor(c.accent),
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 84.dp, max = 220.dp),
-                    decorationBox = { inner ->
-                        if (draft.rawScriptText.isEmpty()) {
-                            Text(
-                                "CHARACTER: Dialogue line…",
-                                style = OT.type.callout,
-                                color = c.labelTertiary,
-                            )
-                        }
-                        inner()
-                    },
-                )
-            }
-
-            ListRow(
-                title = draft.destination.label,
-                detail = draft.destination.spec,
-                icon = Icons.AutoMirrored.Filled.Send,
-                value = "Change",
-                valueColor = c.accent,
-                showChevron = false,
-                showDivider = false,
-                onClick = {
-                    val all = Destination.entries
-                    onChange(draft.copy(destination = all[(all.indexOf(draft.destination) + 1) % all.size]))
-                },
-            )
-        }
-        PrimaryButton(
-            "Save audition",
-            onClick = onSave,
-            modifier = Modifier.padding(horizontal = OT.dims.gutter, vertical = 8.dp),
-        )
-    }
-
-    if (showDatePicker) {
-        AddDatePickerDialog(
-            initial = draft.due?.toLocalDate() ?: LocalDate.now().plusDays(1),
-            onPick = { date ->
-                val time = draft.due?.toLocalTime() ?: LocalTime.of(10, 0)
-                onChange(draft.copy(due = date.atTime(time)))
-            },
-            onDismiss = { showDatePicker = false },
-        )
-    }
-
-    if (showTimePicker) {
-        AddTimePickerDialog(
-            initial = draft.due?.toLocalTime() ?: LocalTime.of(10, 0),
-            onPick = { time ->
-                val date = draft.due?.toLocalDate() ?: LocalDate.now().plusDays(1)
-                onChange(draft.copy(due = date.atTime(time)))
-            },
-            onDismiss = { showTimePicker = false },
-        )
-    }
-}
-
-@Composable
-private fun AddTextField(
-    value: String,
-    placeholder: String,
-    singleLine: Boolean = true,
-    minHeight: Dp = 50.dp,
-    onValueChange: (String) -> Unit,
-) {
-    val c = OT.colors
-    BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        singleLine = singleLine,
-        textStyle = OT.type.body.copy(color = c.labelPrimary),
-        cursorBrush = SolidColor(c.accent),
-        modifier = Modifier.fillMaxWidth(),
-        decorationBox = { inner ->
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = minHeight)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(c.fillField)
-                    .padding(horizontal = 14.dp, vertical = if (singleLine) 0.dp else 12.dp),
-                contentAlignment = if (singleLine) Alignment.CenterStart else Alignment.TopStart,
-            ) {
-                if (value.isEmpty()) Text(placeholder, style = OT.type.body, color = c.labelTertiary)
-                inner()
-            }
-        },
-    )
-}
-
-@Composable
-private fun AddStepper(value: Int, range: IntRange, onChange: (Int) -> Unit) {
-    val c = OT.colors
-    Row(
-        Modifier.clip(RoundedCornerShape(10.dp)).background(c.fillField),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier
-                .size(48.dp, 40.dp)
-                .clickable(enabled = value > range.first, role = Role.Button) { onChange(value - 1) },
-            contentAlignment = Alignment.Center,
-        ) { Text("−", style = OT.type.headline, color = if (value > range.first) c.labelPrimary else c.labelTertiary) }
-        Box(Modifier.size(0.5.dp, 20.dp).background(c.separator))
-        Box(
-            Modifier
-                .size(48.dp, 40.dp)
-                .clickable(enabled = value < range.last, role = Role.Button) { onChange(value + 1) },
-            contentAlignment = Alignment.Center,
-        ) { Text("+", style = OT.type.headline, color = if (value < range.last) c.labelPrimary else c.labelTertiary) }
-    }
-}
-
-// MARK: - 6c.1 Edit what they want
-
-private val addBeforeScenes = setOf("Slate first", "Full length", "Both profiles")
-
-@Composable
-private fun AddEditAsksStep(draft: AddDraft, slateName: String, onCancel: () -> Unit, onDone: (AddDraft) -> Unit) {
-    val c = OT.colors
-    var working by remember { mutableStateOf(draft) }
-    var showAdd by remember { mutableStateOf(false) }
-    var showDatePicker by remember { mutableStateOf(false) }
-    var showTimePicker by remember { mutableStateOf(false) }
-
-    Column(Modifier.fillMaxWidth().fillMaxHeight()) {
-        SheetHeader(
-            addEditHeaderTitle(working.source),
-            leading = "Cancel",
-            trailing = "Done",
-            onLeading = onCancel,
-            onTrailing = { onDone(working) },
-        )
-        Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = OT.dims.gutter)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                addEditSubtitle(working.source),
-                style = OT.type.callout,
-                color = c.labelSecondary,
-            )
-
-            SectionLabel("Due date & time", Modifier.padding(top = 6.dp))
-            AddDueTimeSection(
-                due = working.due,
-                onChange = { working = working.copy(due = it) },
-                onOpenDatePicker = { showDatePicker = true },
-                onOpenTimePicker = { showTimePicker = true },
-            )
-
-            SectionLabel("Scenes", Modifier.padding(top = 6.dp))
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 56.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                AddRemoveDot("Remove scene clips") { working = working.copy(scenes = 0) }
-                Icon(Icons.Outlined.Movie, null, tint = c.labelSecondary, modifier = Modifier.size(22.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Scene clips · ${working.scenes}", style = OT.type.body, color = c.labelPrimary)
-                    if (working.scenes > 0) {
-                        Text(
-                            (1..working.scenes).joinToString(" · ") { "Scene $it" },
-                            style = OT.type.footnote,
-                            color = c.labelTertiary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-                AddStepper(working.scenes, 0..6) { working = working.copy(scenes = it) }
-            }
-
-            val before = working.asks.filter { it in addBeforeScenes }
-            val after = working.asks.filter { it !in addBeforeScenes }
-            if (before.isNotEmpty()) {
-                SectionLabel("Before the scenes", Modifier.padding(top = 6.dp))
-                Column {
-                    before.forEachIndexed { i, ask ->
-                        AddEditAskRow(ask, addAskDetail(ask, slateName, working.role), showDivider = i < before.lastIndex) {
-                            working = working.copy(asks = working.asks - ask)
-                        }
-                    }
-                }
-            }
-            if (after.isNotEmpty()) {
-                SectionLabel("How it's shot and sent", Modifier.padding(top = 6.dp))
-                Column {
-                    after.forEachIndexed { i, ask ->
-                        AddEditAskRow(ask, addAskDetail(ask, slateName, working.role), showDivider = i < after.lastIndex) {
-                            working = working.copy(asks = working.asks - ask)
-                        }
-                    }
-                }
-            }
-
-            Box(Modifier.padding(top = 8.dp)) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 52.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(c.accentSoft)
-                        .clickable(role = Role.Button) { showAdd = true }
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Box(Modifier.size(22.dp).clip(CircleShape).background(c.accent), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Add, null, tint = c.labelOnAccent, modifier = Modifier.size(16.dp))
-                    }
-                    Text(addEditAddButtonLabel(working.source), style = OT.type.headline, color = c.accent)
-                }
-                val suggestions = listOf("Slate first", "Full length", "Both profiles", "Landscape", "Under 3 min", working.destination.label)
-                    .filter { it !in working.asks }
-                DropdownMenu(
-                    expanded = showAdd,
-                    onDismissRequest = { showAdd = false },
-                    modifier = Modifier.widthIn(min = 220.dp).background(c.surfaceCard),
-                ) {
-                    if (suggestions.isEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text("Everything's already here", style = OT.type.body, color = c.labelTertiary) },
-                            onClick = { showAdd = false },
-                            enabled = false,
-                        )
-                    }
-                    suggestions.forEach { s ->
-                        DropdownMenuItem(
-                            text = { Text(s, style = OT.type.body, color = c.labelPrimary) },
-                            onClick = {
-                                working = working.copy(asks = working.asks + s)
-                                showAdd = false
-                            },
-                            leadingIcon = { AddAskIconView(s, c.labelSecondary, 20.dp) },
-                        )
-                    }
-                }
-            }
-            Text(
-                "No scene clip this time? Set Scene clips to 0 — the slate and shots still work.",
-                style = OT.type.footnote,
-                color = c.labelTertiary,
-            )
-        }
-    }
-
-    if (showDatePicker) {
-        AddDatePickerDialog(
-            initial = working.due?.toLocalDate() ?: LocalDate.now().plusDays(1),
-            onPick = { date ->
-                val time = working.due?.toLocalTime() ?: LocalTime.of(10, 0)
-                working = working.copy(due = date.atTime(time))
-            },
-            onDismiss = { showDatePicker = false },
-        )
-    }
-
-    if (showTimePicker) {
-        AddTimePickerDialog(
-            initial = working.due?.toLocalTime() ?: LocalTime.of(10, 0),
-            onPick = { time ->
-                val date = working.due?.toLocalDate() ?: LocalDate.now().plusDays(1)
-                working = working.copy(due = date.atTime(time))
-            },
-            onDismiss = { showTimePicker = false },
-        )
-    }
-}
-
-@Composable
-private fun AddEditAskRow(ask: String, detail: String, showDivider: Boolean, onRemove: () -> Unit) {
-    val c = OT.colors
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 58.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        AddRemoveDot("Remove $ask", onRemove)
-        AddAskIconView(ask, c.labelSecondary, 22.dp)
-        Column(Modifier.weight(1f)) {
-            Text(ask, style = OT.type.body, color = c.labelPrimary)
-            if (detail.isNotEmpty()) Text(detail, style = OT.type.footnote, color = c.labelTertiary)
-        }
-    }
-    if (showDivider) OTDivider(startIndent = 82.dp)
-}
-
-/** Red "remove" dot (iOS edit-mode minus). */
-@Composable
-private fun AddRemoveDot(label: String, onClick: () -> Unit) {
-    val c = OT.colors
-    Box(
-        Modifier
-            .size(48.dp)
-            .clickable(role = Role.Button, onClickLabel = label, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.size(22.dp).clip(CircleShape).background(c.danger), contentAlignment = Alignment.Center) {
-            Box(Modifier.size(10.dp, 2.dp).clip(CircleShape).background(Color.White))
-        }
-    }
-}
-
-// MARK: - S4 Notice couldn't be read
-
-@Composable
-private fun AddErrorStep(onCancel: () -> Unit, onRetry: () -> Unit, onScan: () -> Unit, onType: () -> Unit) {
-    val c = OT.colors
-    Column(Modifier.fillMaxWidth().fillMaxHeight()) {
-        SheetHeader("", leading = "Cancel", onLeading = onCancel)
-        Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = OT.dims.gutter)
-                .padding(top = 24.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Icon(Icons.Outlined.Warning, null, tint = c.warning, modifier = Modifier.size(40.dp))
-            LargeTitle(
-                "We couldn't read this notice",
-                subtitle = "It looks like an image of a PDF with very small text. Nothing was lost — pick how to continue.",
-            )
-            Column {
-                IconRow(Icons.Outlined.Refresh, "Try again", "Scans the notice again", onClick = onRetry)
-                OTDivider(startIndent = 54.dp)
-                IconRow(Icons.Outlined.DocumentScanner, "Scan the pages instead", "Clearer than a screenshot", onClick = onScan)
-                OTDivider(startIndent = 54.dp)
-                IconRow(Icons.Outlined.Keyboard, "Type the details", "Name, role and due date — 30 seconds", onClick = onType)
-            }
-        }
     }
 }

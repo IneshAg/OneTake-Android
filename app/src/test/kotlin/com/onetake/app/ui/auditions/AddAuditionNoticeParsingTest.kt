@@ -204,5 +204,28 @@ class AddAuditionNoticeParsingTest {
         store.clearNewAudition()
         org.junit.Assert.assertNull(store.newAuditionDraft)
         assertEquals("", store.newAuditionNotice)
+        assertTrue(store.pendingNewAuditionUris.isEmpty())
+    }
+
+    @Test
+    fun `testContextAwareTitlesAndSubtitlesForTypeVsScanned`() {
+        assertEquals("Audition details", addReviewTitle(AddAuditionSource.Type))
+        assertEquals("Here's what they want", addReviewTitle(AddAuditionSource.Paste))
+        assertEquals("Here's what they want", addReviewTitle(AddAuditionSource.Scan))
+        assertEquals("Here's what they want", addReviewTitle(AddAuditionSource.Photo))
+        assertEquals("Here's what they want", addReviewTitle(AddAuditionSource.PdfOrFile))
+
+        assertEquals("What to prepare", addAsksSectionTitle(AddAuditionSource.Type))
+        assertEquals("They asked for", addAsksSectionTitle(AddAuditionSource.Paste))
+
+        assertEquals("What to prepare", addEditHeaderTitle(AddAuditionSource.Type))
+        assertEquals("What they want", addEditHeaderTitle(AddAuditionSource.Scan))
+
+        assertEquals("Add a deliverable", addEditAddButtonLabel(AddAuditionSource.Type))
+        assertEquals("Add something they asked for", addEditAddButtonLabel(AddAuditionSource.PdfOrFile))
+
+        assertEquals("Set up your role, deadline, and deliverables, then save.", addReviewSubtitle(AddAuditionSource.Type, 0))
+        assertTrue(addReviewSubtitle(AddAuditionSource.Scan, 2).contains("3 items found from your scan"))
+        assertTrue(addReviewSubtitle(AddAuditionSource.PdfOrFile, 0).contains("1 item found in the PDF"))
     }
 }

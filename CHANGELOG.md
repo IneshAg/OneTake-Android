@@ -275,3 +275,12 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - Automatically builds production-ready R8-shrunk APKs, Play Store AAB bundles, and computes cryptographic verification checksums (`SHA256SUMS.txt`).
   - Added standalone local automated release script `scripts/release.sh` supporting one-command test verification, multi-variant compilation, and git tagging.
   - Added `dist/` to `.gitignore` to keep release build outputs isolated from source control.
+- **Audition Setup Workflow: Full-Screen Page Migration (`NewAuditionScreen.kt`, `AddAuditionSheet.kt`, `Navigation.kt`, `OneTakeApp.kt`, `AppStore.kt`):**
+  - **Decoupled Capture Sheet from Multi-Step Form**: Converted `AddAuditionSheet` into a lightweight capture-only bottom sheet hosting only `AddCaptureStep` (Paste, Photo, Scan, File, Type).
+  - **Dedicated Full-Screen Route (`Route.NewAudition`)**: Transitioned all post-capture workflow steps (`Reading`, `MissingDate`, `Review`, `EditAsks`, `CouldNotRead`) into a dedicated pushed `NavHost` page (`NewAuditionScreen.kt`).
+  - **Gesture Dismissal & Data-Loss Protection**: Eliminated `ModalBottomSheet` vertical gesture drag-to-dismiss threshold during review and editing. Swiping or flicking downward now smoothly scrolls form fields without dismissing progress.
+  - **Discard Confirmation Protection**: Implemented `BackHandler` and back navigation confirmation dialog (`AlertDialog`: "Discard audition? Any details you've entered will be lost.") preventing accidental back exits when user has entered content.
+  - **Direct Incoming Share Routing**: Incoming Android shares (`ACTION_SEND`) now route directly to `Route.NewAudition` as a full page without showing intermediate capture sheets.
+- **"Reading the Notice" Technical Handoff (`docs/reading_the_notice_architecture_and_nuances_handoff.md`):**
+  - Exhaustive documentation of the notice parsing & extraction pipeline: `OcrManager.kt`, `OcrLayoutReconstructor.kt`, `NoticeParser.kt`, and `ScriptParser.kt`.
+  - Detailed catalog of all heuristics, regexes, 2-column spatial pairing, watermark filtering, and known failure modes in real-world casting notices.

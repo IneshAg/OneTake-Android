@@ -42,51 +42,94 @@ class TakesReviewTest {
     }
 
     @Test
-    fun testEvaluateTrimLoopActionPreventsTightLoopDuringSeekGracePeriod() {
-        // Start: 2000ms, End: 6000ms.
-        // A seek to start was initiated at t = 1000ms.
-        val lastSeekTime = 1000L
-
-        // At t = 1100ms (100ms later), the player is still seeking and reports curPos = 0.
-        // In the old broken code, curPos < 2000 immediately re-triggered seek every 100ms.
-        val action1 = evaluateTrimLoopAction(
-            currentPos = 0,
+    fun testEvaluateTrimLoopActionDoesNotSeekWhenPlaybackPositionIsBeforeStart() {
+        // Root-cause regression test:
+        // Android VideoView/MediaPlayer seeks to keyframes (sync frames), which can land before startMs.
+        // During forward playback between keyframe and startMs, evaluateTrimLoopAction must NOT seek to start.
+        val action = evaluateTrimLoopAction(
+            currentPos = 1500,
             startMs = 2000,
             endMs = 6000,
-            lastSeekTimeMs = lastSeekTime,
-            currentTimeMs = 1100L,
-            seekGracePeriodMs = 350L,
+            isSeeking = false,
+            lastSeekTimeMs = 1000L,
+            currentTimeMs = 2000L,
         )
         assertEquals(
-            "Must NOT trigger seekTo while within seek grace period (prevents 0.1s loop)",
+            "Playback at keyframe before startMs must NOT trigger seek to start (prevents 0.1s loop)",
             TrimLoopAction.NONE,
-            action1,
+            action,
         )
+    }
 
-        // At t = 1400ms (400ms later), seek finished and curPos is 2100ms (inside range).
-        val action2 = evaluateTrimLoopAction(
-            currentPos = 2100,
-            startMs = 2000,
-            endMs = 6000,
-            lastSeekTimeMs = lastSeekTime,
-            currentTimeMs = 1400L,
-            seekGracePeriodMs = 350L,
-        )
-        assertEquals(TrimLoopAction.NONE, action2)
-
-        // At t = 4000ms, playback reaches the end (6000ms).
-        val action3 = evaluateTrimLoopAction(
+    @Test
+    fun testEvaluateTrimLoopActionTriggersWhenReachingEnd() {
+        val action = evaluateTrimLoopAction(
             currentPos = 6000,
             startMs = 2000,
             endMs = 6000,
-            lastSeekTimeMs = lastSeekTime,
+            isSeeking = false,
+            lastSeekTimeMs = 1000L,
             currentTimeMs = 4000L,
-            seekGracePeriodMs = 350L,
         )
         assertEquals(
             "Must trigger seek to start when reaching end of trim range",
             TrimLoopAction.SEEK_TO_START,
-            action3,
+            action,
+        )
+    }
+
+    @Test
+    fun testEvaluateTrimLoopActionSuppressesWhileSeekingAtEnd() {
+        // When a seek back to start was initiated at t = 1000ms, and currentPos is still >= endMs at t = 1200ms
+        // while the decoder flushes/seeks, action must be NONE.
+        val action = evaluateTrimLoopAction(
+            currentPos = 6000,
+            startMs = 2000,
+            endMs = 6000,
+            isSeeking = true,
+            lastSeekTimeMs = 1000L,
+            currentTimeMs = 1200L,
+            seekTimeoutMs = 800L,
+        )
+        assertEquals(
+            "Must NOT trigger duplicate seek while isSeeking is active and within timeout",
+            TrimLoopAction.NONE,
+            action,
+        )
+    }
+
+    @Test
+    fun testEvaluateTrimLoopActionAllowsPlaybackAfterSeekCompletesBelowEnd() {
+        // When seek has completed and currentPos is now 2000ms (< 6000ms), action is NONE.
+        val action = evaluateTrimLoopAction(
+            currentPos = 2000,
+            startMs = 2000,
+            endMs = 6000,
+            isSeeking = true,
+            lastSeekTimeMs = 1000L,
+            currentTimeMs = 1250L,
+            seekTimeoutMs = 800L,
+        )
+        assertEquals(TrimLoopAction.NONE, action)
+    }
+
+    @Test
+    fun testEvaluateTrimLoopActionRecoversAfterSeekTimeout() {
+        // If seek took longer than seekTimeoutMs and currentPos is still >= endMs,
+        // it triggers SEEK_TO_START to unstick the player.
+        val action = evaluateTrimLoopAction(
+            currentPos = 6000,
+            startMs = 2000,
+            endMs = 6000,
+            isSeeking = true,
+            lastSeekTimeMs = 1000L,
+            currentTimeMs = 1900L,
+            seekTimeoutMs = 800L,
+        )
+        assertEquals(
+            "Must trigger seek to start after timeout to recover stalled player",
+            TrimLoopAction.SEEK_TO_START,
+            action,
         )
     }
 

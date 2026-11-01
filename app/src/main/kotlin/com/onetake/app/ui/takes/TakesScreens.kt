@@ -465,21 +465,31 @@ private fun TkCompareGlyph(color: Color) {
 @Stable
 class TkPlayerState {
     var view: android.widget.VideoView? = null
+    var mediaPlayer: android.media.MediaPlayer? = null
     var positionMs by mutableIntStateOf(0)
     var durationMs by mutableIntStateOf(0)
+    var isSeeking by mutableStateOf(false)
 
     fun seekTo(fraction: Float) {
-        val v = view ?: return
         if (durationMs <= 0) return
         val ms = (durationMs * fraction.coerceIn(0f, 1f)).toInt()
-        v.seekTo(ms)
-        positionMs = ms
+        seekToMs(ms)
     }
 
     fun seekToMs(ms: Int) {
-        val v = view ?: return
-        v.seekTo(ms)
-        positionMs = ms
+        val targetMs = ms.coerceAtLeast(0)
+        isSeeking = true
+        positionMs = targetMs
+        val mp = mediaPlayer
+        if (mp != null) {
+            runCatching {
+                mp.seekTo(targetMs.toLong(), android.media.MediaPlayer.SEEK_CLOSEST)
+            }.onFailure {
+                view?.seekTo(targetMs)
+            }
+        } else {
+            view?.seekTo(targetMs)
+        }
     }
 }
 
@@ -492,16 +502,28 @@ internal fun evaluateTrimLoopAction(
     currentPos: Int,
     startMs: Int,
     endMs: Int,
-    lastSeekTimeMs: Long,
-    currentTimeMs: Long,
-    seekGracePeriodMs: Long = 350L,
+    isSeeking: Boolean = false,
+    lastSeekTimeMs: Long = 0L,
+    currentTimeMs: Long = 0L,
+    seekTimeoutMs: Long = 800L,
 ): TrimLoopAction {
-    if (currentTimeMs - lastSeekTimeMs < seekGracePeriodMs) {
-        return TrimLoopAction.NONE
+    // If a seek back to start was requested, wait for the player to transition away
+    // from the end boundary (or timeout) before allowing another loop trigger.
+    if (isSeeking) {
+        val timedOut = (currentTimeMs - lastSeekTimeMs) >= seekTimeoutMs
+        if (!timedOut && currentPos >= endMs) {
+            return TrimLoopAction.NONE
+        }
     }
-    if (currentPos < startMs || currentPos >= endMs) {
+
+    // Only loop when playback reaches or exceeds the trim end boundary.
+    // We intentionally NEVER seek when currentPos < startMs during active playback:
+    // Video players seek to keyframes (sync frames) which often sit prior to startMs.
+    // Forcing a seek when currentPos < startMs traps playback in an infinite 0.1s stutter loop.
+    if (currentPos >= endMs) {
         return TrimLoopAction.SEEK_TO_START
     }
+
     return TrimLoopAction.NONE
 }
 
@@ -536,6 +558,7 @@ fun TkPlayerCard(
     isPlaying: Boolean = false,
     looping: Boolean = true,
     onTogglePlay: () -> Unit = {},
+    onCompletion: () -> Unit = {},
 ) {
     val cardShape = RoundedCornerShape(26.dp)
     val hasVideo = !fileUri.isNullOrBlank()
@@ -558,8 +581,15 @@ fun TkPlayerCard(
                             state.positionMs = 0
                             state.durationMs = 0
                             setOnPreparedListener { mp ->
+                                state.mediaPlayer = mp
                                 mp.isLooping = looping
                                 state.durationMs = mp.duration
+                                mp.setOnSeekCompleteListener {
+                                    state.isSeeking = false
+                                }
+                            }
+                            setOnCompletionListener {
+                                onCompletion()
                             }
                             runCatching { setVideoPath(fileUri) }
                         }
@@ -575,7 +605,10 @@ fun TkPlayerCard(
                     },
                     onRelease = { videoView ->
                         videoView.stopPlayback()
-                        if (state.view === videoView) state.view = null
+                        if (state.view === videoView) {
+                            state.view = null
+                            state.mediaPlayer = null
+                        }
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -1104,20 +1137,27 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
     val trimPlayer = remember(take.id) { TkPlayerState() }
     var isTrimPlaying by remember { mutableStateOf(false) }
     var lastSeekTimeMs by remember { mutableLongStateOf(0L) }
+    var isSeeking by remember { mutableStateOf(false) }
 
     LaunchedEffect(isTrimPlaying, range.start, range.endInclusive) {
         while (isTrimPlaying) {
             val cur = trimPlayer.view?.currentPosition ?: 0
+            if (isSeeking && cur < range.endInclusive.toInt()) {
+                isSeeking = false
+            }
             val action = evaluateTrimLoopAction(
                 currentPos = cur,
                 startMs = range.start.toInt(),
                 endMs = range.endInclusive.toInt(),
+                isSeeking = isSeeking,
                 lastSeekTimeMs = lastSeekTimeMs,
                 currentTimeMs = System.currentTimeMillis(),
             )
             if (action == TrimLoopAction.SEEK_TO_START) {
+                isSeeking = true
                 lastSeekTimeMs = System.currentTimeMillis()
                 trimPlayer.seekToMs(range.start.toInt())
+                trimPlayer.view?.start()
             }
             delay(100)
         }
@@ -1186,10 +1226,22 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                             val cur = trimPlayer.view?.currentPosition ?: 0
                             if (cur < range.start.toInt() || cur >= range.endInclusive.toInt()) {
                                 lastSeekTimeMs = System.currentTimeMillis()
+                                isSeeking = true
                                 trimPlayer.seekToMs(range.start.toInt())
                             }
+                            trimPlayer.view?.start()
+                        } else {
+                            trimPlayer.view?.pause()
                         }
                         isTrimPlaying = !isTrimPlaying
+                    },
+                    onCompletion = {
+                        if (isTrimPlaying) {
+                            lastSeekTimeMs = System.currentTimeMillis()
+                            isSeeking = true
+                            trimPlayer.seekToMs(range.start.toInt())
+                            trimPlayer.view?.start()
+                        }
                     },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1200,9 +1252,18 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                     value = range,
                     onValueChange = {
                         val clamped = clampTrimRange(it, range, durationMs.toFloat())
+                        val startChanged = kotlin.math.abs(clamped.start - range.start) > 0.5f
+                        val endChanged = kotlin.math.abs(clamped.endInclusive - range.endInclusive) > 0.5f
                         range = clamped
-                        lastSeekTimeMs = System.currentTimeMillis()
-                        trimPlayer.seekToMs(clamped.start.toInt())
+                        if (startChanged) {
+                            lastSeekTimeMs = System.currentTimeMillis()
+                            isSeeking = true
+                            trimPlayer.seekToMs(clamped.start.toInt())
+                        } else if (endChanged) {
+                            lastSeekTimeMs = System.currentTimeMillis()
+                            isSeeking = true
+                            trimPlayer.seekToMs(clamped.endInclusive.toInt())
+                        }
                     },
                     valueRange = 0f..durationMs.toFloat(),
                     enabled = !saving,
@@ -1217,6 +1278,7 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                                 val clamped = clampTrimRange(s..range.endInclusive, range, durationMs.toFloat())
                                 range = clamped
                                 lastSeekTimeMs = System.currentTimeMillis()
+                                isSeeking = true
                                 trimPlayer.seekToMs(clamped.start.toInt())
                             }
                             NudgeButton("+0.1s") {
@@ -1224,6 +1286,7 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                                 val clamped = clampTrimRange(s..range.endInclusive, range, durationMs.toFloat())
                                 range = clamped
                                 lastSeekTimeMs = System.currentTimeMillis()
+                                isSeeking = true
                                 trimPlayer.seekToMs(clamped.start.toInt())
                             }
                         }
@@ -1240,6 +1303,7 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                                 val clamped = clampTrimRange(range.start..e, range, durationMs.toFloat())
                                 range = clamped
                                 lastSeekTimeMs = System.currentTimeMillis()
+                                isSeeking = true
                                 trimPlayer.seekToMs(clamped.endInclusive.toInt())
                             }
                             NudgeButton("+0.1s") {
@@ -1247,6 +1311,7 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
                                 val clamped = clampTrimRange(range.start..e, range, durationMs.toFloat())
                                 range = clamped
                                 lastSeekTimeMs = System.currentTimeMillis()
+                                isSeeking = true
                                 trimPlayer.seekToMs(clamped.endInclusive.toInt())
                             }
                         }

@@ -268,6 +268,24 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
 
 ---
 
+### [Release: `v0.3.0`] — November 2026
+- **Version Bump:** `0.2.0` -> `0.3.0` (`versionCode = 300`).
+- **Primary On-Device LLM Notice Extraction (`NoticeParser.kt`, `AddAuditionSheet.kt`, `NewAuditionScreen.kt`):**
+  - Made the on-device LLM (`HybridNoticeExtractor` via `NoticeParser.parseSmart`) the **primary extractor** for all notice fields (`projectTitle`, `targetRoleName`, `allAvailableRoles`, `tapeDueIsoDate`, `tapeDueTime24h`, `asks`, `characterNormalizationMap`, `destination`, `documentKind`).
+  - Isolated deterministic regex heuristics strictly as a fallback when the LLM extractor returns `null` or is unavailable.
+  - Eliminated preemptive regex draft population across all notice intake pathways (Clipboard Paste, Camera Photo, Document Scanner, File Picker, Intent Shares).
+  - Added live scanning indicator (`"analyzing…"`) and real-time AI attribution badges (`"Filled by on-device AI"` vs. `"Filled by baseline fallback"`).
+- **LiteRT-LM Stability & OpenCL Driver Support (`AndroidManifest.xml`, `HybridNoticeExtractor.kt`):**
+  - Added `<uses-native-library>` entries for vendor OpenCL drivers (`libOpenCL.so`, `libOpenCL-car.so`, `libOpenCL-pixel.so`, `libGLES_mali.so`, `libPVROCL.so`) with `android:required="false"` inside `AndroidManifest.xml` to unblock Android 12–17 Bionic dynamic linker access on Adreno, Mali, and Tensor chipsets.
+  - Added resilient runtime fallback to `Backend.CPU()` when OpenCL libraries are missing or GPU execution fails during `nativeSendMessage`.
+  - Separated LiteRT-LM engine initialization from inference timeout and prevented closing/destroying singleton engines on coroutine cancellation.
+  - Optimized KV cache prefill size (`maxNumTokens = 1024`, 1,800 character input slice) for 3x faster GPU execution.
+- **Model Cache Discovery & Android 17 Polish (`ModelDownloadManager.kt`, `AndroidManifest.xml`):**
+  - Enhanced cache inspection across app data directories without disk threshold blockage for pre-existing models.
+  - Added `android:enableOnBackInvokedCallback="true"` for smooth predictive back gestures on Android 14–17 / ColorOS 17.
+
+---
+
 ### [Release: `v0.2.0`] — November 2026
 - **Version Bump:** `0.1.0` -> `0.2.0` (`versionCode = 200`).
 - **Take Trimming & Preview Playback Fixes (`TakesScreens.kt`, `TakeTrimmer.kt`, `TakesReviewTest.kt`):**

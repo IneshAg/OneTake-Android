@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version tag (e.g. v0.2.0)'
+        description: 'Release version tag (e.g. v0.3.0)'
         required: true
-        default: 'v0.2.0'
+        default: 'v0.3.0'
       draft:
         description: 'Publish as draft'
         type: boolean

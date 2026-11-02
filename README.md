@@ -93,8 +93,8 @@ computer's webcam.
   APK (downloadable from the run), and the minified release build.
 - **Automated Release** (`.github/workflows/release.yml`) builds and publishes GitHub releases with R8 minification,
   checksums (`SHA256SUMS.txt`), APKs, and Google Play AABs. It triggers either automatically when pushing a tag
-  like `v0.2.0`, or on-demand via GitHub Actions **Run workflow** (`workflow_dispatch`).
-- **Local Release Script** (`./scripts/release.sh 0.2.0`): runs the test suite, builds release APK & bundle,
+  like `v0.3.0`, or on-demand via GitHub Actions **Run workflow** (`workflow_dispatch`).
+- **Local Release Script** (`./scripts/release.sh 0.3.0`): runs the test suite, builds release APK & bundle,
   generates checksums in `dist/`, and tags the local git commit.
 
 To sign release builds, add the repository secrets `ONETAKE_KEYSTORE_BASE64`, `ONETAKE_KEYSTORE_PASSWORD`,

@@ -158,15 +158,20 @@ internal data class AddDraft(
         }
 
         val needsProfiles = "Both profiles" in asks
-        val pieces = mutableListOf(
-            Piece(
-                kind = PieceKind.Headshot,
-                title = "Headshot",
-                detail = if (needsProfiles) "Front + profiles" else "Front",
-                isDone = if (needsProfiles) (hasHeadshot && hasProfiles) else hasHeadshot,
-            ),
-            Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false),
-        )
+        val pieces = mutableListOf<Piece>()
+        if (asks.isEmpty() || "Headshot" in asks) {
+            pieces.add(
+                Piece(
+                    kind = PieceKind.Headshot,
+                    title = "Headshot",
+                    detail = if (needsProfiles) "Front + profiles" else "Front",
+                    isDone = if (needsProfiles) (hasHeadshot && hasProfiles) else hasHeadshot,
+                )
+            )
+        }
+        if (asks.isEmpty() || "Slate" in asks || "Slate first" in asks) {
+            pieces.add(Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false))
+        }
         if ("Full length" in asks) {
             pieces.add(Piece(kind = PieceKind.FullLength, title = "Full length", detail = "Head to feet", isDone = false))
         }
@@ -205,7 +210,7 @@ internal fun addParseNotice(text: String): AddDraft {
         castingOffice = f.castingOffice,
         notes = f.notes,
         due = f.due,
-        scenes = maxOf(1, f.sceneCount),
+        scenes = if (f.kind == DocumentKind.CastingNotice && f.scriptText.isBlank()) 0 else maxOf(0, f.sceneCount),
         asks = f.asks,
         destination = f.destination,
         rawScriptText = f.scriptText,
@@ -228,7 +233,7 @@ internal fun addDraftFromNoticeFields(f: NoticeFields, source: AddAuditionSource
         castingOffice = f.castingOffice,
         notes = f.notes,
         due = f.due,
-        scenes = maxOf(1, f.sceneCount),
+        scenes = if (f.kind == DocumentKind.CastingNotice && f.scriptText.isBlank()) 0 else maxOf(0, f.sceneCount),
         asks = f.asks,
         destination = f.destination,
         rawScriptText = f.scriptText,

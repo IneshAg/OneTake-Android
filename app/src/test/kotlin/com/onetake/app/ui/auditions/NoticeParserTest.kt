@@ -392,4 +392,172 @@ class NoticeParserTest {
         val avgMs = elapsedMs / iterations
         assertTrue("NoticeParser.parse average execution time must be under 2ms (was $avgMs ms)", avgMs < 2.0)
     }
+
+    @Test
+    fun cleanLlmFieldReturnsNullForCommonPlaceholdersAndBlanks() {
+        with(NoticeParser) {
+            assertNull("Not specified".cleanLlmField())
+            assertNull("not specified".cleanLlmField())
+            assertNull("Unspecified".cleanLlmField())
+            assertNull("Unknown".cleanLlmField())
+            assertNull("None".cleanLlmField())
+            assertNull("N/A".cleanLlmField())
+            assertNull("NA".cleanLlmField())
+            assertNull("null".cleanLlmField())
+            assertNull("TBD".cleanLlmField())
+            assertNull("Upcoming project".cleanLlmField())
+            assertNull("   ".cleanLlmField())
+            assertNull((null as String?).cleanLlmField())
+
+            assertEquals("Hamlet", "Hamlet".cleanLlmField())
+            assertEquals("Feature film", "Feature film".cleanLlmField())
+        }
+    }
+
+    @Test
+    fun parseSmartSanitizesPlaceholdersNormalizesVerboseProjectTypeAndFiltersGenericRoles() = runBlocking {
+        val notice = """
+            Casting notice details.
+            Scene:
+            DETECTIVE: Where were you?
+        """.trimIndent()
+
+        val extractor = HybridNoticeExtractor(Application())
+        extractor.testInferenceOverride = {
+            """
+            {
+                "projectTitle": "Not specified",
+                "targetRoleName": "Unspecified",
+                "allAvailableRoles": ["Detective Cole", "Not specified", "Male Actors", "Actors", "Female Actors"],
+                "projectType": "Acting/Film/TV (Implied by casting call)",
+                "roleSize": "Supporting Role (Recurring)",
+                "tapeDueIsoDate": "TBD",
+                "destination": "Not specified",
+                "asks": ["Slate first", "None", "Not specified"]
+            }
+            """.trimIndent()
+        }
+
+        val f = NoticeParser.parseSmart(notice, extractor = extractor, today = now.toLocalDate())
+
+        // "Not specified" project title sanitized to empty string
+        assertEquals("", f.project)
+
+        // Generic roles filtered out, leaving single character "Detective Cole", auto-promoted to role
+        assertEquals(listOf("Detective Cole"), f.allAvailableRoles)
+        assertEquals("Detective Cole", f.role)
+
+        // Verbose project type normalized cleanly to "TV series"
+        assertEquals("TV series", f.projectType)
+
+        // Verbose role size normalized cleanly to "Supporting"
+        assertEquals("Supporting", f.roleSize)
+
+        // "TBD" due date sanitized to null
+        assertNull(f.due)
+
+        // "None" and "Not specified" filtered out of asks
+        assertEquals(listOf("Slate first"), f.asks)
+    }
+
+    @Test
+    fun parseMukeshChhabraCastingCallPosterExtractsAsksNotesDestinationAndZeroScenes() {
+        val poster = """
+            MUKESH CHHABRA CASTING COMPANY
+            CASTING CALL
+            LOOKING FOR SIKH ACTORS
+            • Age: 30-55 years
+            • Language: Hindi, English & Punjabi
+            • Requirement: Must wear a turban
+            • Location: Based in Bhopal
+            Send:
+            • CONTACT NUMBER
+            • DETAILED INTRODUCTION
+            • RECENT PICTURES
+            to: ojas@mccc.in, nupur@mccc.in
+        """.trimIndent()
+
+        val f = NoticeParser.parse(poster, now)
+
+        assertEquals(DocumentKind.CastingNotice, f.kind)
+        assertEquals(0, f.sceneCount)
+        assertEquals("", f.scriptText)
+        assertEquals(Destination.EmailOrLink, f.destination)
+
+        // Asks must ONLY include Headshot and Slate
+        assertEquals(listOf("Headshot", "Slate"), f.asks)
+        assertFalse(f.asks.contains("Full length"))
+        assertFalse(f.asks.contains("Landscape"))
+        assertFalse(f.asks.contains("Under 3 min"))
+
+        // Notes must contain bulleted requirements and emails
+        assertTrue(f.notes.contains("• Age: 30-55 years"))
+        assertTrue(f.notes.contains("• Language: Hindi, English & Punjabi"))
+        assertTrue(f.notes.contains("• Requirements: Must wear a turban"))
+        assertTrue(f.notes.contains("• Location: Based in Bhopal"))
+        assertTrue(f.notes.contains("ojas@mccc.in"))
+    }
+
+    @Test
+    fun parseSmartMukeshChhabraPosterMapsSemanticAsksAndExtractsNotesAndArchetypeRole() = runBlocking {
+        val poster = """
+            MUKESH CHHABRA CASTING COMPANY
+            CASTING CALL
+            LOOKING FOR SIKH ACTORS
+            • Age: 30-55 years
+            • Language: Hindi, English & Punjabi
+            • Requirement: Must wear a turban
+            • Location: Based in Bhopal
+            Send:
+            • CONTACT NUMBER
+            • DETAILED INTRODUCTION
+            • RECENT PICTURES
+            to: ojas@mccc.in, nupur@mccc.in
+        """.trimIndent()
+
+        val extractor = HybridNoticeExtractor(Application())
+        extractor.testInferenceOverride = {
+            """
+            {
+                "documentKind": "CastingNotice",
+                "projectTitle": "Mukesh Chhabra Casting Call",
+                "targetRoleName": "Sikh Actor",
+                "allAvailableRoles": ["Sikh Actor"],
+                "projectType": "Feature film",
+                "roleSize": "Lead",
+                "destination": "EmailOrLink",
+                "asks": ["Recent Pictures", "Detailed Introduction"],
+                "castingNotes": "• Age: 30-55 years\n• Language: Hindi, English & Punjabi\n• Requirement: Must wear a turban\n• Location: Based in Bhopal\n• Submit to: ojas@mccc.in, nupur@mccc.in"
+            }
+            """.trimIndent()
+        }
+
+        val f = NoticeParser.parseSmart(poster, extractor = extractor, today = now.toLocalDate())
+
+        assertEquals(DocumentKind.CastingNotice, f.kind)
+        assertEquals(0, f.sceneCount)
+        assertEquals("", f.scriptText)
+        assertEquals("Sikh Actor", f.role)
+        assertEquals(listOf("Sikh Actor"), f.allAvailableRoles)
+        assertEquals(Destination.EmailOrLink, f.destination)
+
+        // Semantic deliverable mapping: "Recent Pictures" -> "Headshot", "Detailed Introduction" -> "Slate"
+        assertEquals(listOf("Headshot", "Slate"), f.asks)
+
+        assertTrue(f.notes.contains("• Age: 30-55 years"))
+        assertTrue(f.notes.contains("• Requirement: Must wear a turban"))
+        assertTrue(f.notes.contains("ojas@mccc.in"))
+
+        // Verify draft and audition pieces creation
+        val draft = addDraftFromNoticeFields(f)
+        assertEquals(0, draft.scenes)
+        assertEquals(listOf("Headshot", "Slate"), draft.asks)
+
+        val audition = draft.makeAudition()
+        // Must contain Headshot and Slate ONLY. No scenes, no full length!
+        assertEquals(2, audition.pieces.size)
+        assertEquals("Headshot", audition.pieces[0].title)
+        assertEquals("Slate", audition.pieces[1].title)
+        assertTrue(audition.scenes.isEmpty())
+    }
 }

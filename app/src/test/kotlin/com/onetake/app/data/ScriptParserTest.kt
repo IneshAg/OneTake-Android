@@ -162,4 +162,25 @@ class ScriptParserTest {
             scene.lines[1].text,
         )
     }
+
+    @Test
+    fun `metadata headers and keyboard artifacts are rejected as character cues`() {
+        val noticeText = """
+            MUKESH CHHABRA CASTING
+            CASTING CALL
+            LOOKING FOR SIKH ACTORS
+            • AGE: 30-55 years
+            • LANGUAGE: Hindi, English & Punjabi
+            • REQUIREMENT: Must wear a turban
+            • LOCATION: Based in Bhopal
+            DETAILS: Send introduction video
+            PICTURES: Send recent headshots
+            F7 F8 F9
+            F12
+            ESC
+        """.trimIndent()
+
+        val chars = ScriptParser.extractCharacters(noticeText)
+        assertTrue("Notice headers and keyboard artifacts must not be extracted as characters (was $chars)", chars.isEmpty())
+    }
 }

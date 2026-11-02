@@ -156,7 +156,9 @@ fun NewAuditionScreen(onClose: () -> Unit) {
 
     val initialStep = when {
         draft.source == AddAuditionSource.Type -> AddStep.Review
+        store.incomingShare != null -> AddStep.Reading
         store.pendingNewAuditionUris.isNotEmpty() -> AddStep.Reading
+        draft.source == AddAuditionSource.Paste && notice.isBlank() -> AddStep.CouldNotRead
         notice.isNotBlank() -> AddStep.Reading
         else -> AddStep.Review
     }
@@ -359,6 +361,7 @@ fun NewAuditionScreen(onClose: () -> Unit) {
                 onDone = { result ->
                     val foundNothing = result.project.isEmpty() &&
                         result.role.isEmpty() &&
+                        result.allAvailableRoles.isEmpty() &&
                         result.rawScriptText.isBlank() &&
                         result.due == null &&
                         result.asks.isEmpty()
@@ -472,10 +475,12 @@ private fun AddReadingStep(
     }
     val sidesSummary = when {
         draft == null -> "analyzing…"
+        draft.kind == DocumentKind.CastingNotice && draft.rawScriptText.isBlank() -> "Notice only · no sides attached"
         draft.rawScriptText.isNotBlank() && draft.scenes == 1 -> "1 scene · dialogue extracted"
         draft.rawScriptText.isNotBlank() -> "${draft.scenes} scenes · dialogue extracted"
         draft.scenes == 1 -> "1 scene"
-        else -> "${draft.scenes} scenes"
+        draft.scenes > 1 -> "${draft.scenes} scenes"
+        else -> "Notice only"
     }
     val rows = listOf(
         "Project" to (draft?.project?.ifEmpty { if (draft.kind == DocumentKind.SidesOnly) "sides page" else "not in the notice" } ?: "analyzing…"),
@@ -825,20 +830,33 @@ private fun AddReviewStep(
                         val reparsedScenes = if (draft.rawScriptText.isNotBlank()) {
                             ScriptParser.parseScenes(draft.rawScriptText, myCharacter = newRole.ifBlank { "Role" })
                         } else emptyList()
+                        val newScenes = if (draft.rawScriptText.isNotBlank()) {
+                            maxOf(draft.scenes, reparsedScenes.size.coerceAtLeast(1))
+                        } else {
+                            draft.scenes
+                        }
                         onChange(
                             draft.copy(
                                 role = newRole,
-                                scenes = maxOf(draft.scenes, reparsedScenes.size.coerceAtLeast(1)),
+                                scenes = newScenes,
                             )
                         )
                     },
                 )
 
-                val rolesToDisplay = if (draft.allAvailableRoles.size > 1) {
+                val isCastingNoticeOnly = draft.kind == DocumentKind.CastingNotice && draft.rawScriptText.isBlank()
+                val candidateRoles = if (draft.allAvailableRoles.size > 1) {
                     draft.allAvailableRoles
-                } else if (draft.detectedCharacters.size > 1) {
+                } else if (!isCastingNoticeOnly && draft.detectedCharacters.size > 1) {
                     draft.detectedCharacters
                 } else emptyList()
+
+                val rolesToDisplay = with(NoticeParser) {
+                    candidateRoles
+                        .mapNotNull { it.cleanLlmField() }
+                        .filterNot { NoticeParser.GENERIC_ROLE_FILTER_REGEX.matches(it) || ScriptParser.isNonCharacterCue(it) }
+                        .distinct()
+                }
 
                 if (rolesToDisplay.size > 1) {
                     Spacer(Modifier.height(4.dp))
@@ -857,10 +875,15 @@ private fun AddReviewStep(
                                         val reparsedScenes = if (draft.rawScriptText.isNotBlank()) {
                                             ScriptParser.parseScenes(draft.rawScriptText, myCharacter = newRole)
                                         } else emptyList()
+                                        val newScenesForChip = if (draft.rawScriptText.isNotBlank()) {
+                                            maxOf(draft.scenes, reparsedScenes.size.coerceAtLeast(1))
+                                        } else {
+                                            draft.scenes
+                                        }
                                         onChange(
                                             draft.copy(
                                                 role = newRole,
-                                                scenes = maxOf(draft.scenes, reparsedScenes.size.coerceAtLeast(1)),
+                                                scenes = newScenesForChip,
                                             )
                                         )
                                     },
@@ -889,7 +912,8 @@ private fun AddReviewStep(
             }
 
             // Dialogue & Sides extraction status
-            if (draft.rawScriptText.isNotBlank() || draft.scenes > 0) {
+            val isPureCastingNotice = draft.kind == DocumentKind.CastingNotice && draft.rawScriptText.isBlank()
+            if (!isPureCastingNotice && (draft.rawScriptText.isNotBlank() || draft.scenes > 0)) {
                 SectionLabel("Script & sides")
                 Column(
                     Modifier
@@ -959,17 +983,25 @@ private fun AddReviewStep(
                     .padding(horizontal = 16.dp, vertical = 6.dp),
             ) {
                 val deliverables = buildList {
-                    add("Headshot" to (if ("Both profiles" in draft.asks) "Front + profiles" else "Front"))
-                    add("Slate" to "Name, height, city")
-                    if ("Full length" in draft.asks) add("Full length" to "Head to feet")
-                    val sceneCount = draft.scenes
+                    val hasExplicitAsks = draft.asks.isNotEmpty()
+
+                    if (!hasExplicitAsks || "Headshot" in draft.asks) {
+                        add("Headshot" to (if ("Both profiles" in draft.asks) "Front + profiles" else "Front"))
+                    }
+                    if (!hasExplicitAsks || "Slate" in draft.asks || "Slate first" in draft.asks) {
+                        add("Slate" to "Name, height, city")
+                    }
+                    if ("Full length" in draft.asks) {
+                        add("Full length" to "Head to feet")
+                    }
+                    val sceneCount = if (isPureCastingNotice) 0 else draft.scenes
                     if (sceneCount > 0) {
                         for (i in 1..sceneCount) {
                             val detail = if (parsedLineCount > 0) "Lines extracted" else "Scene $i"
                             add("Scene $i" to detail)
                         }
                     }
-                    draft.asks.filter { it !in listOf("Both profiles", "Full length") }.forEach {
+                    draft.asks.filter { it !in listOf("Headshot", "Slate", "Both profiles", "Full length") }.forEach {
                         add(it to addAskDetail(it, slateName, draft.role))
                     }
                 }

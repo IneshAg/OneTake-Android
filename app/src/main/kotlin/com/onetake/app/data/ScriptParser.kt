@@ -29,12 +29,17 @@ object ScriptParser {
         "CHARACTER", "CHARACTER NAME", "ROLE SIZE", "CASTING", "CASTING DIRECTOR",
         "CASTING OFFICE", "CD", "DIRECTOR", "PRODUCER", "DUE", "DEADLINE",
         "SUBMISSION DEADLINE", "SELF TAPE", "SELF-TAPE", "TAPE", "SUBMIT", "SUBMIT VIA",
-        "SUBMISSION", "SUBMISSIONS", "DATES", "SHOOT", "SHOOT DATES", "LOCATION",
+        "SUBMISSION", "SUBMISSIONS", "DATES", "SHOOT", "SHOOT DATES", "LOCATION", "LOCATIONS",
         "RATE", "PAY", "UNION", "INSTRUCTIONS", "FORMAT", "SLATE", "AGE", "GENDER",
-        "ETHNICITY", "EMAIL", "CONTACT", "LINK", "FROM", "TO", "CC", "SUBJECT", "RE", "FWD", "SENT", "DATE", "TIME",
+        "ETHNICITY", "EMAIL", "EMAILS", "CONTACT", "CONTACTS", "LINK", "FROM", "TO", "CC", "SUBJECT", "RE", "FWD", "SENT", "DATE", "TIME",
+        "LANGUAGE", "LANGUAGES", "REQUIREMENT", "REQUIREMENTS", "DETAILS", "INTRODUCTION",
+        "PICTURES", "PHOTOS", "PHOTOGRAPHS", "WEBSITE", "PHONE", "PHONES",
         "FLASHBACK", "END FLASHBACK", "MONTAGE", "END MONTAGE", "INTERCUT",
         "BACK TO SCENE", "POV", "INSERT", "SUPER", "CHYRON", "SFX", "VFX",
     )
+
+    private val KEYBOARD_ARTIFACT_REGEX = Regex("""(?i)^(?:F[0-9]{1,2}(?:\s+F[0-9]{1,2})*|ESC|PRTSC|PAUSE|INSERT|DELETE|PAGE\s+(?:UP|DOWN)|HOME|END|CAPS\s+LOCK|SHIFT|CTRL|ALT|CMD|COMMAND|OPTION|FN)$""")
+    private val LEADING_BULLET_REGEX = Regex("""^[•\-\*–—\s]+""")
 
     private val NON_CHARACTER_PREFIX_REGEX = Regex(
         """^(?:CONTINUED\b|\(CONTINUED\)|\(MORE\)|(?:WHITE|BLUE|PINK|YELLOW|GREEN|GOLDENROD|BUFF|SALMON|CHERRY)\s+REV|REVISION\b|DRAFT\b|DO\s+NOT\s+DISTRIBUTE|PROPERTY\s+OF|COPYRIGHT\b|EPISODE\s+\d|ACT\s+[0-9IVX]+|END\s+OF\s+|ANGLE\s+ON\b|CLOSE\s+ON\b|WIDE\s+ON\b|BACK\s+TO\b|CUT\s+TO\b|SMASH\s+CUT\b|MATCH\s+CUT\b|DISSOLVE\s+TO\b|FADE\s+(?:IN|OUT)\b|PAGE\s+\d)"""
@@ -80,7 +85,7 @@ object ScriptParser {
     }
 
     fun extractCharacters(rawText: String): List<String> {
-        val rawLines = rawText.lines().map { it.trim() }
+        val rawLines = rawText.lines().map { it.trim().replace(LEADING_BULLET_REGEX, "").trim() }
         val characters = LinkedHashSet<String>()
 
         for (i in rawLines.indices) {
@@ -210,7 +215,7 @@ object ScriptParser {
             }
 
             for (i in rawLines.indices) {
-                val line = rawLines[i]
+                val line = rawLines[i].replace(LEADING_BULLET_REGEX, "").trim()
                 if (line.isBlank()) {
                     flushDialogue()
                     currentCharacter = null
@@ -271,12 +276,16 @@ object ScriptParser {
         return NON_CHARACTER_PREFIX_REGEX.containsMatchIn(upper) || upper in NON_CHARACTER_KEYS
     }
 
-    private fun isNonCharacterCue(upperCandidate: String): Boolean {
-        val cleaned = upperCandidate.trim().trimEnd(':').trim()
+    internal fun isNonCharacterCue(upperCandidate: String): Boolean {
+        val cleaned = upperCandidate.trim().trimEnd(':').trim().replace(LEADING_BULLET_REGEX, "").trim()
         if (cleaned.isEmpty()) return true
-        if (isSlugOrTransition(cleaned)) return true
-        if (cleaned in NON_CHARACTER_KEYS) return true
-        if (NON_CHARACTER_PREFIX_REGEX.containsMatchIn(cleaned)) return true
+        val upper = cleaned.uppercase()
+        if (isSlugOrTransition(upper)) return true
+        if (upper in NON_CHARACTER_KEYS) return true
+        if (NON_CHARACTER_PREFIX_REGEX.containsMatchIn(upper)) return true
+        if (KEYBOARD_ARTIFACT_REGEX.matches(upper)) return true
+        if (upper.contains("CASTING") || upper.contains("AUDITION")) return true
+        if (upper.startsWith("LOOKING FOR") || upper.startsWith("SEEKING") || upper.startsWith("OPEN CALL")) return true
         return false
     }
 

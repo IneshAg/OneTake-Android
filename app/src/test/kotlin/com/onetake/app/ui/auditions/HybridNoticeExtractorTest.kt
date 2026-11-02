@@ -29,7 +29,8 @@ class HybridNoticeExtractorTest {
                 "characterNormalizationMap": {
                     "DETE CTIVE C0LE": "DETECTIVE COLE"
                 },
-                "firstScriptLineAnchor": "MAYA: You came back."
+                "firstScriptLineAnchor": "MAYA: You came back.",
+                "castingNotes": "• Age: 30-55\n• Language: Hindi"
             }
         """.trimIndent()
 
@@ -47,6 +48,7 @@ class HybridNoticeExtractorTest {
         assertEquals(listOf("Slate first", "Landscape"), parsed?.asks)
         assertEquals("DETECTIVE COLE", parsed?.characterNormalizationMap?.get("DETE CTIVE C0LE"))
         assertEquals("MAYA: You came back.", parsed?.firstScriptLineAnchor)
+        assertEquals("• Age: 30-55\n• Language: Hindi", parsed?.castingNotes)
     }
 
     @Test
@@ -175,5 +177,43 @@ class HybridNoticeExtractorTest {
 
         extractor.close()
         assertTrue("GPU availability must reset to true on close", extractor.isGpuAvailableForTesting())
+    }
+
+    @Test
+    fun maskPiiReplacesEmailsAndPhoneNumbersWhilePreservingDates() {
+        val text = """
+            Please submit tapes to casting.office+selftape@agency.co.uk or director@film.org.
+            For questions call +1 (555) 234-5678 or 0412 345 678.
+            Deadline: 2026-11-10 at 5:00 PM (alternate callback date: 11/15/2026).
+        """.trimIndent()
+
+        val masked = HybridNoticeExtractor.maskPii(text)
+
+        assertTrue(masked.contains("[EMAIL_SUBMISSION]"))
+        assertTrue(!masked.contains("casting.office+selftape@agency.co.uk"))
+        assertTrue(!masked.contains("director@film.org"))
+        assertTrue(masked.contains("[PHONE]"))
+        assertTrue(!masked.contains("555) 234-5678"))
+        assertTrue(!masked.contains("0412 345 678"))
+
+        // Preserves dates
+        assertTrue(masked.contains("2026-11-10"))
+        assertTrue(masked.contains("11/15/2026"))
+    }
+
+    @Test
+    fun sliceForAiCoreLimitsToSidesIndexPlus250OrMaxLimit() {
+        val header = "Project: Horizon\nRole: Alex\nDue: Tomorrow\n\n"
+        val sidesOpening = "SCENE 1 - INT. COFFEE SHOP - DAY\n"
+        val dialogue = "ALEX: I can't believe it.\nSAM: Neither can I.\n".repeat(200) // 8000+ chars
+        val fullNotice = header + sidesOpening + dialogue
+
+        val sliced = HybridNoticeExtractor.sliceForAiCore(fullNotice)
+
+        assertTrue(sliced.length <= HybridNoticeExtractor.AICORE_MAX_INPUT_CHAR_SLICE)
+        assertTrue(sliced.contains("SCENE 1 - INT. COFFEE SHOP - DAY"))
+        assertTrue(sliced.contains("Project: Horizon"))
+        // Confirms it does not contain the entire 8000 char script
+        assertTrue(sliced.length < fullNotice.length / 4)
     }
 }

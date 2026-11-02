@@ -140,6 +140,116 @@ internal object NoticeParser {
     )
     private val DUE_HINT = Regex("""(?i)\b(due|deadline|submit|submissions?|tapes?|by|before|no later than)\b""")
 
+    private val EMAIL_PATTERN = Regex("""[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}""")
+
+    private val LLM_PLACEHOLDER_REGEX = Regex(
+        """(?i)^(not\s+specified|unspecified|unknown|none|n/?a|null|tbd|upcoming\s+project)$"""
+    )
+    internal val GENERIC_ROLE_FILTER_REGEX = Regex(
+        """(?i)^(not\s+specified|unspecified|unknown|none|n/?a|null|tbd|upcoming\s+project|actors?|male\s+actors?|female\s+actors?|all\s+actors?|all\s+roles?|open\s+call|unnamed)$"""
+    )
+
+    internal fun String?.cleanLlmField(): String? {
+        if (this == null) return null
+        val trimmed = this.trim().trim('"', '\'').trimEnd('.').trim()
+        if (trimmed.isBlank() || LLM_PLACEHOLDER_REGEX.matches(trimmed)) {
+            return null
+        }
+        return trimmed
+    }
+
+    fun mapSemanticAsk(rawAsk: String): String? {
+        val l = rawAsk.trim().lowercase()
+        return when {
+            Regex("""(?i)\b(?:recent\s+pictures?|photos?|photographs?|headshots?|pictures?)\b""").containsMatchIn(l) -> "Headshot"
+            Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile|slate|ident|idents)\b""").containsMatchIn(l) -> {
+                if (Regex("""(?i)\b(?:slate\s*first|slate\s*at\s*(?:the\s*)?beginning)\b""").containsMatchIn(l)) "Slate first" else "Slate"
+            }
+            Regex("""(?i)\b(?:full-length|full\s*length|full\s*body|head\s*to\s*toe|head\s*to\s*feet)\b""").containsMatchIn(l) -> "Full length"
+            Regex("""(?i)\b(?:both\s*profiles?|side\s*profiles?|left\s*and\s*right\s*profile)\b""").containsMatchIn(l) -> "Both profiles"
+            Regex("""(?i)\b(?:slate\s*first|slate\s*at\s*(?:the\s*)?beginning)\b""").containsMatchIn(l) -> "Slate first"
+            Regex("""(?i)\b(?:landscape|horizontal)\b""").containsMatchIn(l) -> "Landscape"
+            Regex("""(?i)\b(?:under\s*3\s*min|max(?:imum)?\s*3\s*min)\b""").containsMatchIn(l) -> "Under 3 min"
+            else -> null
+        }
+    }
+
+    fun extractSemanticAsks(text: String): List<String> {
+        val l = text.lowercase()
+        val asks = mutableListOf<String>()
+        if (Regex("""(?i)\b(?:recent\s+pictures?|photos?|photographs?|headshots?|pictures?)\b""").containsMatchIn(l)) asks.add("Headshot")
+        if (Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile|slate|ident|idents)\b""").containsMatchIn(l)) {
+            if (Regex("""(?i)\b(?:slate\s*first|slate\s*at\s*(?:the\s*)?beginning)\b""").containsMatchIn(l)) {
+                asks.add("Slate first")
+            }
+            asks.add("Slate")
+        }
+        if (Regex("""(?i)\b(?:full-length|full\s*length|full\s*body|head\s*to\s*toe|head\s*to\s*feet)\b""").containsMatchIn(l)) asks.add("Full length")
+        if (Regex("""(?i)\b(?:both\s*profiles?|side\s*profiles?|left\s*and\s*right\s*profile)\b""").containsMatchIn(l)) asks.add("Both profiles")
+        if (Regex("""(?i)\b(?:landscape|horizontal)\b""").containsMatchIn(l)) asks.add("Landscape")
+        if (Regex("""(?i)\b(?:under\s*3\s*min|max(?:imum)?\s*3\s*min)\b""").containsMatchIn(l)) asks.add("Under 3 min")
+        return asks.distinct()
+    }
+
+    fun detectDestination(destinationHint: String?, rawText: String): Destination {
+        val d = destinationHint?.lowercase().orEmpty()
+        if ("casting networks" in d || "castingnetworks" in d) return Destination.CastingNetworks
+        if ("spotlight" in d) return Destination.Spotlight
+        if ("actors access" in d || "actorsaccess" in d || "eco cast" in d || "ecocast" in d) return Destination.ActorsAccess
+        if ("email" in d || "link" in d || "submission" in d) return Destination.EmailOrLink
+
+        val lowerText = rawText.lowercase()
+        if ("casting networks" in lowerText || "castingnetworks" in lowerText) return Destination.CastingNetworks
+        if (Regex("""(?i)\bspotlight\b""").containsMatchIn(lowerText)) return Destination.Spotlight
+        if ("actors access" in lowerText || "eco cast" in lowerText || "ecocast" in lowerText) return Destination.ActorsAccess
+
+        if (EMAIL_PATTERN.containsMatchIn(rawText) ||
+            "[email_submission]" in lowerText ||
+            Regex("""(?i)\b(?:whatsapp|we\s*transfer|wetransfer|dropbox|google\s*drive|vimeo)\b""").containsMatchIn(lowerText) ||
+            Regex("""(?i)\b(?:email|e-mail|send\s+to|submit\s+to)\b""").containsMatchIn(lowerText)
+        ) {
+            return Destination.EmailOrLink
+        }
+
+        return Destination.ActorsAccess
+    }
+
+    fun extractCastingNotes(text: String): String {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+        val bulletPoints = mutableListOf<String>()
+
+        val noteKeywords = listOf(
+            Regex("""(?i)^(?:•\s*|-\s*|\*\s*)?(wardrobe|dress\s*code|costume)\s*[:\-]\s*(.*)$""") to "Wardrobe",
+            Regex("""(?i)^(?:•\s*|-\s*|\*\s*)?(age(?:\s*range|\s*group)?)\s*[:\-]\s*(.*)$""") to "Age",
+            Regex("""(?i)^(?:•\s*|-\s*|\*\s*)?(languages?|dialects?|accent)\s*[:\-]\s*(.*)$""") to "Language",
+            Regex("""(?i)^(?:•\s*|-\s*|\*\s*)?(locations?|based\s*in|shoot\s*location)\s*[:\-]\s*(.*)$""") to "Location",
+            Regex("""(?i)^(?:•\s*|-\s*|\*\s*)?(requirements?|must\s*have|specs?)\s*[:\-]\s*(.*)$""") to "Requirements",
+            Regex("""(?i)^(?:•\s*|-\s*|\*\s*)?(note|notes|instructions?|important)\s*[:\-]\s*(.*)$""") to "Notes",
+        )
+
+        for (line in lines) {
+            for ((regex, label) in noteKeywords) {
+                val match = regex.matchEntire(line)
+                if (match != null) {
+                    val detail = match.groupValues[2].trim()
+                    if (detail.isNotBlank()) {
+                        bulletPoints.add("• $label: $detail")
+                    }
+                }
+            }
+        }
+
+        val emails = EMAIL_PATTERN.findAll(text)
+            .map { it.value }
+            .distinct()
+            .toList()
+        if (emails.isNotEmpty()) {
+            bulletPoints.add("• Submit to: ${emails.joinToString(", ")}")
+        }
+
+        return bulletPoints.distinct().joinToString("\n")
+    }
+
     fun parse(text: String, today: LocalDateTime = LocalDateTime.now()): NoticeFields {
         val clean = text.trim()
         if (clean.isBlank()) {
@@ -213,11 +323,13 @@ internal object NoticeParser {
         val projectType = normalizeProjectType(rawType.ifEmpty { noticePortion })
 
         val castingOffice = firstMatch(CASTING_PATTERNS, noticePortion)?.take(48).orEmpty()
-        val notes = NOTES_PATTERNS.asSequence()
+        val extractedNotes = extractCastingNotes(noticePortion)
+        val fallbackNotes = NOTES_PATTERNS.asSequence()
             .flatMap { it.findAll(noticePortion) }
             .map { it.groupValues[1].trim() }
             .filter { it.isNotEmpty() }
             .joinToString(" · ")
+        val notes = extractedNotes.ifBlank { fallbackNotes }
 
         val headerLower = headerPartition.lowercase()
         val negatedSlate = Regex("""(?i)\b(?:no|without|don'?t|do[ \t]+not)[ \t]+(?:[a-z]+[ \t]+){0,2}slate\b""")
@@ -226,22 +338,18 @@ internal object NoticeParser {
         val asks = buildList {
             if (!negatedSlate && Regex("""(?i)\b(?:slate|ident)\b""").containsMatchIn(headerLower)) add("Slate first")
             if (Regex("""(?i)\b(?:landscape|horizontal)\b""").containsMatchIn(headerLower)) add("Landscape")
-            if (Regex("""(?i)\b(?:full-length|full[ \t]+length|full[ \t]+body|head[ \t]+to[ \t]+toe)\b""").containsMatchIn(headerLower)) add("Full length")
-            if (Regex("""(?i)\b(?:both[ \t]+profiles|profile[ \t]+shots|left[ \t]+and[ \t]+right[ \t]+profile)\b""").containsMatchIn(headerLower)) add("Both profiles")
+            if (Regex("""(?i)\b(?:full-length|full[ \t]+length|full[ \t]+body|head[ \t]+to[ \t]+toe|head[ \t]+to[ \t]+feet)\b""").containsMatchIn(headerLower)) add("Full length")
+            if (Regex("""(?i)\b(?:both[ \t]+profiles|side[ \t]+profiles|profile[ \t]+shots|left[ \t]+and[ \t]+right[ \t]+profile)\b""").containsMatchIn(headerLower)) add("Both profiles")
             if (Regex("""(?i)\bunder[ \t]+(?:3|three)[ \t]*min""").containsMatchIn(headerLower)) add("Under 3 min")
-        }
+            if (Regex("""(?i)\b(?:recent\s+pictures?|photos?|photographs?|pictures?)\b""").containsMatchIn(headerLower)) add("Headshot")
+            if (!negatedSlate && Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile)\b""").containsMatchIn(headerLower)) add("Slate")
+        }.distinct()
 
-        val noticeLower = noticePortion.lowercase()
-        val destination = when {
-            "casting networks" in noticeLower -> Destination.CastingNetworks
-            Regex("""(?i)\bspotlight\b""").containsMatchIn(noticeLower) -> Destination.Spotlight
-            "actors access" in noticeLower || "eco cast" in noticeLower || "ecocast" in noticeLower -> Destination.ActorsAccess
-            Regex("""(?i)\b(?:email|e-mail|link|wetransfer|we[ \t]+transfer|dropbox|vimeo|google[ \t]+drive)\b""").containsMatchIn(noticeLower) ->
-                Destination.EmailOrLink
-            else -> Destination.ActorsAccess
-        }
+        val destination = detectDestination(null, clean)
 
-        val sceneCount = if (extractedSides.isNotBlank()) {
+        val sceneCount = if (kind == DocumentKind.CastingNotice && extractedSides.isBlank()) {
+            0
+        } else if (extractedSides.isNotBlank()) {
             ScriptParser.parseScenes(extractedSides, role).size.coerceAtLeast(1)
         } else {
             1
@@ -764,56 +872,122 @@ internal object NoticeParser {
             }
         }
 
-        val targetRole = llm.targetRoleName.trim().ifEmpty {
-            if (llm.allAvailableRoles.size == 1) llm.allAvailableRoles.first() else ""
+        val cleanedProject = llm.projectTitle.cleanLlmField().orEmpty()
+        val cleanedTargetRole = llm.targetRoleName.cleanLlmField().orEmpty()
+        val cleanedAvailableRoles = llm.allAvailableRoles
+            .mapNotNull { it.cleanLlmField() }
+            .filterNot { GENERIC_ROLE_FILTER_REGEX.matches(it) || ScriptParser.isNonCharacterCue(it) }
+
+        val targetRole = cleanedTargetRole.ifEmpty {
+            if (cleanedAvailableRoles.size == 1) cleanedAvailableRoles.first() else ""
         }
 
-        val rawAnchor = llm.firstScriptLineAnchor.trim()
-        var normalizedAnchor = rawAnchor
-        if (llm.characterNormalizationMap.isNotEmpty() && rawAnchor.isNotBlank()) {
-            for ((typo, fix) in llm.characterNormalizationMap) {
-                if (typo.isNotBlank() && fix.isNotBlank()) {
-                    normalizedAnchor = normalizedAnchor.replace(typo, fix)
+        val cleanedType = llm.projectType.cleanLlmField()
+        val normalizedProjectType = when {
+            cleanedType.isNullOrBlank() -> "Feature film"
+            cleanedType.equals("Feature film", ignoreCase = true) -> cleanedType
+            cleanedType.equals("TV series", ignoreCase = true) -> cleanedType
+            cleanedType.equals("Short film", ignoreCase = true) -> cleanedType
+            else -> normalizeProjectType(cleanedType).ifEmpty { cleanedType }
+        }
+
+        val cleanedSize = llm.roleSize.cleanLlmField()
+        val normalizedRoleSize = when {
+            cleanedSize.isNullOrBlank() -> "Lead"
+            cleanedSize.equals("Guest Star", ignoreCase = true) -> cleanedSize
+            cleanedSize.equals("Series Regular", ignoreCase = true) -> cleanedSize
+            cleanedSize.equals("Co-Star", ignoreCase = true) || cleanedSize.equals("Costar", ignoreCase = true) -> cleanedSize
+            cleanedSize.equals("Day Player", ignoreCase = true) -> cleanedSize
+            else -> normalizeRoleSize(cleanedSize).ifEmpty { cleanedSize }
+        }
+
+        val mappedLlmAsks = llm.asks
+            .mapNotNull { it.cleanLlmField() }
+            .flatMap { ask ->
+                val mapped = mapSemanticAsk(ask)
+                if (mapped != null) {
+                    listOf(mapped)
+                } else if (!LLM_PLACEHOLDER_REGEX.matches(ask)) {
+                    listOf(ask)
+                } else {
+                    emptyList()
                 }
             }
+            .distinct()
+
+        val asks = if (mappedLlmAsks.isNotEmpty()) {
+            mappedLlmAsks
+        } else {
+            extractSemanticAsks(rawText)
         }
+
+        val isCastingNoticeOnly = llm.documentKind.trim().equals("CastingNotice", ignoreCase = true)
 
         var scriptText = ""
-        var sceneCount = 1
+        var sceneCount = 0
         var detectedChars = emptyList<String>()
+        val kind: DocumentKind
 
-        if (rawAnchor.isNotBlank()) {
-            var anchorIdx = normalizedText.indexOf(normalizedAnchor)
-            if (anchorIdx < 0 && rawAnchor != normalizedAnchor) {
-                anchorIdx = normalizedText.indexOf(rawAnchor)
-            }
-
-            val slicedSidesNullable = if (anchorIdx >= 0) {
-                normalizedText.substring(anchorIdx).trim()
-            } else {
-                val rawIdx = rawText.indexOf(rawAnchor)
-                if (rawIdx >= 0) {
-                    var rawSliced = rawText.substring(rawIdx).trim()
-                    for ((typo, fix) in llm.characterNormalizationMap) {
-                        if (typo.isNotBlank() && fix.isNotBlank()) {
-                            rawSliced = rawSliced.replace(typo, fix)
-                        }
-                    }
-                    rawSliced
-                } else null
-            }
-
-            if (slicedSidesNullable != null) {
-                var slicedSides: String = slicedSidesNullable
+        if (isCastingNoticeOnly) {
+            kind = DocumentKind.CastingNotice
+        } else {
+            val rawAnchor = llm.firstScriptLineAnchor.cleanLlmField().orEmpty()
+            var normalizedAnchor = rawAnchor
+            if (llm.characterNormalizationMap.isNotEmpty() && rawAnchor.isNotBlank()) {
                 for ((typo, fix) in llm.characterNormalizationMap) {
                     if (typo.isNotBlank() && fix.isNotBlank()) {
-                        slicedSides = slicedSides.replace(typo, fix)
+                        normalizedAnchor = normalizedAnchor.replace(typo, fix)
                     }
                 }
-                val parsedScenes = ScriptParser.parseScenes(slicedSides, myCharacter = targetRole.ifBlank { "Role" })
-                scriptText = slicedSides
-                sceneCount = maxOf(1, parsedScenes.size)
-                detectedChars = ScriptParser.extractCharacters(slicedSides)
+            }
+
+            if (rawAnchor.isNotBlank()) {
+                var anchorIdx = normalizedText.indexOf(normalizedAnchor)
+                if (anchorIdx < 0 && rawAnchor != normalizedAnchor) {
+                    anchorIdx = normalizedText.indexOf(rawAnchor)
+                }
+
+                val slicedSidesNullable = if (anchorIdx >= 0) {
+                    normalizedText.substring(anchorIdx).trim()
+                } else {
+                    val rawIdx = rawText.indexOf(rawAnchor)
+                    if (rawIdx >= 0) {
+                        var rawSliced = rawText.substring(rawIdx).trim()
+                        for ((typo, fix) in llm.characterNormalizationMap) {
+                            if (typo.isNotBlank() && fix.isNotBlank()) {
+                                rawSliced = rawSliced.replace(typo, fix)
+                            }
+                        }
+                        rawSliced
+                    } else null
+                }
+
+                if (slicedSidesNullable != null) {
+                    var slicedSides: String = slicedSidesNullable
+                    for ((typo, fix) in llm.characterNormalizationMap) {
+                        if (typo.isNotBlank() && fix.isNotBlank()) {
+                            slicedSides = slicedSides.replace(typo, fix)
+                        }
+                    }
+                    val parsedScenes = ScriptParser.parseScenes(slicedSides, myCharacter = targetRole.ifBlank { "Role" })
+                    scriptText = slicedSides
+                    sceneCount = maxOf(1, parsedScenes.size)
+                    detectedChars = ScriptParser.extractCharacters(slicedSides)
+                } else {
+                    val partition = classifyAndPartition(normalizedText)
+                    if (partition.sidesText.isNotBlank()) {
+                        var sides = partition.sidesText
+                        for ((typo, fix) in llm.characterNormalizationMap) {
+                            if (typo.isNotBlank() && fix.isNotBlank()) {
+                                sides = sides.replace(typo, fix)
+                            }
+                        }
+                        val parsedScenes = ScriptParser.parseScenes(sides, myCharacter = targetRole.ifBlank { "Role" })
+                        scriptText = sides
+                        sceneCount = maxOf(1, parsedScenes.size)
+                        detectedChars = ScriptParser.extractCharacters(sides)
+                    }
+                }
             } else {
                 val partition = classifyAndPartition(normalizedText)
                 if (partition.sidesText.isNotBlank()) {
@@ -829,28 +1003,23 @@ internal object NoticeParser {
                     detectedChars = ScriptParser.extractCharacters(sides)
                 }
             }
-        } else {
-            val partition = classifyAndPartition(normalizedText)
-            if (partition.sidesText.isNotBlank()) {
-                var sides = partition.sidesText
-                for ((typo, fix) in llm.characterNormalizationMap) {
-                    if (typo.isNotBlank() && fix.isNotBlank()) {
-                        sides = sides.replace(typo, fix)
-                    }
-                }
-                val parsedScenes = ScriptParser.parseScenes(sides, myCharacter = targetRole.ifBlank { "Role" })
-                scriptText = sides
-                sceneCount = maxOf(1, parsedScenes.size)
-                detectedChars = ScriptParser.extractCharacters(sides)
+
+            kind = when (llm.documentKind.trim().lowercase()) {
+                "sidesonly", "sides_only" -> DocumentKind.SidesOnly
+                "noticewithsides", "notice_with_sides" -> DocumentKind.NoticeWithSides
+                "castingnotice", "casting_notice" -> if (scriptText.isNotBlank()) DocumentKind.NoticeWithSides else DocumentKind.CastingNotice
+                else -> if (scriptText.isNotBlank()) DocumentKind.NoticeWithSides else DocumentKind.CastingNotice
             }
         }
 
-        val parsedDue = if (llm.tapeDueIsoDate.isNotBlank()) {
+        val cleanedDueIso = llm.tapeDueIsoDate.cleanLlmField()
+        val parsedDue = if (!cleanedDueIso.isNullOrBlank()) {
             runCatching {
-                val date = LocalDate.parse(llm.tapeDueIsoDate.trim())
-                val time = if (llm.tapeDueTime24h.isNotBlank()) {
+                val date = LocalDate.parse(cleanedDueIso)
+                val cleanedTime = llm.tapeDueTime24h.cleanLlmField()
+                val time = if (!cleanedTime.isNullOrBlank()) {
                     runCatching {
-                        val parts = llm.tapeDueTime24h.trim().split(":")
+                        val parts = cleanedTime.split(":")
                         LocalTime.of(parts[0].toInt(), parts.getOrNull(1)?.toInt() ?: 0)
                     }.getOrDefault(LocalTime.of(10, 0))
                 } else {
@@ -860,39 +1029,40 @@ internal object NoticeParser {
             }.getOrNull() ?: parseDue(rawText, today.atStartOfDay())
         } else null
 
-        val parsedDestination = if (llm.destination.isNotBlank()) {
-            val d = llm.destination.lowercase()
-            when {
-                "casting networks" in d -> Destination.CastingNetworks
-                "spotlight" in d -> Destination.Spotlight
-                "actors access" in d || "eco cast" in d || "ecocast" in d -> Destination.ActorsAccess
-                "email" in d || "link" in d -> Destination.EmailOrLink
-                else -> Destination.ActorsAccess
-            }
-        } else Destination.ActorsAccess
+        val parsedDestination = detectDestination(llm.destination.cleanLlmField(), rawText)
 
-        val kind = when (llm.documentKind.trim().lowercase()) {
-            "sidesonly", "sides_only" -> DocumentKind.SidesOnly
-            "noticewithsides", "notice_with_sides" -> DocumentKind.NoticeWithSides
-            "castingnotice", "casting_notice" -> if (scriptText.isNotBlank()) DocumentKind.NoticeWithSides else DocumentKind.CastingNotice
-            else -> if (scriptText.isNotBlank()) DocumentKind.NoticeWithSides else DocumentKind.CastingNotice
+        val finalAvailableRoles = if (cleanedAvailableRoles.isNotEmpty()) {
+            cleanedAvailableRoles
+        } else if (targetRole.isNotEmpty()) {
+            listOf(targetRole)
+        } else if (!isCastingNoticeOnly && detectedChars.isNotEmpty()) {
+            detectedChars
+        } else {
+            emptyList()
+        }
+
+        val cleanedCastingNotes = llm.castingNotes.cleanLlmField().orEmpty()
+        val notes = if (cleanedCastingNotes.isNotBlank()) {
+            cleanedCastingNotes
+        } else {
+            extractCastingNotes(rawText)
         }
 
         return NoticeFields(
-            project = llm.projectTitle.trim(),
+            project = cleanedProject,
             role = targetRole,
-            allAvailableRoles = llm.allAvailableRoles,
-            projectType = llm.projectType.trim().ifBlank { "Feature film" },
-            roleSize = llm.roleSize.trim().ifBlank { "Lead" },
+            allAvailableRoles = finalAvailableRoles,
+            projectType = normalizedProjectType,
+            roleSize = normalizedRoleSize,
             due = parsedDue,
             destination = parsedDestination,
-            asks = llm.asks,
+            asks = asks,
             kind = kind,
             scriptText = scriptText,
             sceneCount = sceneCount,
             detectedCharacters = detectedChars,
             castingOffice = "",
-            notes = "",
+            notes = notes,
         )
     }
 }

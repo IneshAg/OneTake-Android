@@ -38,7 +38,8 @@ data class LlmParsedNotice(
     val destination: String = "",
     val asks: List<String> = emptyList(),
     val characterNormalizationMap: Map<String, String> = emptyMap(),
-    val firstScriptLineAnchor: String = ""
+    val firstScriptLineAnchor: String = "",
+    val castingNotes: String = ""
 )
 
 class HybridNoticeExtractor internal constructor(
@@ -48,11 +49,56 @@ class HybridNoticeExtractor internal constructor(
         private const val TAG = "HybridNoticeExtractor"
         const val LLM_INFERENCE_TIMEOUT_MS = 12000L
         const val MAX_INPUT_CHAR_SLICE = 1800
+        const val AICORE_MAX_INPUT_CHAR_SLICE = 1200
+
+        private val EMAIL_REGEX = Regex("""[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}""")
+        private val PHONE_REGEX = Regex("""\+?\d[\d\s\-()]{7,}\d""")
+        private val DATE_LIKE_REGEX = Regex("""^\d{4}[-/]\d{1,2}[-/]\d{1,2}$|^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$""")
 
         val json = Json {
             ignoreUnknownKeys = true
             isLenient = true
             coerceInputValues = true
+        }
+
+        fun maskPii(text: String): String {
+            val maskedEmails = text.replace(EMAIL_REGEX, "[EMAIL_SUBMISSION]")
+            return PHONE_REGEX.replace(maskedEmails) { matchResult ->
+                val matched = matchResult.value.trim()
+                if (DATE_LIKE_REGEX.matches(matched)) {
+                    matchResult.value
+                } else {
+                    "[PHONE]"
+                }
+            }
+        }
+
+        fun sliceForAiCore(rawText: String, maxLimit: Int = AICORE_MAX_INPUT_CHAR_SLICE): String {
+            val sidesIndicators = listOf(
+                Regex("""(?mi)^(?:\s*\[?(?:SCENE|INT\.|EXT\.|ACT)\b)"""),
+                Regex("""(?m)^[A-Z0-9\s]{2,25}:""")
+            )
+            var firstSidesIndex = -1
+            for (pattern in sidesIndicators) {
+                val match = pattern.find(rawText)
+                if (match != null) {
+                    if (firstSidesIndex == -1 || match.range.first < firstSidesIndex) {
+                        firstSidesIndex = match.range.first
+                    }
+                }
+            }
+
+            val targetLen = if (firstSidesIndex != -1 && (firstSidesIndex + 250) < maxLimit) {
+                (firstSidesIndex + 250).coerceAtLeast(100)
+            } else {
+                maxLimit
+            }
+            return rawText.take(targetLen)
+        }
+
+        fun prepareAiCorePromptText(rawText: String): String {
+            val sliced = sliceForAiCore(rawText)
+            return maskPii(sliced)
         }
 
         @Volatile
@@ -82,11 +128,19 @@ Extract audition notice details as JSON (Today's date is $today):
   "roleSize": "",
   "tapeDueIsoDate": "YYYY-MM-DD",
   "tapeDueTime24h": "HH:MM",
-  "destination": "",
-  "asks": ["Slate first", "Landscape", "Full length", "Both profiles", "Under 3 min"],
+  "destination": "ActorsAccess|CastingNetworks|Spotlight|EmailOrLink",
+  "asks": [],
   "characterNormalizationMap": {},
-  "firstScriptLineAnchor": ""
+  "firstScriptLineAnchor": "",
+  "castingNotes": ""
 }
+Rules:
+- "documentKind": "CastingNotice" if casting call/poster with no script sides; "SidesOnly" if pure script dialogue; "NoticeWithSides" if notice plus script.
+- "targetRoleName": Character name. For open casting calls without a named character (e.g. "Looking for Sikh Actors"), use a clean role archetype like "Sikh Actor" (NEVER "Not specified", "Unknown", or "None").
+- "allAvailableRoles": List of specific character names or role archetypes found.
+- "destination": MUST be one of "ActorsAccess", "CastingNetworks", "Spotlight", or "EmailOrLink" (never a city or location). Use "EmailOrLink" if any email address, [EMAIL_SUBMISSION], phone number, or direct link is provided.
+- "asks": ONLY include deliverables explicitly requested in the notice text (e.g. "Recent Pictures", "Detailed Introduction", "Headshot", "Slate", "Full length", "Both profiles", "Landscape", "Under 3 min"). Leave empty [] if none requested.
+- "castingNotes": Clean, concise bulleted summary of wardrobe, age range, languages, requirements, location, and submission emails/contacts (e.g. "• Age: 30-55 years\n• Language: Hindi, English & Punjabi\n• Requirement: Must wear a turban\n• Location: Based in Bhopal\n• Submit to: ojas@mccc.in, nupur@mccc.in").
 Output valid JSON only.
 
 Notice text:
@@ -199,8 +253,11 @@ $inputSlice
                 val status = client.checkStatus()
                 Log.i(TAG, "Tier 1 System AICore checkStatus: $status")
                 if (status == FeatureStatus.AVAILABLE) {
+                    val aiCoreInputSlice = prepareAiCorePromptText(rawText)
+                    val aiCorePrompt = buildPrompt(aiCoreInputSlice, today)
+                    Log.i(TAG, "Tier 1 AICore prompt prepared: ${aiCoreInputSlice.length} chars (rawText=${rawText.length} chars)")
                     val response = withTimeoutOrNull(inferenceTimeoutMs) {
-                        client.generateContent(prompt)
+                        client.generateContent(aiCorePrompt)
                     }
                     val text = response?.candidates?.firstOrNull()?.text
                     Log.i(TAG, "Tier 1 AICore raw response: $text")

@@ -164,6 +164,12 @@ class AppStore(application: Application) : AndroidViewModel(application) {
             notifyTwoHours = saved.notifyTwoHours
         }
         isLoading = false
+
+        saveScope.launch(Dispatchers.IO) {
+            runCatching {
+                com.onetake.app.ui.auditions.HybridNoticeExtractor.getInstance(context).warmUp()
+            }
+        }
     }
 
     /** Debounced so rapid edits don't hit disk on every single state change. */

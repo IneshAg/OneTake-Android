@@ -24,12 +24,14 @@ import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Keyboard
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +45,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
@@ -127,6 +130,7 @@ internal data class AddDraft(
     val source: AddAuditionSource = AddAuditionSource.Paste,
     val kind: DocumentKind = DocumentKind.CastingNotice,
     val detectedCharacters: List<String> = emptyList(),
+    val allAvailableRoles: List<String> = emptyList(),
 ) {
     fun makeAudition(hasHeadshot: Boolean = false, hasProfiles: Boolean = false): Audition {
         val effectiveRole = role
@@ -207,6 +211,31 @@ internal fun addParseNotice(text: String): AddDraft {
         rawScriptText = f.scriptText,
         kind = f.kind,
         detectedCharacters = f.detectedCharacters,
+        allAvailableRoles = f.allAvailableRoles,
+    )
+}
+
+internal fun addDraftFromNoticeFields(f: NoticeFields, source: AddAuditionSource = AddAuditionSource.Paste): AddDraft {
+    val autoRole = f.role.ifEmpty {
+        if (f.allAvailableRoles.size == 1) f.allAvailableRoles.first()
+        else if (f.detectedCharacters.size == 1) f.detectedCharacters.first() else ""
+    }
+    return AddDraft(
+        project = f.project,
+        role = autoRole,
+        projectType = f.projectType.ifBlank { "Feature film" },
+        roleSize = f.roleSize.ifBlank { "Lead" },
+        castingOffice = f.castingOffice,
+        notes = f.notes,
+        due = f.due,
+        scenes = maxOf(1, f.sceneCount),
+        asks = f.asks,
+        destination = f.destination,
+        rawScriptText = f.scriptText,
+        source = source,
+        kind = f.kind,
+        detectedCharacters = f.detectedCharacters,
+        allAvailableRoles = f.allAvailableRoles,
     )
 }
 
@@ -308,6 +337,44 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
     }
 }
 
+@Composable
+internal fun ModelDownloadStatusPill(
+    status: ModelStatus,
+    modifier: Modifier = Modifier,
+) {
+    val downloading = status as? ModelStatus.Downloading ?: return
+    val c = OT.colors
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.accentSoft)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        CircularProgressIndicator(
+            progress = { (downloading.progressPercent / 100f).coerceIn(0f, 1f) },
+            strokeWidth = 2.5.dp,
+            color = c.accent,
+            modifier = Modifier.size(16.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "Downloading On-Device AI Engine (${downloading.progressPercent}%) — using fast parser for now",
+                style = OT.type.headline.copy(fontSize = 13.sp),
+                color = c.labelPrimary,
+            )
+            Text(
+                text = "${downloading.downloadedMb} MB / ${downloading.totalMb} MB",
+                style = OT.type.caption,
+                color = c.labelSecondary,
+            )
+        }
+    }
+}
+
 // MARK: - 06 capture-first sheet
 
 @Composable
@@ -320,6 +387,9 @@ private fun AddCaptureStep(
     onType: () -> Unit,
 ) {
     val c = OT.colors
+    val context = LocalContext.current
+    val downloadStatus by ModelDownloadManager.getInstance(context).status.collectAsState()
+
     Column(
         Modifier
             .fillMaxWidth()
@@ -336,6 +406,10 @@ private fun AddCaptureStep(
                 modifier = Modifier.weight(1f).semantics { heading() },
             )
             CircleIconButton(Icons.Filled.Close, "Close", onClick = onClose)
+        }
+
+        if (downloadStatus is ModelStatus.Downloading) {
+            ModelDownloadStatusPill(status = downloadStatus)
         }
 
         // The clipboard is only read when Paste is tapped.

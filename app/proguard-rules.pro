@@ -21,3 +21,10 @@
 -keep class androidx.camera.lifecycle.** { *; }
 -keep class androidx.camera.video.** { *; }
 -keep class androidx.camera.camera2.** { *; }
+
+# LiteRT-LM & ML Kit GenAI Prompt R8 Rules
+-keep class com.google.ai.edge.litertlm.** { *; }
+-keep class com.google.mlkit.genai.** { *; }
+-keepattributes *Annotation*, InnerClasses, Signature
+-keepclassmembers class com.onetake.app.ui.auditions.LlmParsedNotice** { *; }
+

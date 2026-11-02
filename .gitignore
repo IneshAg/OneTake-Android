@@ -17,5 +17,7 @@ local.properties
 .idea/
 
 .superpowers/
+.agents/
+.kotlin/
 docs/
 dist/

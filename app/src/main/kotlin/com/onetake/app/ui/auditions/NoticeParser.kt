@@ -2,6 +2,7 @@ package com.onetake.app.ui.auditions
 
 import com.onetake.app.data.ScriptParser
 import com.onetake.app.models.Destination
+import kotlinx.coroutines.CancellationException
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -30,6 +31,7 @@ internal data class NoticeFields(
     val notes: String = "",
     val detectedCharacters: List<String> = emptyList(),
     val sceneCount: Int = 1,
+    val allAvailableRoles: List<String> = emptyList(),
 )
 
 /**
@@ -49,13 +51,15 @@ internal object NoticeParser {
         "type", "project type", "medium",
         "role", "roles", "character", "character name", "role size", "billing",
         "due", "deadline", "submission deadline", "self-tape due", "self tape due", "tape due",
+        "tape deadline", "self-tape deadline", "self tape deadline", "tapes due", "submission due",
         "submit", "submit via", "submission", "submissions", "self tape", "self-tape", "tape",
         "casting", "casting director", "casting office", "cd", "director", "producer", "writer",
-        "dates", "shoot", "shoot dates", "callback", "callbacks",
+        "dates", "shoot", "shoot dates", "shoot date", "callback", "callbacks", "callback dates", "callback date",
         "location", "rate", "pay", "union", "notes", "note", "callback notes", "instructions",
         "wardrobe", "slate", "format", "sides", "synopsis", "storyline",
         "age", "gender", "ethnicity", "email", "contact", "link",
         "from", "to", "cc", "bcc", "subject", "re", "fwd", "fw", "date", "sent",
+        "looking for", "seeking", "breakdown",
     )
 
     private val STANDALONE_NOTICE_LABELS = setOf(
@@ -64,9 +68,11 @@ internal object NoticeParser {
         "role", "character", "character name", "role size",
         "casting", "casting director", "casting office", "cd",
         "director", "producer",
-        "due", "deadline", "submission deadline", "self-tape due", "self tape due",
+        "due", "deadline", "submission deadline", "self-tape due", "self tape due", "tape due",
+        "tape deadline", "self-tape deadline", "self tape deadline",
         "submit", "submit via", "submission",
-        "shoot dates", "dates", "location", "rate", "pay", "union",
+        "shoot dates", "shoot date", "dates", "callback dates", "callback date",
+        "location", "rate", "pay", "union",
         "notes", "note", "callback notes", "instructions", "wardrobe", "format", "slate", "synopsis", "storyline",
     )
 
@@ -80,9 +86,24 @@ internal object NoticeParser {
         """(?i)^(?:hi|hello|hey|dear|hope\s+you|please\s+(?:send|submit|upload|find|see|read|slate|shoot|record|include)|shoot\s+in\s+(?:landscape|horizontal)|best|thanks|thank\s+you|cheers|warmly|regards|sincerely)\b"""
     )
 
+    private val AGENCY_HEADER_REGEX = Regex(
+        """(?i)\b(?:CAA(?:\s+TALENT)?|UTA|WME|ICM|GERSI|GERSH|PARADIGM|INNOVATIVE|MANAGEMENT\s+360|ANONYMOUS\s+CONTENT|""" +
+            """SELF-?TAPE(?:\s+REQUEST)?|CASTING\s+(?:NOTICE|CALL|ALERT|DIRECTOR|OFFICE)|AUDITION\s+ALERT|AUDITION|""" +
+            """BREAKDOWN\s+SERVICES|ECO-?CAST|ACTORS\s+ACCESS|CASTING\s+NETWORKS|SPOTLIGHT|""" +
+            """PARAMOUNT|DISNEY|NETFLIX|HBO|WARNER(?:\s+BROS)?|SONY|UNIVERSAL|ABC|NBC|CBS|FOX|AMAZON|APPLE|HULU|SHOWTIME|STARZ)\b"""
+    )
+
+    private val EMAIL_PREFIX_REGEX = Regex(
+        """^(?i)(?:(?:fwd?|re|fw|subject)\s*:\s*|\[[^\]\n]{1,30}\]\s*|(?:audition(?:\s+alert)?|casting(?:\s+(?:notice|call|alert))?|self-?tape(?:\s+request)?|eco-?cast)\s*:\s*)+"""
+    )
+    private val DELIMITER_REGEX = Regex("""\s+[-–—|]\s+""")
+    private val INSTRUCTION_SEGMENT_REGEX = Regex(
+        """(?i)\b(?:read\s+carefully|please\s+read|confidential|do\s+not\s+distribute|urgent|important|update|attention|instructions?|notes?|action\s+required|notice|alert)\b"""
+    )
+
     private val ROLE_PATTERNS = listOf(
         Regex("""(?i)^\s*(?:role(?:[ \t]+of)?|character(?:[ \t]+name)?)[ \t]*:[ \t]*([^\n]+)""", RegexOption.MULTILINE),
-        Regex("""(?i)\b(?:for|as)[ \t]+(?:the[ \t]+)?role[ \t]+of[ \t]+([A-Z][A-Za-z0-9'.#\-]*(?:[ \t]+[A-Z][A-Za-z0-9'.#\-]*){0,3})(?=[ \t]+in\b|[.,;\n]|$)"""),
+        Regex("""(?i)\b(?:audition|tape|self-?tape)?\s*(?:for\s+[A-Za-z'.\-]+(?:\s+[A-Za-z'.\-]+)?\s+)?as\s+(?:the\s+role\s+of\s+)?([A-Z][A-Za-z0-9'.#\-]*(?:[ \t]+[A-Z][A-Za-z0-9'.#\-]*){0,3})(?=[ \t]+in\b|[.,;\n]|$)"""),
         Regex("""(?i)\brole[ \t]+of[ \t]+([A-Z][A-Za-z0-9'.#\-]*(?:[ \t]+[A-Z][A-Za-z0-9'.#\-]*){0,3})(?=[ \t]+in\b|[.,;\n]|$)"""),
         Regex("""\b(?:for|as)[ \t]+([A-Z][A-Za-z0-9'.#\-]*(?:[ \t]+[A-Z][A-Za-z0-9'.#\-]*){0,2})[ \t]+in[ \t]+["“']?[A-Z]"""),
         Regex("""\b[Ss]eeking[ \t]+([A-Z][A-Za-z0-9'.#\-]*(?:[ \t]+[A-Z][A-Za-z0-9'.#\-]*){0,2})\b"""),
@@ -90,7 +111,7 @@ internal object NoticeParser {
 
     private val PROJECT_PATTERNS = listOf(
         Regex("""(?i)^\s*(?:project(?:[ \t]+title)?|production|film|series|show|title)[ \t]*:[ \t]*([^\n]+)""", RegexOption.MULTILINE),
-        Regex("""(?i)\b(?:for|as|role[ \t]+of)[ \t]+(?:the[ \t]+)?(?:role[ \t]+of[ \t]+)?[A-Z][A-Za-z0-9'.#\- ]{0,30}?[ \t]+in[ \t]+["“']?([A-Z][A-Za-z0-9'&:\- ]*[A-Za-z0-9'&])["”']?(?=[.,;\n]|$)"""),
+        Regex("""(?i)\b(?:for|as|role[ \t]+of)[ \t]+(?:the[ \t]+)?(?:role[ \t]+of[ \t]+)?[A-Za-z0-9'.#\- ]{0,35}?[ \t]+in[ \t]+["“']?([A-Z][A-Za-z0-9'&:\-"“” ]*[A-Za-z0-9'&"”])["”']?(?=[.,;\n]|$)"""),
     )
 
     private val CASTING_PATTERNS = listOf(
@@ -104,6 +125,20 @@ internal object NoticeParser {
     private val TYPE_KEY_PATTERN = Regex("""(?i)^\s*(?:project[ \t]+type|type|medium)[ \t]*:[ \t]*([^\n]+)""", RegexOption.MULTILINE)
     private val ROLE_SIZE_KEY_PATTERN = Regex("""(?i)^\s*(?:role[ \t]+size|billing)[ \t]*:[ \t]*([^\n]+)""", RegexOption.MULTILINE)
 
+    private val MULTI_ROLE_HEADER = Regex("""(?i)^\s*(?:looking\s+for|seeking|roles?(?:\s+available)?|characters?|breakdown)\s*:\s*$""")
+    private val ROLE_LINE = Regex("""(?i)^\s*(?:role(?:[ \t]+of)?|character(?:[ \t]+name)?)[ \t]*:[ \t]*([^\n]+)""")
+
+    private val TAPE_DEADLINE_REGEX = Regex(
+        """(?i)\b(?:self-?tape|selftape|tape\s+due|tapes?\s+due|submit\s+tape|tapes?|submissions?|deadline|eco-?cast)\b"""
+    )
+    private val GENERAL_DUE_REGEX = Regex(
+        """(?i)\b(?:due|submit|by|before|no\s+later\s+than)\b"""
+    )
+    private val DEPRIORITIZED_DATE_REGEX = Regex(
+        """(?i)\b(?:shoot(?:ing)?|filming|production\s+dates?|callbacks?|wardrobe|fitting|avail(?:ability)?)\b"""
+    )
+    private val DUE_HINT = Regex("""(?i)\b(due|deadline|submit|submissions?|tapes?|by|before|no later than)\b""")
+
     fun parse(text: String, today: LocalDateTime = LocalDateTime.now()): NoticeFields {
         val clean = text.trim()
         if (clean.isBlank()) {
@@ -111,7 +146,11 @@ internal object NoticeParser {
         }
 
         val normalized = normalizeMultiLineBreakdowns(clean)
-        val (kind, noticePortion, extractedSides) = classifyAndPartition(normalized)
+        val partition = classifyAndPartition(normalized)
+        val kind = partition.kind
+        val noticePortion = partition.noticePortion
+        val extractedSides = partition.sidesText
+        val headerPartition = partition.headerPartition
         val detectedChars = if (extractedSides.isNotBlank()) ScriptParser.extractCharacters(extractedSides) else emptyList()
 
         if (kind == DocumentKind.SidesOnly) {
@@ -127,23 +166,47 @@ internal object NoticeParser {
                 kind = DocumentKind.SidesOnly,
                 detectedCharacters = detectedChars,
                 sceneCount = scenes,
+                allAvailableRoles = detectedChars,
             )
         }
 
-        val noticeLower = noticePortion.lowercase()
+        val roleCandidates = extractAllAvailableRolesWithSizes(noticePortion)
+        val allRoles = roleCandidates.map { it.name }
 
         val rawRole = firstMatch(ROLE_PATTERNS, noticePortion)
         val (cleanRoleFromNotice, roleSizeFromRole) = splitRoleAndSize(rawRole.orEmpty())
         val role = cleanRoleFromNotice.take(36).ifEmpty {
+            allRoles.firstOrNull()?.take(36).orEmpty()
+        }.ifEmpty {
             detectedChars.firstOrNull()?.take(36).orEmpty()
         }
 
-        val roleSizeExplicit = ROLE_SIZE_KEY_PATTERN.find(noticePortion)?.groupValues?.get(1)?.trim().orEmpty()
-        val roleSize = normalizeRoleSize(roleSizeExplicit.ifEmpty { roleSizeFromRole }.ifEmpty { detectInlineRoleSize(noticePortion) })
+        val roleSizeFromBreakdown = roleCandidates.firstOrNull { it.name.equals(role, ignoreCase = true) }?.size.orEmpty()
 
-        val project = (firstMatch(PROJECT_PATTERNS, noticePortion)?.trim('"', '“', '”', '\'')?.take(48)
-            ?: noticePortion.lineSequence().map { it.trim() }.firstOrNull(::looksLikeTitle)
-            ?: "").trim()
+        val finalAvailableRoles = if (allRoles.isNotEmpty()) {
+            allRoles
+        } else if (role.isNotEmpty()) {
+            listOf(role)
+        } else if (detectedChars.isNotEmpty()) {
+            detectedChars
+        } else {
+            emptyList()
+        }
+
+        val roleSizeExplicit = ROLE_SIZE_KEY_PATTERN.find(noticePortion)?.groupValues?.get(1)?.trim().orEmpty()
+        val resolvedRoleSize = roleSizeExplicit
+            .ifEmpty { roleSizeFromRole }
+            .ifEmpty { roleSizeFromBreakdown }
+            .ifEmpty { if (allRoles.size <= 1) detectInlineRoleSize(noticePortion) else "" }
+        val roleSize = normalizeRoleSize(resolvedRoleSize)
+
+        val rawProjectMatch = firstMatch(PROJECT_PATTERNS, noticePortion)
+        val delimitedProject = if (rawProjectMatch == null) extractDelimitedSubjectTitle(noticePortion) else null
+        val fallbackTitle = if (rawProjectMatch == null && delimitedProject == null) {
+            noticePortion.lineSequence().map { it.trim() }.firstOrNull(::looksLikeTitle)
+        } else null
+
+        val project = cleanTitle(rawProjectMatch ?: delimitedProject ?: fallbackTitle ?: "")
 
         val rawType = TYPE_KEY_PATTERN.find(noticePortion)?.groupValues?.get(1)?.trim().orEmpty()
         val projectType = normalizeProjectType(rawType.ifEmpty { noticePortion })
@@ -155,17 +218,19 @@ internal object NoticeParser {
             .filter { it.isNotEmpty() }
             .joinToString(" · ")
 
+        val headerLower = headerPartition.lowercase()
         val negatedSlate = Regex("""(?i)\b(?:no|without|don'?t|do[ \t]+not)[ \t]+(?:[a-z]+[ \t]+){0,2}slate\b""")
-            .containsMatchIn(noticeLower)
+            .containsMatchIn(headerLower)
 
         val asks = buildList {
-            if (!negatedSlate && Regex("""(?i)\b(?:slate|ident)\b""").containsMatchIn(noticeLower)) add("Slate first")
-            if (Regex("""(?i)\b(?:landscape|horizontal)\b""").containsMatchIn(noticeLower)) add("Landscape")
-            if (Regex("""(?i)\b(?:full-length|full[ \t]+length|full[ \t]+body|head[ \t]+to[ \t]+toe)\b""").containsMatchIn(noticeLower)) add("Full length")
-            if (Regex("""(?i)\b(?:both[ \t]+profiles|profile[ \t]+shots|left[ \t]+and[ \t]+right[ \t]+profile)\b""").containsMatchIn(noticeLower)) add("Both profiles")
-            if (Regex("""(?i)\bunder[ \t]+(?:3|three)[ \t]*min""").containsMatchIn(noticeLower)) add("Under 3 min")
+            if (!negatedSlate && Regex("""(?i)\b(?:slate|ident)\b""").containsMatchIn(headerLower)) add("Slate first")
+            if (Regex("""(?i)\b(?:landscape|horizontal)\b""").containsMatchIn(headerLower)) add("Landscape")
+            if (Regex("""(?i)\b(?:full-length|full[ \t]+length|full[ \t]+body|head[ \t]+to[ \t]+toe)\b""").containsMatchIn(headerLower)) add("Full length")
+            if (Regex("""(?i)\b(?:both[ \t]+profiles|profile[ \t]+shots|left[ \t]+and[ \t]+right[ \t]+profile)\b""").containsMatchIn(headerLower)) add("Both profiles")
+            if (Regex("""(?i)\bunder[ \t]+(?:3|three)[ \t]*min""").containsMatchIn(headerLower)) add("Under 3 min")
         }
 
+        val noticeLower = noticePortion.lowercase()
         val destination = when {
             "casting networks" in noticeLower -> Destination.CastingNetworks
             Regex("""(?i)\bspotlight\b""").containsMatchIn(noticeLower) -> Destination.Spotlight
@@ -195,6 +260,7 @@ internal object NoticeParser {
             notes = notes,
             detectedCharacters = detectedChars,
             sceneCount = sceneCount,
+            allAvailableRoles = finalAvailableRoles,
         )
     }
 
@@ -231,7 +297,14 @@ internal object NoticeParser {
         return out.joinToString("\n")
     }
 
-    private fun classifyAndPartition(normalizedText: String): Triple<DocumentKind, String, String> {
+    private data class PartitionResult(
+        val kind: DocumentKind,
+        val noticePortion: String,
+        val sidesText: String,
+        val headerPartition: String,
+    )
+
+    private fun classifyAndPartition(normalizedText: String): PartitionResult {
         val lines = normalizedText.lines()
         var hasNoticeHeaderLine = false
         var firstSidesIndex = -1
@@ -246,6 +319,11 @@ internal object NoticeParser {
                 continue
             }
 
+            if (AGENCY_HEADER_REGEX.containsMatchIn(line)) {
+                hasNoticeHeaderLine = true
+                continue
+            }
+
             if (firstSidesIndex == -1) {
                 if (ScriptParser.isSceneHeading(line)) {
                     firstSidesIndex = i
@@ -254,14 +332,20 @@ internal object NoticeParser {
                 val colonMatch = COLON_SPEAKER_LINE.matchEntire(line)
                 if (colonMatch != null) {
                     val speakerKey = colonMatch.groupValues[1].trim().lowercase()
-                    if (speakerKey !in NOTICE_KEYS && !EMAIL_PROSE_LINE_REGEX.containsMatchIn(line)) {
+                    if (speakerKey !in NOTICE_KEYS && !EMAIL_PROSE_LINE_REGEX.containsMatchIn(line) && !AGENCY_HEADER_REGEX.containsMatchIn(line)) {
                         firstSidesIndex = i
                         continue
                     }
                 }
                 val nextLine = lines.getOrNull(i + 1)?.trim().orEmpty()
                 val nextIsNoticeKey = KEY_LINE.matchEntire(nextLine)?.groupValues?.get(1)?.trim()?.lowercase() in NOTICE_KEYS
-                if (ScriptParser.isCharacterHeading(line) && nextLine.isNotEmpty() && !nextIsNoticeKey && !ScriptParser.isSceneHeading(nextLine)) {
+                if (ScriptParser.isCharacterHeading(line) &&
+                    !AGENCY_HEADER_REGEX.containsMatchIn(line) &&
+                    !isNoticeKeywordOrHeader(line) &&
+                    nextLine.isNotEmpty() &&
+                    !nextIsNoticeKey &&
+                    !ScriptParser.isSceneHeading(nextLine)
+                ) {
                     firstSidesIndex = i
                     continue
                 }
@@ -283,14 +367,15 @@ internal object NoticeParser {
                 .trim()
             val chars = ScriptParser.extractCharacters(rawSidesSection)
             if (chars.isNotEmpty()) {
+                val headerPartition = lines.take(firstSidesIndex).joinToString("\n").trim()
                 return if (hasNoticeSignals) {
                     val noticeLines = lines.take(firstSidesIndex) + lines.drop(firstSidesIndex).filter { l ->
                         val k = KEY_LINE.matchEntire(l.trim())?.groupValues?.get(1)?.trim()?.lowercase()
                         k != null && k in NOTICE_KEYS
                     }
-                    Triple(DocumentKind.NoticeWithSides, noticeLines.joinToString("\n").trim(), rawSidesSection)
+                    PartitionResult(DocumentKind.NoticeWithSides, noticeLines.joinToString("\n").trim(), rawSidesSection, headerPartition)
                 } else {
-                    Triple(DocumentKind.SidesOnly, "", rawSidesSection)
+                    PartitionResult(DocumentKind.SidesOnly, "", rawSidesSection, "")
                 }
             }
         }
@@ -310,11 +395,146 @@ internal object NoticeParser {
         val remainingWords = remainingProse.split(Regex("""\s+""")).count { it.isNotBlank() }
 
         return if (!hasNoticeSignals && remainingWords >= 8) {
-            // Unmarked monologue pasted/scanned as sides
-            Triple(DocumentKind.SidesOnly, "", remainingProse)
+            PartitionResult(DocumentKind.SidesOnly, "", remainingProse, "")
         } else {
-            Triple(DocumentKind.CastingNotice, normalizedText, "")
+            PartitionResult(DocumentKind.CastingNotice, normalizedText, "", normalizedText)
         }
+    }
+
+    private data class RoleCandidate(val name: String, val size: String)
+
+    private fun extractAllAvailableRolesWithSizes(noticePortion: String): List<RoleCandidate> {
+        val candidates = LinkedHashMap<String, String>()
+        val lines = noticePortion.lines()
+
+        // 1. Look for breakdown section headers like "LOOKING FOR:" or "ROLES:"
+        var inRoleSection = false
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isBlank()) {
+                inRoleSection = false
+                continue
+            }
+            if (MULTI_ROLE_HEADER.matches(trimmed)) {
+                inRoleSection = true
+                continue
+            }
+            if (inRoleSection) {
+                val keyMatch = KEY_LINE.matchEntire(trimmed)
+                if (keyMatch != null && keyMatch.groupValues[1].trim().lowercase() in NOTICE_KEYS) {
+                    inRoleSection = false
+                    continue
+                }
+                if (ScriptParser.isSceneHeading(trimmed) ||
+                    DUE_HINT.containsMatchIn(trimmed) ||
+                    NOTICE_SIGNAL_REGEX.containsMatchIn(trimmed) ||
+                    EMAIL_PROSE_LINE_REGEX.containsMatchIn(trimmed) ||
+                    AGENCY_HEADER_REGEX.containsMatchIn(trimmed) ||
+                    explicitDate(trimmed, LocalDate.now()) != null ||
+                    weekday(trimmed, LocalDate.now()) != null
+                ) {
+                    inRoleSection = false
+                    continue
+                }
+                val (cleanName, detectedSize) = splitRoleAndSize(trimmed)
+                if (cleanName.isNotBlank() &&
+                    cleanName.length in 2..36 &&
+                    !isNoticeKeywordOrHeader(cleanName) &&
+                    !DUE_HINT.containsMatchIn(cleanName) &&
+                    !NOTICE_SIGNAL_REGEX.containsMatchIn(cleanName) &&
+                    !EMAIL_PROSE_LINE_REGEX.containsMatchIn(cleanName)
+                ) {
+                    candidates.putIfAbsent(cleanName, detectedSize)
+                }
+            }
+        }
+
+        // 2. Look for multiple "ROLE: ..." or "CHARACTER: ..." lines
+        for (match in ROLE_LINE.findAll(noticePortion)) {
+            val raw = match.groupValues[1].trim()
+            val (cleanName, detectedSize) = splitRoleAndSize(raw)
+            if (cleanName.isNotBlank() && cleanName.length in 2..36 && !isNoticeKeywordOrHeader(cleanName)) {
+                candidates.putIfAbsent(cleanName, detectedSize)
+            }
+        }
+
+        // 3. Delimited subject lines for "role of <Role>"
+        for (line in lines) {
+            val stripped = line.trim().replace(EMAIL_PREFIX_REGEX, "").trim()
+            if (DELIMITER_REGEX.containsMatchIn(stripped)) {
+                val segments = stripped.split(DELIMITER_REGEX).map { it.trim() }
+                for (seg in segments) {
+                    val roleOfMatch = Regex("""(?i)^role\s+of\s+([A-Z][A-Za-z0-9'.#\-]*(?:[ \t]+[A-Z][A-Za-z0-9'.#\-]*){0,3})""").find(seg)
+                    if (roleOfMatch != null) {
+                        candidates.putIfAbsent(roleOfMatch.groupValues[1].trim(), "")
+                    }
+                }
+            }
+        }
+
+        return candidates.map { RoleCandidate(it.key, it.value) }
+    }
+
+    private fun extractAllAvailableRoles(noticePortion: String): List<String> =
+        extractAllAvailableRolesWithSizes(noticePortion).map { it.name }
+
+    private fun isNoticeKeywordOrHeader(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower in NOTICE_KEYS || AGENCY_HEADER_REGEX.containsMatchIn(name)
+    }
+
+    private fun cleanTitle(raw: String): String {
+        var t = raw.replace(EMAIL_PREFIX_REGEX, "").trim()
+        if ((t.startsWith("\"") && t.endsWith("\"")) ||
+            (t.startsWith("“") && t.endsWith("”")) ||
+            (t.startsWith("'") && t.endsWith("'"))
+        ) {
+            t = t.substring(1, t.length - 1).trim()
+        }
+        return t.take(48).trim()
+    }
+
+    private fun extractDelimitedSubjectTitle(noticePortion: String): String? {
+        for (line in noticePortion.lines()) {
+            val trimmed = line.trim()
+            val stripped = trimmed.replace(EMAIL_PREFIX_REGEX, "").trim()
+            if (DELIMITER_REGEX.containsMatchIn(stripped)) {
+                val segments = stripped.split(DELIMITER_REGEX).map { it.trim() }
+                val candidate = segments.firstOrNull { seg ->
+                    seg.isNotBlank() &&
+                        seg.length in 2..48 &&
+                        !AGENCY_HEADER_REGEX.containsMatchIn(seg) &&
+                        !INSTRUCTION_SEGMENT_REGEX.containsMatchIn(seg) &&
+                        !NOTICE_SIGNAL_REGEX.containsMatchIn(seg) &&
+                        !DUE_HINT.containsMatchIn(seg) &&
+                        !seg.startsWith("role of", ignoreCase = true) &&
+                        !seg.startsWith("role:", ignoreCase = true) &&
+                        !seg.startsWith("character:", ignoreCase = true) &&
+                        !seg.startsWith("audition", ignoreCase = true) &&
+                        !seg.startsWith("tape", ignoreCase = true) &&
+                        !seg.startsWith("self-tape", ignoreCase = true) &&
+                        seg.any { it.isLetter() }
+                }
+                if (candidate != null) {
+                    return candidate
+                }
+            }
+        }
+        return null
+    }
+
+    private fun looksLikeTitle(line: String): Boolean {
+        val clean = line.replace(EMAIL_PREFIX_REGEX, "").trim()
+        if (clean.isBlank()) return false
+        if (clean.contains(":")) return false
+        if (clean.length > 40) return false
+        if (clean.split(' ').size > 6) return false
+        if (clean.last() in ".!?,") return false
+        if (AGENCY_HEADER_REGEX.containsMatchIn(clean)) return false
+        if (DUE_HINT.containsMatchIn(clean)) return false
+        if (EMAIL_PROSE_LINE_REGEX.containsMatchIn(clean)) return false
+        if (NOTICE_SIGNAL_REGEX.containsMatchIn(clean)) return false
+        return true
     }
 
     private fun splitRoleAndSize(rawRole: String): Pair<String, String> {
@@ -322,23 +542,27 @@ internal object NoticeParser {
         var role = rawRole.trim()
         var detectedSize = ""
 
+        val dashMatch = Regex("""^(.*?)\s+[-–—|]\s+(.*)$""").matchEntire(role)
+        if (dashMatch != null) {
+            val left = dashMatch.groupValues[1].trim()
+            val right = dashMatch.groupValues[2].trim()
+            val rightSize = normalizeRoleSize(right)
+            if (rightSize.isNotEmpty()) {
+                detectedSize = rightSize
+                role = left
+            } else {
+                role = left
+            }
+        }
+
         val parenMatch = Regex("""^(.*?)\s*[\(\[]([^)\]]+)[\)\]]\s*$""").matchEntire(role)
         if (parenMatch != null) {
             val inside = parenMatch.groupValues[2].trim()
             val size = normalizeRoleSize(inside)
             if (size.isNotEmpty()) {
-                detectedSize = size
-                role = parenMatch.groupValues[1].trim()
-            }
-        }
-
-        val dashParts = role.split(Regex("""\s+[-–—|]\s+"""), limit = 2)
-        if (dashParts.size == 2) {
-            val size = normalizeRoleSize(dashParts[1])
-            if (size.isNotEmpty()) {
                 if (detectedSize.isEmpty()) detectedSize = size
-                role = dashParts[0].trim()
             }
+            role = parenMatch.groupValues[1].trim()
         }
 
         return role.trimEnd('.', ',', ';', '-') to detectedSize
@@ -354,6 +578,7 @@ internal object NoticeParser {
             "supporting" in l -> "Supporting"
             "principal" in l -> "Principal"
             "recurring" in l -> "Recurring"
+            "cameo" in l -> "Cameo"
             Regex("""\blead\b""").containsMatchIn(l) -> "Lead"
             else -> ""
         }
@@ -375,13 +600,6 @@ internal object NoticeParser {
         }
     }
 
-    private fun looksLikeTitle(line: String): Boolean =
-        line.isNotBlank() && !line.contains(":") && line.length <= 40 &&
-            line.split(' ').size <= 6 && line.last() !in ".!?," &&
-            !DUE_HINT.containsMatchIn(line) &&
-            !EMAIL_PROSE_LINE_REGEX.containsMatchIn(line) &&
-            !NOTICE_SIGNAL_REGEX.containsMatchIn(line)
-
     private fun firstMatch(patterns: List<Regex>, text: String): String? =
         patterns.firstNotNullOfOrNull { r -> r.find(text)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() } }
 
@@ -389,15 +607,14 @@ internal object NoticeParser {
 
     // MARK: - Due date
 
-    private val DUE_HINT = Regex("""(?i)\b(due|deadline|submit|submissions?|tapes?|by|before|no later than)\b""")
     private val TIME = Regex("""(?i)\b(\d{1,2})(?:[:.](\d{2}))?[ \t]*(a\.?m\.?|p\.?m\.?)(?![a-z])""")
     private val TIME_24 = Regex("""\b([01]?\d|2[0-3]):([0-5]\d)\b""")
+    private val TIME_COB_EOD = Regex("""(?i)\b(?:cob|eod|close\s+of\s+business|end\s+of\s+day)\b""")
+    private val TIME_MILITARY = Regex("""(?i)\b([01]\d|2[0-3])([0-5]\d)\s*(?:hrs?|hours?)\b""")
     private val MONTH_DAY = Regex("""(?i)\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?[ \t]+(\d{1,2})(?:st|nd|rd|th)?\b""")
     private val DAY_MONTH = Regex("""(?i)\b(\d{1,2})(?:st|nd|rd|th)?[ \t]+(?:of[ \t]+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b""")
     private val ISO_DATE = Regex("""\b(20\d{2})-(\d{2})-(\d{2})\b""")
     private val NUMERIC = Regex("""\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b""")
-    // Unambiguous weekdays: "sat" and "sun" require full "Saturday"/"Sunday" unless followed by a comma/month/time,
-    // preventing prose like "She sat down in the sun" from ever matching a weekday.
     private val WEEKDAY = Regex(
         """(?i)\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|(?:sat|sun)(?=[, \t]+(?:\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|at\b|noon\b)))\b"""
     )
@@ -405,7 +622,10 @@ internal object NoticeParser {
     fun parseDue(text: String, now: LocalDateTime = LocalDateTime.now()): LocalDateTime? {
         val normalized = normalizeMultiLineBreakdowns(text)
         val lines = normalized.lines()
-        val hintedIndices = lines.indices.filter { DUE_HINT.containsMatchIn(lines[it]) }
+        val hintedIndices = lines.indices
+            .filter { scoreDueLine(lines[it]) >= 0 }
+            .sortedByDescending { scoreDueLine(lines[it]) }
+
         for (idx in hintedIndices) {
             dueIn(lines[idx], now)?.let { return it }
             // Support "Due Friday\nat 5:00 PM" split across two adjacent lines
@@ -416,24 +636,40 @@ internal object NoticeParser {
         return if (hintedIndices.isEmpty()) dueIn(normalized, now) else null
     }
 
+    private fun scoreDueLine(line: String): Int {
+        val isDeprioritized = DEPRIORITIZED_DATE_REGEX.containsMatchIn(line)
+        val isTapeDeadline = TAPE_DEADLINE_REGEX.containsMatchIn(line)
+        val isGeneralDue = GENERAL_DUE_REGEX.containsMatchIn(line)
+
+        return when {
+            isTapeDeadline && !isDeprioritized -> 100
+            isGeneralDue && !isDeprioritized -> 50
+            isTapeDeadline && isDeprioritized -> 25
+            isGeneralDue && isDeprioritized -> 0
+            else -> -1
+        }
+    }
+
     private fun dueIn(text: String, now: LocalDateTime): LocalDateTime? {
         val today = now.toLocalDate()
         val lower = text.lowercase()
         val date: LocalDate = when {
             "tomorrow" in lower -> today.plusDays(1)
-            "today" in lower || "tonight" in lower || Regex("""\beod\b""").containsMatchIn(lower) -> today
-            else -> explicitDate(text, today) ?: weekday(text, today) ?: return null
+            "today" in lower || "tonight" in lower -> today
+            else -> explicitDate(text, today)
+                ?: weekday(text, today)
+                ?: if (TIME_COB_EOD.containsMatchIn(lower)) today else return null
         }
         val time = time(text)
             ?: if ("tonight" in lower) LocalTime.of(20, 0)
-            else if (Regex("""\beod\b""").containsMatchIn(lower)) LocalTime.of(17, 0)
+            else if (TIME_COB_EOD.containsMatchIn(lower)) LocalTime.of(17, 0)
             else LocalTime.of(10, 0)
         return date.atTime(time)
     }
 
     private fun explicitDate(text: String, today: LocalDate): LocalDate? {
         fun upcoming(month: Int, day: Int, year: Int? = null): LocalDate? {
-            val y = year ?: today.year
+            val y = year ?: if (month < today.monthValue) today.year + 1 else today.year
             val d = runCatching { LocalDate.of(y, month, day) }.getOrNull() ?: return null
             return if (year == null && d.isBefore(today)) d.plusYears(1) else d
         }
@@ -471,6 +707,7 @@ internal object NoticeParser {
     private fun time(text: String): LocalTime? {
         if (Regex("""(?i)\bnoon\b""").containsMatchIn(text)) return LocalTime.NOON
         if (Regex("""(?i)\bmidnight\b""").containsMatchIn(text)) return LocalTime.of(23, 59)
+        if (TIME_COB_EOD.containsMatchIn(text)) return LocalTime.of(17, 0)
         TIME.find(text)?.let { m ->
             val h = m.groupValues[1].toInt()
             val min = m.groupValues[2].takeIf { it.isNotEmpty() }?.toInt() ?: 0
@@ -480,6 +717,165 @@ internal object NoticeParser {
             }
         }
         TIME_24.find(text)?.let { m -> return LocalTime.of(m.groupValues[1].toInt(), m.groupValues[2].toInt()) }
+        TIME_MILITARY.find(text)?.let { m ->
+            val h = m.groupValues[1].toInt()
+            val min = m.groupValues[2].toInt()
+            if (h in 0..23 && min in 0..59) {
+                return LocalTime.of(h, min)
+            }
+        }
         return null
+    }
+
+    suspend fun parseSmart(
+        rawText: String,
+        extractor: HybridNoticeExtractor? = null,
+        today: LocalDate = LocalDate.now(),
+    ): NoticeFields {
+        val baseline = parse(rawText, today.atStartOfDay())
+        if (extractor == null) {
+            return baseline
+        }
+
+        val llm = try {
+            extractor.extractNotice(rawText, today)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            null
+        } ?: return baseline
+
+        var normalizedText = rawText
+        if (llm.characterNormalizationMap.isNotEmpty()) {
+            for ((typo, fix) in llm.characterNormalizationMap) {
+                if (typo.isNotBlank() && fix.isNotBlank()) {
+                    normalizedText = normalizedText.replace(typo, fix)
+                }
+            }
+        }
+
+        val targetRole = llm.targetRoleName.trim().ifBlank { baseline.role }
+        var scriptText = baseline.scriptText
+        var sceneCount = baseline.sceneCount
+        var detectedChars = baseline.detectedCharacters
+
+        val rawAnchor = llm.firstScriptLineAnchor.trim()
+        var normalizedAnchor = rawAnchor
+        if (llm.characterNormalizationMap.isNotEmpty() && rawAnchor.isNotBlank()) {
+            for ((typo, fix) in llm.characterNormalizationMap) {
+                if (typo.isNotBlank() && fix.isNotBlank()) {
+                    normalizedAnchor = normalizedAnchor.replace(typo, fix)
+                }
+            }
+        }
+
+        if (rawAnchor.isNotBlank()) {
+            var anchorIdx = normalizedText.indexOf(normalizedAnchor)
+            if (anchorIdx < 0 && rawAnchor != normalizedAnchor) {
+                anchorIdx = normalizedText.indexOf(rawAnchor)
+            }
+
+            val slicedSidesNullable = if (anchorIdx >= 0) {
+                normalizedText.substring(anchorIdx).trim()
+            } else {
+                val rawIdx = rawText.indexOf(rawAnchor)
+                if (rawIdx >= 0) {
+                    var rawSliced = rawText.substring(rawIdx).trim()
+                    for ((typo, fix) in llm.characterNormalizationMap) {
+                        if (typo.isNotBlank() && fix.isNotBlank()) {
+                            rawSliced = rawSliced.replace(typo, fix)
+                        }
+                    }
+                    rawSliced
+                } else null
+            }
+
+            if (slicedSidesNullable != null) {
+                var slicedSides: String = slicedSidesNullable
+                // Ensure all OCR typos in the sliced sides are normalized
+                for ((typo, fix) in llm.characterNormalizationMap) {
+                    if (typo.isNotBlank() && fix.isNotBlank()) {
+                        slicedSides = slicedSides.replace(typo, fix)
+                    }
+                }
+                val parsedScenes = ScriptParser.parseScenes(slicedSides, myCharacter = targetRole)
+                scriptText = slicedSides
+                sceneCount = maxOf(1, parsedScenes.size)
+                detectedChars = ScriptParser.extractCharacters(slicedSides)
+            }
+        } else if (llm.characterNormalizationMap.isNotEmpty() && scriptText.isNotBlank()) {
+            var normalizedSides = scriptText
+            for ((typo, fix) in llm.characterNormalizationMap) {
+                if (typo.isNotBlank() && fix.isNotBlank()) {
+                    normalizedSides = normalizedSides.replace(typo, fix)
+                }
+            }
+            val parsedScenes = ScriptParser.parseScenes(normalizedSides, myCharacter = targetRole)
+            scriptText = normalizedSides
+            sceneCount = maxOf(1, parsedScenes.size)
+            detectedChars = ScriptParser.extractCharacters(normalizedSides)
+        }
+
+        val mergedDue = if (llm.tapeDueIsoDate.isNotBlank()) {
+            runCatching {
+                val date = LocalDate.parse(llm.tapeDueIsoDate.trim())
+                val time = if (llm.tapeDueTime24h.isNotBlank()) {
+                    runCatching {
+                        val parts = llm.tapeDueTime24h.trim().split(":")
+                        LocalTime.of(parts[0].toInt(), parts.getOrNull(1)?.toInt() ?: 0)
+                    }.getOrDefault(LocalTime.of(10, 0))
+                } else {
+                    LocalTime.of(10, 0)
+                }
+                date.atTime(time)
+            }.getOrNull() ?: baseline.due
+        } else {
+            baseline.due
+        }
+
+        val mergedDestination = if (llm.destination.isNotBlank()) {
+            val d = llm.destination.lowercase()
+            when {
+                "casting networks" in d -> Destination.CastingNetworks
+                "spotlight" in d -> Destination.Spotlight
+                "actors access" in d || "eco cast" in d || "ecocast" in d -> Destination.ActorsAccess
+                "email" in d || "link" in d -> Destination.EmailOrLink
+                else -> baseline.destination
+            }
+        } else {
+            baseline.destination
+        }
+
+        val mergedKind = if (llm.documentKind.isNotBlank()) {
+            when (llm.documentKind.trim().lowercase()) {
+                "sidesonly", "sides_only" -> DocumentKind.SidesOnly
+                "noticewithsides", "notice_with_sides" -> DocumentKind.NoticeWithSides
+                "castingnotice", "casting_notice" -> DocumentKind.CastingNotice
+                else -> baseline.kind
+            }
+        } else {
+            baseline.kind
+        }
+
+        val finalKind = if (scriptText.isNotBlank() && mergedKind == DocumentKind.CastingNotice) {
+            DocumentKind.NoticeWithSides
+        } else {
+            mergedKind
+        }
+
+        return baseline.copy(
+            project = if (llm.projectTitle.isNotBlank()) llm.projectTitle.trim() else baseline.project,
+            role = targetRole.ifBlank { baseline.role },
+            allAvailableRoles = if (llm.allAvailableRoles.isNotEmpty()) llm.allAvailableRoles else baseline.allAvailableRoles,
+            projectType = if (llm.projectType.isNotBlank()) llm.projectType.trim() else baseline.projectType,
+            roleSize = if (llm.roleSize.isNotBlank()) llm.roleSize.trim() else baseline.roleSize,
+            due = mergedDue,
+            destination = mergedDestination,
+            asks = if (llm.asks.isNotEmpty()) llm.asks else baseline.asks,
+            kind = finalKind,
+            scriptText = scriptText,
+            sceneCount = sceneCount,
+            detectedCharacters = detectedChars,
+        )
     }
 }

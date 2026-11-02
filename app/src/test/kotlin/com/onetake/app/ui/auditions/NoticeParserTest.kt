@@ -1,11 +1,14 @@
 package com.onetake.app.ui.auditions
 
+import android.app.Application
 import com.onetake.app.models.Destination
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 class NoticeParserTest {
@@ -138,5 +141,255 @@ class NoticeParserTest {
         assertFalse("Email From: header must not leak into scriptText: ${f.scriptText}", f.scriptText.contains("hartcasting.com"))
         assertFalse("Email greeting must not leak into scriptText: ${f.scriptText}", f.scriptText.contains("Please submit your self-tape"))
         assertTrue("Sides dialogue must remain in scriptText", f.scriptText.contains("Drop the flashlight"))
+    }
+
+    @Test
+    fun agencyHeaderIgnoredInFavorOfRealProjectTitle() {
+        val notice = """
+            CAA TALENT UPDATE
+            SELF-TAPE REQUEST
+            Project: Untitled Sci-Fi
+            Role: Maya
+            Due: Friday 5pm
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals("Untitled Sci-Fi", f.project)
+        assertEquals("Maya", f.role)
+        assertFalse("Agency header must not be project title: ${f.project}", f.project.contains("CAA TALENT"))
+        assertFalse("Self-tape request header must not be project title: ${f.project}", f.project.contains("SELF-TAPE REQUEST"))
+    }
+
+    @Test
+    fun forwardedEmailSubjectExtractsCleanTitleAndRole() {
+        val notice = """
+            Fwd: AUDITION - PARAMOUNT - ESCAPE HORIZON - ROLE OF SARAH
+            Please submit by Friday 5pm.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals("ESCAPE HORIZON", f.project)
+        assertEquals("SARAH", f.role)
+        assertFalse("Fwd: must be stripped: ${f.project}", f.project.contains("Fwd:"))
+        assertFalse("PARAMOUNT studio prefix must not contaminate project title: ${f.project}", f.project.contains("PARAMOUNT"))
+    }
+
+    @Test
+    fun actorNameDistinguishedFromCharacterRole() {
+        val notice = """
+            Audition for John Smith as Officer Dave in THE WIRE
+            Due Oct 30 at 5pm.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals("Officer Dave", f.role)
+        assertEquals("THE WIRE", f.project)
+        assertFalse("Actor name John Smith must not be extracted as role: ${f.role}", f.role.contains("John Smith"))
+    }
+
+    @Test
+    fun multiRoleBreakdownExtractsAllAvailableRoles() {
+        val notice = """
+            Project: Echoes
+            LOOKING FOR:
+            MARCUS (Lead) - Male, 30s
+            DETECTIVE JANE (Guest Star) - Female, 40s
+            OFFICER PETE (Co-Star) - Male, 20s
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals(listOf("MARCUS", "DETECTIVE JANE", "OFFICER PETE"), f.allAvailableRoles)
+        assertEquals("MARCUS", f.role)
+        assertTrue("allAvailableRoles must contain MARCUS", "MARCUS" in f.allAvailableRoles)
+        assertTrue("allAvailableRoles must contain DETECTIVE JANE", "DETECTIVE JANE" in f.allAvailableRoles)
+        assertTrue("allAvailableRoles must contain OFFICER PETE", "OFFICER PETE" in f.allAvailableRoles)
+        assertEquals(3, f.allAvailableRoles.size)
+    }
+
+    @Test
+    fun shootAndCallbackDatesIgnoredInFavorOfTapeDeadline() {
+        val notice = """
+            Project: Sunset Ridge
+            Role: Alex
+            SHOOT DATES: Nov 15 - Dec 2.
+            CALLBACK DATES: Submit availability before Friday Nov 1.
+            TAPE DEADLINE: Monday Oct 28 at 5:00 PM.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals(LocalDateTime.of(2026, 10, 28, 17, 0), f.due)
+    }
+
+    @Test
+    fun screenplayStageDirectionsDoNotTriggerFalseDeliverableAsks() {
+        val notice = """
+            Project: Desert Mirage
+            Role: Maya
+
+            INT. DESERT - DAY
+
+            The camera captures a wide landscape of dunes.
+            Maya holds up a clean slate before stepping in front of a full length mirror.
+            She looks at both profiles in the reflection for under 3 min.
+
+            MAYA
+            The heat is unbearable.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertTrue("Asks must be empty from sides directions: ${f.asks}", f.asks.isEmpty())
+        assertFalse("Slate first must not trigger: ${f.asks}", "Slate first" in f.asks)
+        assertFalse("Landscape must not trigger: ${f.asks}", "Landscape" in f.asks)
+        assertFalse("Full length must not trigger: ${f.asks}", "Full length" in f.asks)
+    }
+
+    @Test
+    fun quotedWorkingTitlesPreserved() {
+        val notice = """
+            Project: UNTITLED "HEIST" PROJECT
+            Role: Detective Miller
+            Due Oct 30 at 5pm.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals("UNTITLED \"HEIST\" PROJECT", f.project)
+
+        val curlyNotice = """
+            Project: UNTITLED “HEIST” PROJECT
+            Role: Detective Miller
+        """.trimIndent()
+        val f2 = NoticeParser.parse(curlyNotice, now)
+        assertEquals("UNTITLED “HEIST” PROJECT", f2.project)
+    }
+
+    @Test
+    fun decemberToJanuaryYearRollover() {
+        val decDate = LocalDateTime.of(2026, 12, 28, 9, 0)
+        val notice = """
+            Project: New Year
+            Role: Sam
+            Due Jan 5 at 5:00 PM.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, decDate)
+        assertEquals(LocalDateTime.of(2027, 1, 5, 17, 0), f.due)
+    }
+
+    @Test
+    fun parsesCobEodAndMilitaryTime() {
+        val cobNotice = "Please send tape by COB Friday"
+        assertEquals(LocalDateTime.of(2026, 10, 30, 17, 0), NoticeParser.parseDue(cobNotice, now))
+
+        val eodNotice = "Submissions due Thursday by EOD"
+        assertEquals(LocalDateTime.of(2026, 10, 29, 17, 0), NoticeParser.parseDue(eodNotice, now))
+
+        val militaryNotice = "No later than 1700 hrs GMT on Oct 30"
+        assertEquals(LocalDateTime.of(2026, 10, 30, 17, 0), NoticeParser.parseDue(militaryNotice, now))
+    }
+
+    @Test
+    fun parseSmartReturnsBaselineWhenExtractorIsNull() = runBlocking {
+        val notice = """
+            Project: Night Shift
+            Role: Maya
+            Due: Friday 5pm
+        """.trimIndent()
+        val f = NoticeParser.parseSmart(notice, extractor = null, today = now.toLocalDate())
+        assertEquals("Night Shift", f.project)
+        assertEquals("Maya", f.role)
+    }
+
+    @Test
+    fun parseSmartMergesLlmMetadataAndFixesOcrTypos() = runBlocking {
+        val notice = """
+            Project: Night Shift
+            Role: Maya
+
+            INT. OFFICE - NIGHT
+
+            DETE CTIVE C0LE
+            Where were you last night?
+
+            MAYA
+            I was at home.
+        """.trimIndent()
+
+        val extractor = HybridNoticeExtractor(Application())
+        extractor.testInferenceOverride = {
+            """
+            {
+                "projectTitle": "Night Shift (Rev 3)",
+                "targetRoleName": "DETECTIVE COLE",
+                "roleSize": "Guest Star",
+                "tapeDueIsoDate": "2026-10-30",
+                "tapeDueTime24h": "18:00",
+                "asks": ["Slate first", "Landscape"],
+                "characterNormalizationMap": {
+                    "DETE CTIVE C0LE": "DETECTIVE COLE"
+                }
+            }
+            """.trimIndent()
+        }
+
+        val f = NoticeParser.parseSmart(notice, extractor = extractor, today = now.toLocalDate())
+        assertEquals("Night Shift (Rev 3)", f.project)
+        assertEquals("DETECTIVE COLE", f.role)
+        assertEquals("Guest Star", f.roleSize)
+        assertEquals(LocalDateTime.of(2026, 10, 30, 18, 0), f.due)
+        assertEquals(listOf("Slate first", "Landscape"), f.asks)
+        assertTrue("Script text should contain normalized character name", f.scriptText.contains("DETECTIVE COLE"))
+    }
+
+    @Test
+    fun parseSmartSlicesSidesStartingAtFirstScriptLineAnchor() = runBlocking {
+        val noticeWithNoisyHeaders = """
+            CONFIDENTIAL CASTING MATERIAL
+            DO NOT DISTRIBUTE
+            Some random preamble notes about the audition.
+
+            START SIDES HERE:
+            MAYA: You came back.
+            DEV: I never left.
+        """.trimIndent()
+
+        val extractor = HybridNoticeExtractor(Application())
+        extractor.testInferenceOverride = {
+            """
+            {
+                "projectTitle": "Reunion",
+                "targetRoleName": "MAYA",
+                "firstScriptLineAnchor": "MAYA: You came back."
+            }
+            """.trimIndent()
+        }
+
+        val f = NoticeParser.parseSmart(noticeWithNoisyHeaders, extractor = extractor, today = now.toLocalDate())
+        assertEquals("Reunion", f.project)
+        assertEquals("MAYA", f.role)
+        assertTrue("Script sides must start at the anchor", f.scriptText.startsWith("MAYA: You came back."))
+        assertFalse("Script sides must not include noisy header preamble", f.scriptText.contains("CONFIDENTIAL CASTING MATERIAL"))
+    }
+
+    @Test
+    fun parseExecutesUnderTwoMilliseconds() {
+        val notice = """
+            Project: Echoes
+            LOOKING FOR:
+            MARCUS (Lead) - Male, 30s
+            DETECTIVE JANE (Guest Star) - Female, 40s
+            OFFICER PETE (Co-Star) - Male, 20s
+            Due Oct 30 at 5pm.
+            Please slate first and shoot in landscape.
+
+            INT. OFFICE - NIGHT
+
+            MARCUS
+            We need to move quickly.
+        """.trimIndent()
+
+        repeat(50) {
+            NoticeParser.parse(notice, now)
+        }
+
+        val iterations = 100
+        val start = System.nanoTime()
+        repeat(iterations) {
+            NoticeParser.parse(notice, now)
+        }
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000.0
+        val avgMs = elapsedMs / iterations
+        assertTrue("NoticeParser.parse average execution time must be under 2ms (was $avgMs ms)", avgMs < 2.0)
     }
 }

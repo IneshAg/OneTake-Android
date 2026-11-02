@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // Release builds take their version from the git tag (.github/workflows/release.yml sets
@@ -61,6 +62,7 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+        freeCompilerArgs += listOf("-Xskip-metadata-version-check", "-Xskip-prerelease-check")
     }
     buildFeatures {
         compose = true
@@ -74,6 +76,9 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+    androidResources {
+        noCompress += listOf("litertlm", "task", "tflite")
     }
     lint {
         checkReleaseBuilds = false
@@ -109,7 +114,34 @@ dependencies {
     // Home-screen widget (Next audition)
     implementation(libs.androidx.glance.appwidget)
 
+    // 3-Tier Hybrid AI "Reading the Notice"
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta5")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     testImplementation(libs.junit)
 
     debugImplementation(libs.androidx.ui.tooling)
 }
+
+configurations.all {
+    resolutionStrategy {
+        force(
+            "org.jetbrains.kotlin:kotlin-stdlib:2.0.21",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.0.21",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.0.21",
+            "org.jetbrains.kotlin:kotlin-stdlib-common:2.0.21",
+            "org.jetbrains.kotlin:kotlin-reflect:2.0.21",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.9.0",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-reactive:1.9.0"
+        )
+    }
+}
+

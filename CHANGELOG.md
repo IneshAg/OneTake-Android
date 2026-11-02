@@ -293,6 +293,26 @@ Every agent working on this codebase **MUST** strictly adhere to the following r
   - **Gesture Dismissal & Data-Loss Protection**: Eliminated `ModalBottomSheet` vertical gesture drag-to-dismiss threshold during review and editing. Swiping or flicking downward now smoothly scrolls form fields without dismissing progress.
   - **Discard Confirmation Protection**: Implemented `BackHandler` and back navigation confirmation dialog (`AlertDialog`: "Discard audition? Any details you've entered will be lost.") preventing accidental back exits when user has entered content.
   - **Direct Incoming Share Routing**: Incoming Android shares (`ACTION_SEND`) now route directly to `Route.NewAudition` as a full page without showing intermediate capture sheets.
-- **"Reading the Notice" Technical Handoff (`docs/reading_the_notice_architecture_and_nuances_handoff.md`):**
-  - Exhaustive documentation of the notice parsing & extraction pipeline: `OcrManager.kt`, `OcrLayoutReconstructor.kt`, `NoticeParser.kt`, and `ScriptParser.kt`.
-  - Detailed catalog of all heuristics, regexes, 2-column spatial pairing, watermark filtering, and known failure modes in real-world casting notices.
+- **3-Tier Hybrid AI "Reading the Notice" Pipeline (`ModelDownloadManager.kt`, `HybridNoticeExtractor.kt`, `NoticeParser.kt`, `AddAuditionSheet.kt`, `NewAuditionScreen.kt`, `AppStore.kt`):**
+  - **Tier 1 (System AICore)**: Integrates `com.google.mlkit:genai-prompt:1.0.0-beta5` querying `Generation.getClient().checkStatus()`. When on-device system AICore is available, zero download is required.
+  - **Tier 2 (LiteRT-LM On-Device SLM Engine)**:
+    - Integrates `com.google.ai.edge.litertlm:litertlm-android:latest.release`.
+    - Resumable chunked OkHttp auto-downloader (`ModelDownloadManager.kt`) streaming models directly from Hugging Face `litert-community` into `noBackupFilesDir/models/` with HTTP 206 `Range` header support and throttled 250ms progress reporting.
+    - Dynamic hardware model selection: selects **Gemma 4 E2B** (`gemma-4-E2B-it.litertlm`) when RAM >= 7.0 GB and available storage >= 3.2 GB; automatically selects **Qwen 3 0.6B** (`Qwen3-0.6B.litertlm`) for mid-range and storage-constrained hardware.
+    - Background download support via WorkManager (`ModelDownloadWorker`).
+    - GPU execution with automatic CPU fallback, thinking token budget bypass (`ThinkingConfig(enableThinking = false)`), and ColorOS 17 / Android 17 GPU eviction recovery.
+  - **Tier 3 (Hardened Deterministic Baseline)**:
+    - Hardened `NoticeParser.parse` executing in ~0.2ms addressing all Section 7 casting notice edge cases:
+      - 7.1: Email subject prefix stripping (`Fwd:`, `Re:`, `[EXTERNAL]`), agency headers blacklist (`CAA`, `UTA`, `WME`, `ECO-CAST`, `AUDITION ALERT`), and quoted working title detection.
+      - 7.2: Role extraction prioritizing character roles over actor names; multi-role breakdowns discovered and indexed into `allAvailableRoles`.
+      - 7.3: Due date ranking giving precedence to self-tape/submission deadlines over shoot/callback dates; December-to-January year rollover handling; and `COB`, `EOD`, and military time (`1700 hrs`) support.
+      - 7.4: Deliverable asks isolated strictly to the notice header partition prior to screenplay sides.
+    - `parseSmart`: Runs deterministic 0.2ms baseline first, queries `HybridNoticeExtractor` under a 3-second timeout, normalizes OCR character typos, aligns screenplay sides anchors, and merges LLM metadata.
+  - **UI & Lifecycle Integration**:
+    - Asynchronous non-blocking background `warmUp()` on `Dispatchers.IO` in `AppStore.kt`.
+    - Sleek non-blocking `ModelDownloadStatusPill` in `AddAuditionSheet` and `NewAuditionScreen` observing `ModelDownloadManager.status`.
+    - Multi-role horizontal `FilterChip` switcher in `AddReviewStep` when `allAvailableRoles.size > 1` dynamically re-attributing scenes with `isMine = true`.
+  - **Verification & Testing**:
+    - Preserved `OcrManager.kt`, `OcrLayoutReconstructor.kt`, and `ScriptParser.kt` with **0 diff** and 100% public API compatibility.
+    - Full test suite passing **271/271 unit tests (100% green)**.
+    - Both `./gradlew assembleDebug` and `./gradlew assembleRelease` (through full R8 minification) compile cleanly.

@@ -12,6 +12,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -227,5 +228,101 @@ class AddAuditionNoticeParsingTest {
         assertEquals("Set up your role, deadline, and deliverables, then save.", addReviewSubtitle(AddAuditionSource.Type, 0))
         assertTrue(addReviewSubtitle(AddAuditionSource.Scan, 2).contains("3 items found from your scan"))
         assertTrue(addReviewSubtitle(AddAuditionSource.PdfOrFile, 0).contains("1 item found in the PDF"))
+    }
+
+    private val now = LocalDateTime.of(2026, 10, 24, 9, 0) // a Saturday
+
+    @Test
+    fun agencyHeaderIgnoredInFavorOfRealProjectTitle() {
+        val notice = """
+            CAA TALENT UPDATE
+            SELF-TAPE REQUEST
+            Project: Untitled Sci-Fi
+            Role: Maya
+            Due: Friday 5pm
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals("Untitled Sci-Fi", f.project)
+        assertEquals("Maya", f.role)
+        assertFalse("Agency header must not be project title: ${f.project}", f.project.contains("CAA TALENT"))
+        assertFalse("Self-tape request header must not be project title: ${f.project}", f.project.contains("SELF-TAPE REQUEST"))
+    }
+
+    @Test
+    fun forwardedEmailSubjectExtractsCleanTitleAndRole() {
+        val notice = """
+            Fwd: AUDITION - PARAMOUNT - ESCAPE HORIZON - ROLE OF SARAH
+            Please submit by Friday 5pm.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals("ESCAPE HORIZON", f.project)
+        assertEquals("SARAH", f.role)
+        assertFalse("Fwd: must be stripped: ${f.project}", f.project.contains("Fwd:"))
+        assertFalse("PARAMOUNT studio prefix must not contaminate project title: ${f.project}", f.project.contains("PARAMOUNT"))
+    }
+
+    @Test
+    fun actorNameDistinguishedFromCharacterRole() {
+        val notice = """
+            Audition for John Smith as Officer Dave in THE WIRE
+            Due Oct 30 at 5pm.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals("Officer Dave", f.role)
+        assertEquals("THE WIRE", f.project)
+        assertFalse("Actor name John Smith must not be extracted as role: ${f.role}", f.role.contains("John Smith"))
+    }
+
+    @Test
+    fun multiRoleBreakdownExtractsAllAvailableRoles() {
+        val notice = """
+            Project: Echoes
+            LOOKING FOR:
+            MARCUS (Lead) - Male, 30s
+            DETECTIVE JANE (Guest Star) - Female, 40s
+            OFFICER PETE (Co-Star) - Male, 20s
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals(listOf("MARCUS", "DETECTIVE JANE", "OFFICER PETE"), f.allAvailableRoles)
+        assertEquals("MARCUS", f.role)
+        assertTrue("allAvailableRoles must contain MARCUS", "MARCUS" in f.allAvailableRoles)
+        assertTrue("allAvailableRoles must contain DETECTIVE JANE", "DETECTIVE JANE" in f.allAvailableRoles)
+        assertTrue("allAvailableRoles must contain OFFICER PETE", "OFFICER PETE" in f.allAvailableRoles)
+        assertEquals(3, f.allAvailableRoles.size)
+    }
+
+    @Test
+    fun shootAndCallbackDatesIgnoredInFavorOfTapeDeadline() {
+        val notice = """
+            Project: Sunset Ridge
+            Role: Alex
+            SHOOT DATES: Nov 15 - Dec 2.
+            CALLBACK DATES: Submit availability before Friday Nov 1.
+            TAPE DEADLINE: Monday Oct 28 at 5:00 PM.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertEquals(LocalDateTime.of(2026, 10, 28, 17, 0), f.due)
+    }
+
+    @Test
+    fun screenplayStageDirectionsDoNotTriggerFalseDeliverableAsks() {
+        val notice = """
+            Project: Desert Mirage
+            Role: Maya
+
+            INT. DESERT - DAY
+
+            The camera captures a wide landscape of dunes.
+            Maya holds up a clean slate before stepping in front of a full length mirror.
+            She looks at both profiles in the reflection for under 3 min.
+
+            MAYA
+            The heat is unbearable.
+        """.trimIndent()
+        val f = NoticeParser.parse(notice, now)
+        assertTrue("Asks must be empty from sides directions: ${f.asks}", f.asks.isEmpty())
+        assertFalse("Slate first must not trigger: ${f.asks}", "Slate first" in f.asks)
+        assertFalse("Landscape must not trigger: ${f.asks}", "Landscape" in f.asks)
+        assertFalse("Full length must not trigger: ${f.asks}", "Full length" in f.asks)
     }
 }

@@ -59,6 +59,8 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -67,6 +69,7 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +77,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -458,6 +463,8 @@ private fun AddReadingStep(
     onDone: (AddDraft) -> Unit,
 ) {
     val c = OT.colors
+    val context = LocalContext.current
+    val downloadStatus by ModelDownloadManager.getInstance(context).status.collectAsState()
     val parsed = remember(notice) { addParseNotice(notice) }
     var found by remember(notice) { mutableIntStateOf(0) }
     val haptics = rememberHaptics()
@@ -487,13 +494,28 @@ private fun AddReadingStep(
 
     LaunchedEffect(notice) {
         if (notice.isBlank()) return@LaunchedEffect
+
+        val smartDeferred = async(Dispatchers.IO) {
+            runCatching {
+                val extractor = HybridNoticeExtractor.getInstance(context)
+                NoticeParser.parseSmart(notice, extractor)
+            }.getOrNull()
+        }
+
         for (i in 1..rows.size) {
             delay(450)
             found = i
             haptics.tick()
         }
         delay(300)
-        done(parsed)
+
+        val smartFields = runCatching { smartDeferred.await() }.getOrNull()
+        val finalDraft = if (smartFields != null) {
+            addDraftFromNoticeFields(smartFields, source)
+        } else {
+            parsed.copy(source = source)
+        }
+        done(finalDraft)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -514,6 +536,10 @@ private fun AddReadingStep(
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            if (downloadStatus is ModelStatus.Downloading) {
+                ModelDownloadStatusPill(status = downloadStatus)
+            }
+
             val subtitle = when (source) {
                 AddAuditionSource.Scan -> "Extracting the project, deadline, and sides from your scan…"
                 AddAuditionSource.PdfOrFile -> "Extracting the project, deadline, and sides from the document…"
@@ -700,10 +726,12 @@ private fun AddReviewStep(
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
 
-    val parsedLineCount = remember(draft.rawScriptText, draft.role) {
-        if (draft.rawScriptText.isBlank()) 0
-        else ScriptParser.parseScenes(draft.rawScriptText, myCharacter = draft.role.ifBlank { "Role" }).sumOf { it.lines.size }
+    val parsedScenes = remember(draft.rawScriptText, draft.role) {
+        if (draft.rawScriptText.isBlank()) emptyList()
+        else ScriptParser.parseScenes(draft.rawScriptText, myCharacter = draft.role.ifBlank { "Role" })
     }
+    val parsedLineCount = parsedScenes.sumOf { it.lines.size }
+    val myLineCount = parsedScenes.sumOf { s -> s.lines.count { it.isMine } }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -753,32 +781,67 @@ private fun AddReviewStep(
                 )
                 OTDivider()
 
-                if (draft.detectedCharacters.size > 1) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Detected characters (tap to pick)", style = OT.type.caption, color = c.labelSecondary)
-                        Row(
-                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            draft.detectedCharacters.forEach { charName ->
-                                val isSelected = draft.role.equals(charName, ignoreCase = true)
-                                AddChip(
-                                    text = charName,
-                                    selected = isSelected,
-                                    onClick = { onChange(draft.copy(role = charName)) },
-                                )
-                            }
-                        }
-                    }
-                    OTDivider()
-                }
-
                 AddTextField(
                     label = "Role",
                     value = draft.role,
                     placeholder = "Your role",
-                    onValueChange = { onChange(draft.copy(role = it)) },
+                    onValueChange = { newRole ->
+                        val reparsedScenes = if (draft.rawScriptText.isNotBlank()) {
+                            ScriptParser.parseScenes(draft.rawScriptText, myCharacter = newRole.ifBlank { "Role" })
+                        } else emptyList()
+                        onChange(
+                            draft.copy(
+                                role = newRole,
+                                scenes = maxOf(draft.scenes, reparsedScenes.size.coerceAtLeast(1)),
+                            )
+                        )
+                    },
                 )
+
+                val rolesToDisplay = if (draft.allAvailableRoles.size > 1) {
+                    draft.allAvailableRoles
+                } else if (draft.detectedCharacters.size > 1) {
+                    draft.detectedCharacters
+                } else emptyList()
+
+                if (rolesToDisplay.size > 1) {
+                    Spacer(Modifier.height(4.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Available roles (tap to switch)", style = OT.type.caption, color = c.labelSecondary)
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            rolesToDisplay.forEach { charName ->
+                                val isSelected = draft.role.equals(charName, ignoreCase = true)
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        val newRole = charName
+                                        val reparsedScenes = if (draft.rawScriptText.isNotBlank()) {
+                                            ScriptParser.parseScenes(draft.rawScriptText, myCharacter = newRole)
+                                        } else emptyList()
+                                        onChange(
+                                            draft.copy(
+                                                role = newRole,
+                                                scenes = maxOf(draft.scenes, reparsedScenes.size.coerceAtLeast(1)),
+                                            )
+                                        )
+                                    },
+                                    label = { Text(charName, style = OT.type.subhead) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = c.accent,
+                                        selectedLabelColor = Color.White,
+                                        containerColor = c.fillField,
+                                        labelColor = c.labelPrimary,
+                                    ),
+                                    border = null,
+                                    shape = CircleShape,
+                                )
+                            }
+                        }
+                    }
+                }
                 OTDivider()
 
                 AddDueTimeSection(
@@ -809,6 +872,8 @@ private fun AddReviewStep(
                             val sceneWord = if (draft.scenes == 1) "1 scene" else "${draft.scenes} scenes"
                             Text(sceneWord, style = OT.type.headline, color = c.labelPrimary)
                             val lineStatus = when {
+                                myLineCount > 0 && myLineCount < parsedLineCount ->
+                                    "$myLineCount of $parsedLineCount lines assigned to ${draft.role.ifBlank { "your character" }}"
                                 parsedLineCount > 0 -> "$parsedLineCount lines extracted for ${draft.role.ifBlank { "your character" }}"
                                 draft.rawScriptText.isNotBlank() -> "Text extracted · tap Edit to adjust character/dialogue"
                                 else -> "Standard scene placeholders ready"

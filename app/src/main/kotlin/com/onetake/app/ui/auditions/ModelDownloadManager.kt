@@ -135,25 +135,46 @@ class ModelDownloadManager internal constructor(
     }
 
     fun checkExistingModel(): File? {
-        val modelInfo = selectModel(context) ?: return null
-        val destFile = File(getStorageDir(context), modelInfo.name)
-        if (destFile.exists() && destFile.length() > MIN_MODEL_SIZE_BYTES) {
-            val ready = ModelStatus.Ready(destFile, modelInfo.name)
-            _status.value = ready
-            return destFile
+        val storageDir = getStorageDir(context)
+        val candidateDirs = listOf(
+            storageDir,
+            File(context.noBackupFilesDir, "models"),
+            File(context.filesDir, "models"),
+            context.noBackupFilesDir,
+            context.filesDir,
+            context.cacheDir
+        ).distinct()
+
+        val candidateModels = listOf(GEMMA_MODEL_NAME, QWEN_MODEL_NAME)
+        for (modelName in candidateModels) {
+            for (dir in candidateDirs) {
+                val candidateFile = File(dir, modelName)
+                if (candidateFile.exists() && candidateFile.length() > MIN_MODEL_SIZE_BYTES) {
+                    android.util.Log.i("ModelDownloadManager", "checkExistingModel: Found existing model file: ${candidateFile.absolutePath} (${candidateFile.length()} bytes)")
+                    val ready = ModelStatus.Ready(candidateFile, modelName)
+                    _status.value = ready
+                    return candidateFile
+                }
+            }
+        }
+
+        val modelInfo = selectModel(context)
+        if (modelInfo == null) {
+            _status.value = ModelStatus.NotDownloaded("Insufficient device storage or memory")
         }
         return null
     }
 
     suspend fun ensureModelReadyOrStartDownload(): File? {
         val currentStatus = _status.value
-        if (currentStatus is ModelStatus.Ready) {
+        if (currentStatus is ModelStatus.Ready && currentStatus.file.exists() && currentStatus.file.length() > MIN_MODEL_SIZE_BYTES) {
             return currentStatus.file
         }
         val existing = checkExistingModel()
         if (existing != null) {
             return existing
         }
+        android.util.Log.i("ModelDownloadManager", "ensureModelReadyOrStartDownload: Model not ready on disk. Enqueueing background download.")
         enqueueBackgroundDownload(context)
         return null
     }

@@ -320,8 +320,8 @@ fun AddAuditionSheet(onDismiss: () -> Unit) {
             onClose = onDismiss,
             onPaste = {
                 val text = runCatching { clipboardText(context) }.getOrNull().orEmpty()
-                val parsed = if (text.isNotBlank()) addParseNotice(text).copy(source = AddAuditionSource.Paste) else AddDraft(source = AddAuditionSource.Paste)
-                store.startNewAudition(draft = parsed, notice = text)
+                val draft = AddDraft(source = AddAuditionSource.Paste)
+                store.startNewAudition(draft = draft, notice = text)
                 onDismiss()
                 nav.push(Route.NewAudition)
             },

@@ -1,6 +1,7 @@
 package com.onetake.app.ui.auditions
 
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -130,6 +131,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private enum class AddStep { Reading, MissingDate, Review, EditAsks, CouldNotRead }
@@ -155,7 +157,6 @@ fun NewAuditionScreen(onClose: () -> Unit) {
     val initialStep = when {
         draft.source == AddAuditionSource.Type -> AddStep.Review
         store.pendingNewAuditionUris.isNotEmpty() -> AddStep.Reading
-        notice.isNotBlank() && draft.due == null -> AddStep.MissingDate
         notice.isNotBlank() -> AddStep.Reading
         else -> AddStep.Review
     }
@@ -164,24 +165,12 @@ fun NewAuditionScreen(onClose: () -> Unit) {
     fun mergeAdditionalText(additionalText: String, source: AddAuditionSource) {
         val combined = listOf(notice, additionalText).filter { it.isNotBlank() }.joinToString("\n\n")
         notice = combined
-        val reparsed = addParseNotice(combined)
-        val mergedAsks = (draft.asks + reparsed.asks).distinct()
-        val mergedRole = draft.role.ifBlank { reparsed.role }
+        val updatedScriptText = listOf(draft.rawScriptText, additionalText).filter { it.isNotBlank() }.joinToString("\n\n")
+        val parsedScenes = ScriptParser.parseScenes(updatedScriptText, myCharacter = draft.role.ifBlank { "Role" })
         draft = draft.copy(
-            project = draft.project.ifBlank { reparsed.project },
-            role = mergedRole,
-            projectType = if (draft.projectType == "Feature film" && reparsed.projectType.isNotBlank()) reparsed.projectType else draft.projectType,
-            roleSize = if (draft.roleSize == "Lead" && reparsed.roleSize.isNotBlank()) reparsed.roleSize else draft.roleSize,
-            castingOffice = draft.castingOffice.ifBlank { reparsed.castingOffice },
-            notes = draft.notes.ifBlank { reparsed.notes },
-            due = draft.due ?: reparsed.due,
-            asks = mergedAsks,
-            rawScriptText = reparsed.rawScriptText.ifBlank {
-                listOf(draft.rawScriptText, additionalText).filter { it.isNotBlank() }.joinToString("\n\n")
-            },
-            scenes = maxOf(draft.scenes, reparsed.scenes),
-            detectedCharacters = (draft.detectedCharacters + reparsed.detectedCharacters).distinct(),
-            kind = reparsed.kind,
+            rawScriptText = updatedScriptText,
+            scenes = maxOf(draft.scenes, parsedScenes.size),
+            detectedCharacters = (draft.detectedCharacters + ScriptParser.extractCharacters(updatedScriptText)).distinct(),
             source = source,
         )
     }
@@ -202,7 +191,7 @@ fun NewAuditionScreen(onClose: () -> Unit) {
                 }
             } else {
                 notice = ""
-                draft = draft.copy(source = AddAuditionSource.Photo)
+                draft = AddDraft(source = AddAuditionSource.Photo)
                 path = listOf(AddStep.Reading)
                 scope.launch {
                     val result = OcrManager.recognizeTextFromUris(context, uris)
@@ -211,7 +200,7 @@ fun NewAuditionScreen(onClose: () -> Unit) {
                         path = listOf(AddStep.CouldNotRead)
                     } else {
                         notice = text
-                        draft = addParseNotice(text).copy(source = AddAuditionSource.Photo)
+                        draft = AddDraft(source = AddAuditionSource.Photo)
                     }
                 }
             }
@@ -238,7 +227,7 @@ fun NewAuditionScreen(onClose: () -> Unit) {
                 }
             } else {
                 notice = ""
-                draft = draft.copy(source = AddAuditionSource.Scan)
+                draft = AddDraft(source = AddAuditionSource.Scan)
                 path = listOf(AddStep.Reading)
                 scope.launch {
                     val result = OcrManager.recognizeTextFromUri(context, scanUri)
@@ -248,7 +237,7 @@ fun NewAuditionScreen(onClose: () -> Unit) {
                         path = listOf(AddStep.CouldNotRead)
                     } else {
                         notice = text
-                        draft = addParseNotice(text).copy(source = AddAuditionSource.Scan)
+                        draft = AddDraft(source = AddAuditionSource.Scan)
                     }
                 }
             }
@@ -281,6 +270,7 @@ fun NewAuditionScreen(onClose: () -> Unit) {
         if (initialUris.isNotEmpty()) {
             store.pendingNewAuditionUris = emptyList()
             notice = ""
+            draft = AddDraft(source = draft.source)
             path = listOf(AddStep.Reading)
             scope.launch {
                 val result = if (initialUris.size == 1) {
@@ -293,7 +283,7 @@ fun NewAuditionScreen(onClose: () -> Unit) {
                     path = listOf(AddStep.CouldNotRead)
                 } else {
                     notice = text
-                    draft = addParseNotice(text).copy(source = draft.source)
+                    draft = AddDraft(source = draft.source)
                 }
             }
         }
@@ -304,7 +294,7 @@ fun NewAuditionScreen(onClose: () -> Unit) {
         val share = store.incomingShare ?: return@LaunchedEffect
         store.incomingShare = null
         notice = ""
-        draft = draft.copy(source = AddAuditionSource.Share)
+        draft = AddDraft(source = AddAuditionSource.Share)
         path = listOf(AddStep.Reading)
         val parts = buildList {
             share.text?.let { add(it) }
@@ -317,7 +307,7 @@ fun NewAuditionScreen(onClose: () -> Unit) {
             path = listOf(AddStep.CouldNotRead)
         } else {
             notice = text
-            draft = addParseNotice(text).copy(source = AddAuditionSource.Share)
+            draft = AddDraft(source = AddAuditionSource.Share)
         }
     }
 
@@ -465,57 +455,81 @@ private fun AddReadingStep(
     val c = OT.colors
     val context = LocalContext.current
     val downloadStatus by ModelDownloadManager.getInstance(context).status.collectAsState()
-    val parsed = remember(notice) { addParseNotice(notice) }
-    var found by remember(notice) { mutableIntStateOf(0) }
+    var activeDraft by remember(notice) { mutableStateOf<AddDraft?>(null) }
+    var aiStatusDescription by remember { mutableStateOf("Analyzing notice with on-device AI…") }
+    var isReading by remember { mutableStateOf(true) }
+    var currentItemIndex by remember { mutableIntStateOf(0) }
     val haptics = rememberHaptics()
     val done by rememberUpdatedState(onDone)
+
+    val draft = activeDraft
     val roleSummary = when {
-        parsed.role.isNotEmpty() -> parsed.role
-        parsed.detectedCharacters.isNotEmpty() -> "${parsed.detectedCharacters.size} characters detected"
+        draft == null -> "analyzing…"
+        draft.role.isNotEmpty() -> draft.role
+        draft.allAvailableRoles.isNotEmpty() -> draft.allAvailableRoles.joinToString(", ")
+        draft.detectedCharacters.isNotEmpty() -> "${draft.detectedCharacters.size} characters detected"
         else -> "not in the notice"
     }
     val sidesSummary = when {
-        parsed.rawScriptText.isNotBlank() && parsed.scenes == 1 -> "1 scene · dialogue extracted"
-        parsed.rawScriptText.isNotBlank() -> "${parsed.scenes} scenes · dialogue extracted"
-        parsed.scenes == 1 -> "1 scene"
-        else -> "${parsed.scenes} scenes"
+        draft == null -> "analyzing…"
+        draft.rawScriptText.isNotBlank() && draft.scenes == 1 -> "1 scene · dialogue extracted"
+        draft.rawScriptText.isNotBlank() -> "${draft.scenes} scenes · dialogue extracted"
+        draft.scenes == 1 -> "1 scene"
+        else -> "${draft.scenes} scenes"
     }
     val rows = listOf(
-        "Project" to parsed.project.ifEmpty { if (parsed.kind == DocumentKind.SidesOnly) "sides page" else "not in the notice" },
+        "Project" to (draft?.project?.ifEmpty { if (draft.kind == DocumentKind.SidesOnly) "sides page" else "not in the notice" } ?: "analyzing…"),
         "Your role" to roleSummary,
-        "Due" to (parsed.due?.format(addDueLong) ?: "no date given"),
+        "Due" to (draft?.due?.format(addDueLong) ?: if (draft == null) "analyzing…" else "no date given"),
         "Sides" to sidesSummary,
-        "What they asked for" to when (parsed.asks.size) {
+        "What they asked for" to (if (draft == null) "analyzing…" else when (draft.asks.size) {
             0 -> "nothing specific"
             1 -> "1 thing"
-            else -> "${parsed.asks.size} things"
-        },
+            else -> "${draft.asks.size} things"
+        }),
     )
 
     LaunchedEffect(notice) {
         if (notice.isBlank()) return@LaunchedEffect
 
+        Log.i("NewAuditionScreen", "AddReadingStep: launched parseSmart async for ${notice.length} chars (LLM primary)")
         val smartDeferred = async(Dispatchers.IO) {
-            runCatching {
-                val extractor = HybridNoticeExtractor.getInstance(context)
-                NoticeParser.parseSmart(notice, extractor)
-            }.getOrNull()
+            val extractor = HybridNoticeExtractor.getInstance(context)
+            NoticeParser.parseSmart(notice, extractor)
         }
 
-        for (i in 1..rows.size) {
-            delay(450)
-            found = i
-            haptics.tick()
+        // Cycle through items to give a lively scanning feel while LLM processes
+        val scanJob = launch {
+            var idx = 0
+            while (isActive && isReading) {
+                currentItemIndex = idx % rows.size
+                delay(300)
+                idx++
+            }
         }
-        delay(300)
 
         val smartFields = runCatching { smartDeferred.await() }.getOrNull()
-        val finalDraft = if (smartFields != null) {
-            addDraftFromNoticeFields(smartFields, source)
+        isReading = false
+        scanJob.cancel()
+
+        if (smartFields != null) {
+            val smartDraft = addDraftFromNoticeFields(smartFields, source)
+            activeDraft = smartDraft
+            val isLlmFilled = smartFields.project.isNotBlank() || smartFields.role.isNotBlank() || smartFields.allAvailableRoles.isNotEmpty()
+            aiStatusDescription = if (isLlmFilled) "Filled by on-device AI" else "Filled by baseline fallback"
+            haptics.success()
+            delay(650)
+            done(smartDraft)
         } else {
-            parsed.copy(source = source)
+            // Ultimate fallback to deterministic regex only if the extractor failed completely
+            val fallbackFields = NoticeParser.parse(notice)
+            val fallbackDraft = addDraftFromNoticeFields(fallbackFields, source)
+            activeDraft = fallbackDraft
+            aiStatusDescription = "Filled by baseline fallback"
+            haptics.success()
+            delay(650)
+            done(fallbackDraft)
         }
-        done(finalDraft)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -541,10 +555,10 @@ private fun AddReadingStep(
             }
 
             val subtitle = when (source) {
-                AddAuditionSource.Scan -> "Extracting the project, deadline, and sides from your scan…"
-                AddAuditionSource.PdfOrFile -> "Extracting the project, deadline, and sides from the document…"
-                AddAuditionSource.Photo -> "Extracting the project, deadline, and sides from the image…"
-                else -> "Extracting the project, deadline, and sides from the notice…"
+                AddAuditionSource.Scan -> "Extracting the project, deadline, and sides with on-device AI…"
+                AddAuditionSource.PdfOrFile -> "Extracting the project, deadline, and sides with on-device AI…"
+                AddAuditionSource.Photo -> "Extracting the project, deadline, and sides with on-device AI…"
+                else -> "Extracting the project, deadline, and sides with on-device AI…"
             }
             LargeTitle("Reading the notice", subtitle = subtitle)
             Column(
@@ -555,30 +569,52 @@ private fun AddReadingStep(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 rows.forEachIndexed { i, (label, value) ->
-                    val isRevealed = notice.isNotBlank() && i < found
-                    val isCurrent = notice.isNotBlank() && i == found && found < rows.size
-                    val isWaiting = notice.isBlank() && i == 0
+                    val isScanning = isReading && i == currentItemIndex
                     Row(
                         Modifier.fillMaxWidth().padding(vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(label, style = OT.type.body, color = c.labelPrimary, modifier = Modifier.weight(1f))
                         when {
-                            isRevealed -> Text(
+                            !isReading -> Text(
                                 value,
                                 style = OT.type.headline,
                                 color = if ("not in" in value || "no date" in value) c.labelTertiary else c.labelPrimary,
                             )
-                            isCurrent || isWaiting -> CircularProgressIndicator(
+                            isScanning -> CircularProgressIndicator(
                                 strokeWidth = 2.dp,
                                 color = c.accent,
                                 modifier = Modifier.size(16.dp),
                             )
-                            else -> Text("reading…", style = OT.type.footnote, color = c.labelTertiary)
+                            else -> Text("analyzing…", style = OT.type.footnote, color = c.labelTertiary)
                         }
                     }
                     if (i < rows.lastIndex) OTDivider()
                 }
+            }
+
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (isReading) {
+                    CircularProgressIndicator(
+                        strokeWidth = 2.dp,
+                        color = c.accent,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                } else {
+                    Icon(
+                        Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = c.accent,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(aiStatusDescription, style = OT.type.footnote, color = c.accent)
             }
         }
     }

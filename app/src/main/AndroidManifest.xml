@@ -30,11 +30,29 @@
          permissions are needed.) -->
     <application
         android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.OneTake">
+
+        <!-- Unblock vendor OpenCL GPU libraries for LiteRT-LM on Android 12-17 -->
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libOpenCL-car.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libOpenCL-pixel.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libGLES_mali.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libPVROCL.so"
+            android:required="false" />
         <!-- singleTask: a share while OneTake is open goes to the running activity (onNewIntent)
              instead of a second one with its own AppStore writing the same state file. -->
         <activity

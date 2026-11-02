@@ -164,4 +164,16 @@ class HybridNoticeExtractorTest {
         assertEquals("Recovered Project", recovered?.projectTitle)
         assertEquals(2, callCount)
     }
+
+    @Test
+    fun isGpuAvailableDefaultsToTrueAndResetsOnClose() {
+        val extractor = HybridNoticeExtractor(Application())
+        assertTrue("GPU availability must default to true", extractor.isGpuAvailableForTesting())
+
+        extractor.setGpuAvailableForTesting(false)
+        assertEquals(false, extractor.isGpuAvailableForTesting())
+
+        extractor.close()
+        assertTrue("GPU availability must reset to true on close", extractor.isGpuAvailableForTesting())
+    }
 }

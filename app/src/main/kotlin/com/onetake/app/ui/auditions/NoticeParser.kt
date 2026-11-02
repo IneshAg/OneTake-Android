@@ -1,5 +1,6 @@
 package com.onetake.app.ui.auditions
 
+import android.util.Log
 import com.onetake.app.data.ScriptParser
 import com.onetake.app.models.Destination
 import kotlinx.coroutines.CancellationException
@@ -732,18 +733,27 @@ internal object NoticeParser {
         extractor: HybridNoticeExtractor? = null,
         today: LocalDate = LocalDate.now(),
     ): NoticeFields {
-        val baseline = parse(rawText, today.atStartOfDay())
         if (extractor == null) {
-            return baseline
+            Log.i("NoticeParser", "parseSmart: extractor is null, using deterministic regex fallback")
+            return parse(rawText, today.atStartOfDay())
         }
 
+        Log.i("NoticeParser", "parseSmart: starting LLM extraction for ${rawText.length} chars...")
         val llm = try {
             extractor.extractNotice(rawText, today)
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w("NoticeParser", "parseSmart: extractor threw ${e.javaClass.simpleName}: ${e.message}", e)
             null
-        } ?: return baseline
+        }
+
+        if (llm == null) {
+            Log.w("NoticeParser", "parseSmart: LLM extraction returned null. Using deterministic baseline regex fallback.")
+            return parse(rawText, today.atStartOfDay())
+        }
+
+        Log.i("NoticeParser", "parseSmart: LLM extraction SUCCEEDED: project='${llm.projectTitle}', role='${llm.targetRoleName}', roles=${llm.allAvailableRoles}, due='${llm.tapeDueIsoDate} ${llm.tapeDueTime24h}'")
 
         var normalizedText = rawText
         if (llm.characterNormalizationMap.isNotEmpty()) {
@@ -754,10 +764,9 @@ internal object NoticeParser {
             }
         }
 
-        val targetRole = llm.targetRoleName.trim().ifBlank { baseline.role }
-        var scriptText = baseline.scriptText
-        var sceneCount = baseline.sceneCount
-        var detectedChars = baseline.detectedCharacters
+        val targetRole = llm.targetRoleName.trim().ifEmpty {
+            if (llm.allAvailableRoles.size == 1) llm.allAvailableRoles.first() else ""
+        }
 
         val rawAnchor = llm.firstScriptLineAnchor.trim()
         var normalizedAnchor = rawAnchor
@@ -768,6 +777,10 @@ internal object NoticeParser {
                 }
             }
         }
+
+        var scriptText = ""
+        var sceneCount = 1
+        var detectedChars = emptyList<String>()
 
         if (rawAnchor.isNotBlank()) {
             var anchorIdx = normalizedText.indexOf(normalizedAnchor)
@@ -792,31 +805,47 @@ internal object NoticeParser {
 
             if (slicedSidesNullable != null) {
                 var slicedSides: String = slicedSidesNullable
-                // Ensure all OCR typos in the sliced sides are normalized
                 for ((typo, fix) in llm.characterNormalizationMap) {
                     if (typo.isNotBlank() && fix.isNotBlank()) {
                         slicedSides = slicedSides.replace(typo, fix)
                     }
                 }
-                val parsedScenes = ScriptParser.parseScenes(slicedSides, myCharacter = targetRole)
+                val parsedScenes = ScriptParser.parseScenes(slicedSides, myCharacter = targetRole.ifBlank { "Role" })
                 scriptText = slicedSides
                 sceneCount = maxOf(1, parsedScenes.size)
                 detectedChars = ScriptParser.extractCharacters(slicedSides)
-            }
-        } else if (llm.characterNormalizationMap.isNotEmpty() && scriptText.isNotBlank()) {
-            var normalizedSides = scriptText
-            for ((typo, fix) in llm.characterNormalizationMap) {
-                if (typo.isNotBlank() && fix.isNotBlank()) {
-                    normalizedSides = normalizedSides.replace(typo, fix)
+            } else {
+                val partition = classifyAndPartition(normalizedText)
+                if (partition.sidesText.isNotBlank()) {
+                    var sides = partition.sidesText
+                    for ((typo, fix) in llm.characterNormalizationMap) {
+                        if (typo.isNotBlank() && fix.isNotBlank()) {
+                            sides = sides.replace(typo, fix)
+                        }
+                    }
+                    val parsedScenes = ScriptParser.parseScenes(sides, myCharacter = targetRole.ifBlank { "Role" })
+                    scriptText = sides
+                    sceneCount = maxOf(1, parsedScenes.size)
+                    detectedChars = ScriptParser.extractCharacters(sides)
                 }
             }
-            val parsedScenes = ScriptParser.parseScenes(normalizedSides, myCharacter = targetRole)
-            scriptText = normalizedSides
-            sceneCount = maxOf(1, parsedScenes.size)
-            detectedChars = ScriptParser.extractCharacters(normalizedSides)
+        } else {
+            val partition = classifyAndPartition(normalizedText)
+            if (partition.sidesText.isNotBlank()) {
+                var sides = partition.sidesText
+                for ((typo, fix) in llm.characterNormalizationMap) {
+                    if (typo.isNotBlank() && fix.isNotBlank()) {
+                        sides = sides.replace(typo, fix)
+                    }
+                }
+                val parsedScenes = ScriptParser.parseScenes(sides, myCharacter = targetRole.ifBlank { "Role" })
+                scriptText = sides
+                sceneCount = maxOf(1, parsedScenes.size)
+                detectedChars = ScriptParser.extractCharacters(sides)
+            }
         }
 
-        val mergedDue = if (llm.tapeDueIsoDate.isNotBlank()) {
+        val parsedDue = if (llm.tapeDueIsoDate.isNotBlank()) {
             runCatching {
                 val date = LocalDate.parse(llm.tapeDueIsoDate.trim())
                 val time = if (llm.tapeDueTime24h.isNotBlank()) {
@@ -828,54 +857,42 @@ internal object NoticeParser {
                     LocalTime.of(10, 0)
                 }
                 date.atTime(time)
-            }.getOrNull() ?: baseline.due
-        } else {
-            baseline.due
-        }
+            }.getOrNull() ?: parseDue(rawText, today.atStartOfDay())
+        } else null
 
-        val mergedDestination = if (llm.destination.isNotBlank()) {
+        val parsedDestination = if (llm.destination.isNotBlank()) {
             val d = llm.destination.lowercase()
             when {
                 "casting networks" in d -> Destination.CastingNetworks
                 "spotlight" in d -> Destination.Spotlight
                 "actors access" in d || "eco cast" in d || "ecocast" in d -> Destination.ActorsAccess
                 "email" in d || "link" in d -> Destination.EmailOrLink
-                else -> baseline.destination
+                else -> Destination.ActorsAccess
             }
-        } else {
-            baseline.destination
+        } else Destination.ActorsAccess
+
+        val kind = when (llm.documentKind.trim().lowercase()) {
+            "sidesonly", "sides_only" -> DocumentKind.SidesOnly
+            "noticewithsides", "notice_with_sides" -> DocumentKind.NoticeWithSides
+            "castingnotice", "casting_notice" -> if (scriptText.isNotBlank()) DocumentKind.NoticeWithSides else DocumentKind.CastingNotice
+            else -> if (scriptText.isNotBlank()) DocumentKind.NoticeWithSides else DocumentKind.CastingNotice
         }
 
-        val mergedKind = if (llm.documentKind.isNotBlank()) {
-            when (llm.documentKind.trim().lowercase()) {
-                "sidesonly", "sides_only" -> DocumentKind.SidesOnly
-                "noticewithsides", "notice_with_sides" -> DocumentKind.NoticeWithSides
-                "castingnotice", "casting_notice" -> DocumentKind.CastingNotice
-                else -> baseline.kind
-            }
-        } else {
-            baseline.kind
-        }
-
-        val finalKind = if (scriptText.isNotBlank() && mergedKind == DocumentKind.CastingNotice) {
-            DocumentKind.NoticeWithSides
-        } else {
-            mergedKind
-        }
-
-        return baseline.copy(
-            project = if (llm.projectTitle.isNotBlank()) llm.projectTitle.trim() else baseline.project,
-            role = targetRole.ifBlank { baseline.role },
-            allAvailableRoles = if (llm.allAvailableRoles.isNotEmpty()) llm.allAvailableRoles else baseline.allAvailableRoles,
-            projectType = if (llm.projectType.isNotBlank()) llm.projectType.trim() else baseline.projectType,
-            roleSize = if (llm.roleSize.isNotBlank()) llm.roleSize.trim() else baseline.roleSize,
-            due = mergedDue,
-            destination = mergedDestination,
-            asks = if (llm.asks.isNotEmpty()) llm.asks else baseline.asks,
-            kind = finalKind,
+        return NoticeFields(
+            project = llm.projectTitle.trim(),
+            role = targetRole,
+            allAvailableRoles = llm.allAvailableRoles,
+            projectType = llm.projectType.trim().ifBlank { "Feature film" },
+            roleSize = llm.roleSize.trim().ifBlank { "Lead" },
+            due = parsedDue,
+            destination = parsedDestination,
+            asks = llm.asks,
+            kind = kind,
             scriptText = scriptText,
             sceneCount = sceneCount,
             detectedCharacters = detectedChars,
+            castingOffice = "",
+            notes = "",
         )
     }
 }

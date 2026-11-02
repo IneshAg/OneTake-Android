@@ -169,4 +169,48 @@ class ModelDownloadManagerTest {
         val ready = manager.status.value as ModelStatus.Ready
         assertEquals("gemma-4-E2B-it.litertlm", ready.modelName)
     }
+
+    @Test
+    fun checkExistingModelFindsGemmaInCandidateDirectory() = runBlocking {
+        val baseDir = tempFolder.newFolder("base_existing_gemma")
+        val stubContext = StubTestContext(baseDir)
+        val modelsDir = File(baseDir, "models").also { it.mkdirs() }
+        val gemmaFile = File(modelsDir, ModelDownloadManager.GEMMA_MODEL_NAME)
+
+        // Write file exceeding 100MB
+        val targetSize = 101L * 1024L * 1024L
+        val raf = java.io.RandomAccessFile(gemmaFile, "rw")
+        raf.setLength(targetSize)
+        raf.close()
+
+        val manager = ModelDownloadManager(stubContext)
+        val found = manager.checkExistingModel()
+
+        assertNotNull("checkExistingModel must find existing Gemma file", found)
+        assertEquals(gemmaFile.absolutePath, found?.absolutePath)
+        assertTrue(manager.status.value is ModelStatus.Ready)
+        assertEquals(ModelDownloadManager.GEMMA_MODEL_NAME, (manager.status.value as ModelStatus.Ready).modelName)
+    }
+
+    @Test
+    fun checkExistingModelFindsQwenInCandidateDirectory() = runBlocking {
+        val baseDir = tempFolder.newFolder("base_existing_qwen")
+        val stubContext = StubTestContext(baseDir)
+        val modelsDir = File(baseDir, "models").also { it.mkdirs() }
+        val qwenFile = File(modelsDir, ModelDownloadManager.QWEN_MODEL_NAME)
+
+        // Write file exceeding 100MB
+        val targetSize = 101L * 1024L * 1024L
+        val raf = java.io.RandomAccessFile(qwenFile, "rw")
+        raf.setLength(targetSize)
+        raf.close()
+
+        val manager = ModelDownloadManager(stubContext)
+        val found = manager.checkExistingModel()
+
+        assertNotNull("checkExistingModel must find existing Qwen file", found)
+        assertEquals(qwenFile.absolutePath, found?.absolutePath)
+        assertTrue(manager.status.value is ModelStatus.Ready)
+        assertEquals(ModelDownloadManager.QWEN_MODEL_NAME, (manager.status.value as ModelStatus.Ready).modelName)
+    }
 }

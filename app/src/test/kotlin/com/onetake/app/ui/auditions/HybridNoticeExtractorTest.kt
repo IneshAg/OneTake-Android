@@ -116,16 +116,17 @@ class HybridNoticeExtractorTest {
     @Test
     fun extractNoticeTimesOutGracefullyWhenInferenceExceedsTimeout() = runBlocking {
         val extractor = HybridNoticeExtractor(Application())
+        extractor.inferenceTimeoutMs = 200L
         extractor.testInferenceOverride = {
-            // Simulate slow inference taking longer than 3000ms
+            // Simulate slow inference taking longer than timeout
             runBlocking {
-                delay(3500L)
+                delay(400L)
             }
             """{"projectTitle": "Too Late"}"""
         }
 
         val result = extractor.extractNotice("Sample notice text", LocalDate.of(2026, 10, 24))
-        assertNull("Should return null on inference timeout (> 3000ms)", result)
+        assertNull("Should return null on inference timeout", result)
     }
 
     @Test

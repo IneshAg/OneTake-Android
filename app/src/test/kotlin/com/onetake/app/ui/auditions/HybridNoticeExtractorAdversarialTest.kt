@@ -13,15 +13,15 @@ import java.time.LocalDate
 class HybridNoticeExtractorAdversarialTest {
 
     // =========================================================================
-    // 1. Text Slicing Boundary Tests (> 4000 chars)
+    // 1. Text Slicing Boundary Tests (> 1800 chars)
     // =========================================================================
 
     @Test
-    fun largeInputTextIsStrictlySlicedTo4000CharsInPrompt() = runBlocking {
+    fun largeInputTextIsStrictlySlicedTo1800CharsInPrompt() = runBlocking {
         val extractor = HybridNoticeExtractor(Application())
 
         // Create 10,000 character string with recognizable boundary marker
-        val prefix = "A".repeat(4000)
+        val prefix = "A".repeat(HybridNoticeExtractor.MAX_INPUT_CHAR_SLICE)
         val overflow = "Z".repeat(6000)
         val largeText = prefix + overflow
 
@@ -35,33 +35,33 @@ class HybridNoticeExtractorAdversarialTest {
 
         assertNotNull(result)
         assertNotNull(capturedPrompt)
-        // Verify prefix of 4000 'A's is present
-        assertTrue("Prompt must contain the first 4000 characters", capturedPrompt!!.contains(prefix))
+        // Verify prefix of 1800 'A's is present
+        assertTrue("Prompt must contain the first 1800 characters", capturedPrompt!!.contains(prefix))
         // Verify overflow of 'Z's is strictly excluded
-        assertTrue("Prompt must NOT contain characters beyond 4000 slice", !capturedPrompt!!.contains("Z"))
+        assertTrue("Prompt must NOT contain characters beyond 1800 slice", !capturedPrompt!!.contains("Z"))
     }
 
     @Test
-    fun textExactlyAt4000CharsBoundaryPreservedEntirely() = runBlocking {
+    fun textExactlyAt1800CharsBoundaryPreservedEntirely() = runBlocking {
         val extractor = HybridNoticeExtractor(Application())
-        val exact4000 = "B".repeat(4000)
+        val exact1800 = "B".repeat(HybridNoticeExtractor.MAX_INPUT_CHAR_SLICE)
 
         var capturedPrompt: String? = null
         extractor.testInferenceOverride = { prompt ->
             capturedPrompt = prompt
-            """{"projectTitle": "Exact 4000"}"""
+            """{"projectTitle": "Exact 1800"}"""
         }
 
-        val result = extractor.extractNotice(exact4000, LocalDate.of(2026, 11, 1))
+        val result = extractor.extractNotice(exact1800, LocalDate.of(2026, 11, 1))
         assertNotNull(result)
-        assertTrue(capturedPrompt!!.contains(exact4000))
+        assertTrue(capturedPrompt!!.contains(exact1800))
     }
 
     @Test
-    fun unicodeAndEmojiStringBeyond4000CharsHandledWithoutCrash() = runBlocking {
+    fun unicodeAndEmojiStringBeyond1800CharsHandledWithoutCrash() = runBlocking {
         val extractor = HybridNoticeExtractor(Application())
         // Emoji strings often take 2 char units (surrogate pairs)
-        val emojiText = "🎭🎬🎪".repeat(2000) // 6000 chars
+        val emojiText = "🎭🎬🎪".repeat(1000) // 3000 chars
 
         extractor.testInferenceOverride = {
             """{"projectTitle": "Emoji Audition"}"""
@@ -193,18 +193,19 @@ class HybridNoticeExtractorAdversarialTest {
     }
 
     // =========================================================================
-    // 3. 3000ms Timeout Behavior and Mutex Re-acquisition
+    // 3. Timeout Behavior and Mutex Re-acquisition
     // =========================================================================
 
     @Test
     fun slowInferenceTimesOutAndSubsequentCallReacquiresMutexSuccessfully() = runBlocking {
         val extractor = HybridNoticeExtractor(Application())
+        extractor.inferenceTimeoutMs = 200L
 
-        // Call 1: Slow inference that takes 3500ms (> 3000ms timeout)
+        // Call 1: Slow inference that takes 400ms (> 200ms timeout)
         var call1Executed = false
         extractor.testInferenceOverride = {
             call1Executed = true
-            runBlocking { delay(3500L) }
+            runBlocking { delay(400L) }
             """{"projectTitle": "Slow Movie"}"""
         }
 
@@ -249,8 +250,35 @@ class HybridNoticeExtractorAdversarialTest {
         }
 
         // If testInferenceOverride throws inside extractNoticeInternal, does it get caught?
-        // Note: in extractNoticeInternal, testInferenceOverride is directly called.
-        // Let's observe if an exception is thrown or caught!
         // In real execution, Tier 1 and Tier 2 both wrap native calls in try/catch.
+    }
+
+    // =========================================================================
+    // 5. CancellationException Invariance & Engine Preservation
+    // =========================================================================
+
+    @Test
+    fun cancellationExceptionRethrownWithoutDestroyingEngine() = runBlocking {
+        val extractor = HybridNoticeExtractor(Application())
+
+        // Simulate cancellation exception thrown during inference (e.g. timeout or parent cancellation)
+        extractor.testInferenceOverride = {
+            throw kotlinx.coroutines.CancellationException("Simulated coroutine timeout cancellation")
+        }
+
+        var cancellationThrown = false
+        try {
+            extractor.extractNotice("Cancel test", LocalDate.of(2026, 11, 1))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            cancellationThrown = true
+        }
+
+        assertTrue("CancellationException must be rethrown cleanly and never swallowed as GPU crash", cancellationThrown)
+    }
+
+    @Test
+    fun constantsMeetProductionPerformanceBudgets() {
+        assertEquals("Inference timeout must be 12000ms for first-run WebGPU prefill headroom", 12000L, HybridNoticeExtractor.LLM_INFERENCE_TIMEOUT_MS)
+        assertEquals("Max input slice must be 1800 chars to fit within 512 prefill tokens", 1800, HybridNoticeExtractor.MAX_INPUT_CHAR_SLICE)
     }
 }

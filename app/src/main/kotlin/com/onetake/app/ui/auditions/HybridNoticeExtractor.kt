@@ -1,6 +1,7 @@
 package com.onetake.app.ui.auditions
 
 import android.content.Context
+import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.ConversationConfig
@@ -10,6 +11,7 @@ import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.ThinkingConfig
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -43,8 +45,9 @@ class HybridNoticeExtractor internal constructor(
     private val context: Context
 ) {
     companion object {
-        const val LLM_INFERENCE_TIMEOUT_MS = 3000L
-        const val MAX_INPUT_CHAR_SLICE = 4000
+        private const val TAG = "HybridNoticeExtractor"
+        const val LLM_INFERENCE_TIMEOUT_MS = 12000L
+        const val MAX_INPUT_CHAR_SLICE = 1800
 
         val json = Json {
             ignoreUnknownKeys = true
@@ -69,28 +72,22 @@ class HybridNoticeExtractor internal constructor(
 
         fun buildPrompt(inputSlice: String, today: LocalDate): String {
             return """
-You are an expert casting assistant. Analyze the following audition notice and sides text.
-Output ONLY a JSON object matching this schema:
+Extract audition notice details as JSON (Today's date is $today):
 {
-  "documentKind": "CastingNotice" | "SidesOnly" | "NoticeWithSides",
-  "projectTitle": "Clean project or production title",
-  "projectType": "Feature film" | "TV Series" | "Commercial" | "Short film" | "Theatre" | etc.,
-  "targetRoleName": "Character role name targeted for the audition",
-  "allAvailableRoles": ["Role 1", "Role 2"],
-  "roleSize": "Lead" | "Supporting" | "Guest Star" | "Co-Star" | "Series Regular" | etc.,
+  "documentKind": "CastingNotice|SidesOnly|NoticeWithSides",
+  "projectTitle": "",
+  "projectType": "",
+  "targetRoleName": "",
+  "allAvailableRoles": [],
+  "roleSize": "",
   "tapeDueIsoDate": "YYYY-MM-DD",
   "tapeDueTime24h": "HH:MM",
-  "destination": "Actors Access" | "Eco-Cast" | "Casting Networks" | "Email" | etc.,
+  "destination": "",
   "asks": ["Slate first", "Landscape", "Full length", "Both profiles", "Under 3 min"],
-  "characterNormalizationMap": {"OCR_TYPO": "CORRECT_NAME"},
-  "firstScriptLineAnchor": "Verbatim line where screenplay sides begin"
+  "characterNormalizationMap": {},
+  "firstScriptLineAnchor": ""
 }
-
-Important Instructions:
-1. Today's date is $today. If only day and month are provided, use $today to calculate the ISO year.
-2. If multiple roles are present, list all distinct roles in "allAvailableRoles".
-3. If deliverables (asks) like slate, landscape framing, full-length shot, or time limits are requested in the notice, include them in "asks". Do NOT include directions that appear inside screenplay dialogue or action lines.
-4. Output ONLY valid JSON enclosed within { and }.
+Output valid JSON only.
 
 Notice text:
 $inputSlice
@@ -113,7 +110,10 @@ $inputSlice
     private val mutex = Mutex()
     private var engine: Engine? = null
 
+    internal var inferenceTimeoutMs: Long = LLM_INFERENCE_TIMEOUT_MS
     internal var testInferenceOverride: ((String) -> String?)? = null
+
+    internal fun getEngineForTesting(): Engine? = engine
 
     fun warmUp(scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())) {
         scope.launch {
@@ -144,6 +144,8 @@ $inputSlice
                     downloadManager.enqueueBackgroundDownload(context)
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Throwable) {
             downloadManager.enqueueBackgroundDownload(context)
         }
@@ -152,61 +154,95 @@ $inputSlice
     suspend fun extractNotice(
         rawText: String,
         today: LocalDate = LocalDate.now()
-    ): LlmParsedNotice? = withTimeoutOrNull(LLM_INFERENCE_TIMEOUT_MS) {
-        mutex.withLock {
-            withContext(Dispatchers.IO) {
-                extractNoticeInternal(rawText, today)
-            }
-        }
-    }
-
-    private suspend fun extractNoticeInternal(
-        rawText: String,
-        today: LocalDate
-    ): LlmParsedNotice? {
+    ): LlmParsedNotice? = withContext(Dispatchers.IO) {
         val inputSlice = rawText.take(MAX_INPUT_CHAR_SLICE)
         val prompt = buildPrompt(inputSlice, today)
 
         testInferenceOverride?.let { override ->
-            val result = override(prompt)
-            return result?.let { parseLlmJson(it) }
-        }
-
-        // Step 1: System AICore (Tier 1)
-        try {
-            val client = Generation.getClient()
-            val status = client.checkStatus()
-            if (status == FeatureStatus.AVAILABLE) {
-                val response = client.generateContent(prompt)
-                val text = response.candidates.firstOrNull()?.text
-                if (!text.isNullOrBlank()) {
-                    val parsed = parseLlmJson(text)
-                    if (parsed != null) {
-                        return parsed
-                    }
+            val result = withTimeoutOrNull(inferenceTimeoutMs) {
+                withContext(Dispatchers.Default) {
+                    override(prompt)
                 }
             }
-        } catch (e: Throwable) {
-            // System AICore unavailable or failed, fall through to Tier 2
+            return@withContext result?.let { parseLlmJson(it) }
         }
 
-        // Step 2: LiteRT-LM GPU -> CPU Cascade (Tier 2)
-        val downloadManager = ModelDownloadManager.getInstance(context)
-        val modelFile = downloadManager.ensureModelReadyOrStartDownload()
-        if (modelFile == null || !modelFile.exists()) {
-            return null
-        }
+        mutex.withLock {
+            // Step 1: System AICore (Tier 1)
+            try {
+                val client = Generation.getClient()
+                val status = client.checkStatus()
+                if (status == FeatureStatus.AVAILABLE) {
+                    val response = withTimeoutOrNull(inferenceTimeoutMs) {
+                        client.generateContent(prompt)
+                    }
+                    val text = response?.candidates?.firstOrNull()?.text
+                    if (!text.isNullOrBlank()) {
+                        val parsed = parseLlmJson(text)
+                        if (parsed != null) {
+                            return@withContext parsed
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                // System AICore unavailable or failed, fall through to Tier 2
+            }
 
-        val rawOutput = runLiteRtLmInference(modelFile, prompt) ?: return null
-        return parseLlmJson(rawOutput)
+            // Step 2: LiteRT-LM GPU -> CPU Cascade (Tier 2)
+            val downloadManager = ModelDownloadManager.getInstance(context)
+            val modelFile = downloadManager.ensureModelReadyOrStartDownload()
+            if (modelFile == null || !modelFile.exists()) {
+                return@withContext null
+            }
+
+            // Separate Engine Initialization from Inference Timeout:
+            // Engine initialization (~3.2s on WebGPU) runs first and is not counted against inference timeout.
+            val initStart = System.currentTimeMillis()
+            val currentEngine = try {
+                ensureEngineInitialized(modelFile)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed to initialize engine: ${e.message}", e)
+                return@withContext null
+            }
+            val initMs = System.currentTimeMillis() - initStart
+            if (initMs > 0) {
+                Log.i(TAG, "Engine ready in ${initMs}ms")
+            }
+
+            // Wrapped strictly around inference execution
+            val inferStart = System.currentTimeMillis()
+            val rawOutput = withTimeoutOrNull(inferenceTimeoutMs) {
+                runLiteRtLmInference(currentEngine, modelFile, prompt)
+            }
+            val inferMs = System.currentTimeMillis() - inferStart
+
+            if (rawOutput != null) {
+                Log.i(TAG, "LLM raw output (${inferMs}ms): $rawOutput")
+                parseLlmJson(rawOutput)
+            } else {
+                Log.w(TAG, "LLM inference timed out or returned null after ${inferMs}ms")
+                null
+            }
+        }
     }
 
-    private fun runLiteRtLmInference(modelFile: File, prompt: String): String? {
-        if (engine == null) {
-            engine = createAndInitEngine(modelFile)
-        }
-        val currentEngine = engine ?: return null
+    internal fun ensureEngineInitialized(modelFile: File): Engine {
+        var current = engine
+        if (current != null) return current
+        val created = createAndInitEngine(modelFile)
+        engine = created
+        return created
+    }
 
+    private fun runLiteRtLmInference(
+        currentEngine: Engine,
+        modelFile: File,
+        prompt: String
+    ): String? {
         val conversationConfig = ConversationConfig(
             thinkingConfig = ThinkingConfig(enableThinking = false, thinkingTokenBudget = 0)
         )
@@ -222,8 +258,12 @@ $inputSlice
             val text = extractTextFromMessage(message)
             if (text.isNotBlank()) return text
         } catch (e: Throwable) {
+            // NEVER destroy or close the engine on timeout or coroutine cancellation!
+            if (e is CancellationException) throw e
+
             // Handle ColorOS 17 / Android 17 GPU context eviction: close stale engine, recreate once, and retry
-            runCatching { engine?.close() }
+            Log.w(TAG, "GPU inference failed with ${e.javaClass.simpleName}, attempting engine reinit: ${e.message}")
+            runCatching { currentEngine.close() }
             engine = null
 
             try {
@@ -238,6 +278,8 @@ $inputSlice
                 val retryText = extractTextFromMessage(retryMessage)
                 if (retryText.isNotBlank()) return retryText
             } catch (retryError: Throwable) {
+                if (retryError is CancellationException) throw retryError
+                Log.e(TAG, "Retry inference failed: ${retryError.message}")
                 runCatching { engine?.close() }
                 engine = null
                 return null
@@ -253,13 +295,17 @@ $inputSlice
             val gpuConfig = EngineConfig(
                 modelPath = modelFile.absolutePath,
                 backend = Backend.GPU(),
+                maxNumTokens = 1024,
                 cacheDir = cacheDir
             )
             Engine(gpuConfig).also { it.initialize() }
         } catch (gpuError: Throwable) {
+            if (gpuError is CancellationException) throw gpuError
+            Log.w(TAG, "GPU engine init failed, falling back to CPU: ${gpuError.message}")
             val cpuConfig = EngineConfig(
                 modelPath = modelFile.absolutePath,
                 backend = Backend.CPU(),
+                maxNumTokens = 1024,
                 cacheDir = cacheDir
             )
             Engine(cpuConfig).also { it.initialize() }

@@ -52,7 +52,7 @@ class HybridNoticeExtractor internal constructor(
         const val AICORE_MAX_INPUT_CHAR_SLICE = 1200
 
         private val EMAIL_REGEX = Regex("""[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}""")
-        private val PHONE_REGEX = Regex("""\+?\d[\d\s\-()]{7,}\d""")
+        private val PHONE_REGEX = Regex("""\b\+?\d[\d\s\-()]{5,}\d\b""")
         private val DATE_LIKE_REGEX = Regex("""^\d{4}[-/]\d{1,2}[-/]\d{1,2}$|^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$""")
 
         val json = Json {
@@ -74,9 +74,10 @@ class HybridNoticeExtractor internal constructor(
         }
 
         fun sliceForAiCore(rawText: String, maxLimit: Int = AICORE_MAX_INPUT_CHAR_SLICE): String {
+            if (rawText.length <= maxLimit) return rawText
+
             val sidesIndicators = listOf(
-                Regex("""(?mi)^(?:\s*\[?(?:SCENE|INT\.|EXT\.|ACT)\b)"""),
-                Regex("""(?m)^[A-Z0-9\s]{2,25}:""")
+                Regex("""(?mi)^(?:\s*\[?(?:SCENE|INT\.|EXT\.|ACT)\b)""")
             )
             var firstSidesIndex = -1
             for (pattern in sidesIndicators) {
@@ -89,7 +90,7 @@ class HybridNoticeExtractor internal constructor(
             }
 
             val targetLen = if (firstSidesIndex != -1 && (firstSidesIndex + 250) < maxLimit) {
-                (firstSidesIndex + 250).coerceAtLeast(100)
+                (firstSidesIndex + 250).coerceAtLeast(300)
             } else {
                 maxLimit
             }

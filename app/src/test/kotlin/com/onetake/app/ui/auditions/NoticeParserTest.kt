@@ -484,8 +484,8 @@ class NoticeParserTest {
         assertEquals("", f.scriptText)
         assertEquals(Destination.EmailOrLink, f.destination)
 
-        // Asks must ONLY include Headshot and Slate
-        assertEquals(listOf("Headshot", "Slate"), f.asks)
+        // Asks must include Headshot, Slate, and Contact number
+        assertEquals(listOf("Headshot", "Slate", "Contact number"), f.asks)
         assertFalse(f.asks.contains("Full length"))
         assertFalse(f.asks.contains("Landscape"))
         assertFalse(f.asks.contains("Under 3 min"))
@@ -526,8 +526,8 @@ class NoticeParserTest {
                 "projectType": "Feature film",
                 "roleSize": "Lead",
                 "destination": "EmailOrLink",
-                "asks": ["Recent Pictures", "Detailed Introduction"],
-                "castingNotes": "• Age: 30-55 years\n• Language: Hindi, English & Punjabi\n• Requirement: Must wear a turban\n• Location: Based in Bhopal\n• Submit to: ojas@mccc.in, nupur@mccc.in"
+                "asks": ["Recent Pictures", "Detailed Introduction", "CONTACT NUMBER"],
+                "castingNotes": "• Age: 30-55 years\n• Language: Hindi, English & Punjabi\n• Requirement: Must wear a turban\n• Location: Based in Bhopal\n• Submit to: Contact provided in the notice"
             }
             """.trimIndent()
         }
@@ -541,17 +541,19 @@ class NoticeParserTest {
         assertEquals(listOf("Sikh Actor"), f.allAvailableRoles)
         assertEquals(Destination.EmailOrLink, f.destination)
 
-        // Semantic deliverable mapping: "Recent Pictures" -> "Headshot", "Detailed Introduction" -> "Slate"
-        assertEquals(listOf("Headshot", "Slate"), f.asks)
+        // Semantic deliverable mapping: "Recent Pictures" -> "Headshot", "Detailed Introduction" -> "Slate", "CONTACT NUMBER" -> "Contact number"
+        assertEquals(listOf("Headshot", "Slate", "Contact number"), f.asks)
 
         assertTrue(f.notes.contains("• Age: 30-55 years"))
         assertTrue(f.notes.contains("• Requirement: Must wear a turban"))
-        assertTrue(f.notes.contains("ojas@mccc.in"))
+        // Verified unmasked email injection replaces "Contact provided in the notice"
+        assertTrue(f.notes.contains("ojas@mccc.in, nupur@mccc.in"))
+        assertFalse(f.notes.contains("Contact provided in the notice"))
 
         // Verify draft and audition pieces creation
         val draft = addDraftFromNoticeFields(f)
         assertEquals(0, draft.scenes)
-        assertEquals(listOf("Headshot", "Slate"), draft.asks)
+        assertEquals(listOf("Headshot", "Slate", "Contact number"), draft.asks)
 
         val audition = draft.makeAudition()
         // Must contain Headshot and Slate ONLY. No scenes, no full length!
@@ -559,5 +561,17 @@ class NoticeParserTest {
         assertEquals("Headshot", audition.pieces[0].title)
         assertEquals("Slate", audition.pieces[1].title)
         assertTrue(audition.scenes.isEmpty())
+    }
+
+    @Test
+    fun injectUnmaskedEmailsReplacesPlaceholdersWithRealEmailsFromRawText() {
+        val rawText = "Please send tapes to casting@movie.com or director@gmail.com."
+        val notesWithPlaceholder = "• Requirement: UK Accent\n• Submit to: [EMAIL_SUBMISSION]"
+        val injected = NoticeParser.injectUnmaskedEmailsAndContacts(notesWithPlaceholder, rawText)
+        assertEquals("• Requirement: UK Accent\n• Submit to: casting@movie.com, director@gmail.com", injected)
+
+        val notesWithContactText = "• Age: 20-30\n• Submit to: Contact provided in the notice"
+        val injected2 = NoticeParser.injectUnmaskedEmailsAndContacts(notesWithContactText, rawText)
+        assertEquals("• Age: 20-30\n• Submit to: casting@movie.com, director@gmail.com", injected2)
     }
 }

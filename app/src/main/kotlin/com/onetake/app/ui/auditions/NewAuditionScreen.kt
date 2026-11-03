@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,12 +43,15 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.Badge
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Keyboard
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.Portrait
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Smartphone
@@ -128,6 +132,7 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -985,15 +990,41 @@ private fun AddReviewStep(
                 val deliverables = buildList {
                     val hasExplicitAsks = draft.asks.isNotEmpty()
 
-                    if (!hasExplicitAsks || "Headshot" in draft.asks) {
-                        add("Headshot" to (if ("Both profiles" in draft.asks) "Front + profiles" else "Front"))
+                    val asksLower = draft.asks.map { it.lowercase() }
+                    val hasPhotoAsk = !hasExplicitAsks || asksLower.any {
+                        it == "headshot" || Regex("""(?i)\b(?:recent\s+pictures?|recent\s+photos?|photos?|photographs?|headshots?|pictures?)\b""").containsMatchIn(it)
                     }
-                    if (!hasExplicitAsks || "Slate" in draft.asks || "Slate first" in draft.asks) {
-                        add("Slate" to "Name, height, city")
+                    val hasSlateAsk = !hasExplicitAsks || asksLower.any {
+                        it == "slate" || it == "slate first" || Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile|slate|ident|idents)\b""").containsMatchIn(it)
                     }
-                    if ("Full length" in draft.asks) {
+                    val hasFullLength = draft.asks.any {
+                        it.equals("Full length", ignoreCase = true) || Regex("""(?i)\b(?:full-length|full\s*length|full\s*body|head\s*to\s*toe|head\s*to\s*feet)\b""").containsMatchIn(it)
+                    }
+
+                    if (hasPhotoAsk) {
+                        val title = if (draft.asks.any { it.contains("picture", ignoreCase = true) || it.contains("photo", ignoreCase = true) }) {
+                            "Headshot / Recent pictures"
+                        } else {
+                            "Headshot"
+                        }
+                        val detail = if ("Both profiles" in draft.asks) "Front + profiles" else "Recent photos / headshot"
+                        add(title to detail)
+                    }
+
+                    if (hasSlateAsk) {
+                        val title = if (draft.asks.any { it.contains("intro", ignoreCase = true) || it.contains("introduction", ignoreCase = true) }) {
+                            "Slate / Detailed introduction"
+                        } else {
+                            "Slate"
+                        }
+                        val detail = "Name, height, city, and introduction"
+                        add(title to detail)
+                    }
+
+                    if (hasFullLength) {
                         add("Full length" to "Head to feet")
                     }
+
                     val sceneCount = if (isPureCastingNotice) 0 else draft.scenes
                     if (sceneCount > 0) {
                         for (i in 1..sceneCount) {
@@ -1001,8 +1032,15 @@ private fun AddReviewStep(
                             add("Scene $i" to detail)
                         }
                     }
-                    draft.asks.filter { it !in listOf("Headshot", "Slate", "Both profiles", "Full length") }.forEach {
-                        add(it to addAskDetail(it, slateName, draft.role))
+
+                    draft.asks.filter { ask ->
+                        val l = ask.lowercase()
+                        !l.contains("headshot") && !l.contains("picture") && !l.contains("photo") &&
+                        !l.contains("slate") && !l.contains("intro") && !l.contains("ident") &&
+                        !l.contains("full length") && !l.contains("full body") && !l.contains("both profiles")
+                    }.forEach { customAsk ->
+                        val formatted = NoticeParser.formatAskPhrase(customAsk)
+                        add(formatted to addAskDetail(formatted, slateName, draft.role))
                     }
                 }
                 deliverables.forEachIndexed { i, (title, detail) ->
@@ -1378,17 +1416,19 @@ private fun AddValueRow(value: String, label: String, showDivider: Boolean = tru
 private fun AddChip(text: String, selected: Boolean, onClick: () -> Unit) {
     val c = OT.colors
     val bg = if (selected) c.accent else c.fillField
-    val fg = if (selected) Color.White else c.labelPrimary
+    val fg = if (selected) c.labelOnAccent else c.labelPrimary
+    val border = if (selected) null else BorderStroke(1.dp, c.separator)
     Box(
         Modifier
             .heightIn(min = 36.dp)
             .clip(CircleShape)
             .background(bg)
+            .then(if (border != null) Modifier.border(border, CircleShape) else Modifier)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, style = OT.type.subhead, color = fg)
+        Text(text, style = OT.type.subhead, color = fg, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
     }
 }
 
@@ -1462,7 +1502,16 @@ private fun AddDueTimeSection(
     val c = OT.colors
     val today = remember { LocalDate.now() }
     val tomorrow = remember { today.plusDays(1) }
-    val friday = remember { today.with(TemporalAdjusters.next(DayOfWeek.FRIDAY)) }
+    val weekdayDate = remember {
+        if (tomorrow.dayOfWeek == DayOfWeek.FRIDAY) {
+            today.with(TemporalAdjusters.next(DayOfWeek.MONDAY))
+        } else {
+            today.with(TemporalAdjusters.next(DayOfWeek.FRIDAY))
+        }
+    }
+    val weekdayLabel = remember {
+        weekdayDate.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())
+    }
     val currentLocalDate = due?.toLocalDate()
     val currentTime = due?.toLocalTime() ?: LocalTime.of(10, 0)
 
@@ -1484,10 +1533,10 @@ private fun AddDueTimeSection(
             AddChip("Tomorrow", selected = currentLocalDate == tomorrow) {
                 onChange(tomorrow.atTime(currentTime))
             }
-            AddChip("Friday", selected = currentLocalDate == friday) {
-                onChange(friday.atTime(currentTime))
+            AddChip(weekdayLabel, selected = currentLocalDate == weekdayDate) {
+                onChange(weekdayDate.atTime(currentTime))
             }
-            val isCustomDate = currentLocalDate != null && currentLocalDate != tomorrow && currentLocalDate != friday
+            val isCustomDate = currentLocalDate != null && currentLocalDate != tomorrow && currentLocalDate != weekdayDate
             val customDateLabel = if (isCustomDate) currentLocalDate.format(addDueDay) else "Pick date…"
             AddChip(customDateLabel, selected = isCustomDate) {
                 onOpenDatePicker()
@@ -1517,34 +1566,49 @@ private fun AddDueTimeSection(
     }
 }
 
-private fun addAskIcon(ask: String): ImageVector = when (ask) {
-    "Both profiles" -> Icons.Outlined.Portrait
-    "Full length" -> Icons.Outlined.AccessibilityNew
-    "Landscape", "Portrait" -> Icons.Outlined.Smartphone
-    "Idents" -> Icons.Outlined.Badge
-    "Hands to camera" -> Icons.Outlined.Person
-    "Availability" -> Icons.Outlined.CalendarMonth
-    else -> Icons.Outlined.Edit
+private fun addAskIcon(ask: String): ImageVector {
+    val l = ask.lowercase()
+    return when {
+        l.contains("headshot") || l.contains("picture") || l.contains("photo") -> Icons.Outlined.Portrait
+        l.contains("slate") || l.contains("ident") -> Icons.Outlined.Badge
+        l.contains("contact") || l.contains("phone") || l.contains("number") -> Icons.Outlined.Phone
+        l.contains("reel") || l.contains("showreel") || l.contains("video") || l.contains("intro") -> Icons.Outlined.Movie
+        l.contains("link") -> Icons.Outlined.Link
+        l == "both profiles" -> Icons.Outlined.Portrait
+        l == "full length" || l == "full body" -> Icons.Outlined.AccessibilityNew
+        l == "landscape" || l == "portrait" -> Icons.Outlined.Smartphone
+        l == "hands to camera" -> Icons.Outlined.Person
+        l == "availability" -> Icons.Outlined.CalendarMonth
+        else -> Icons.Outlined.CheckCircle
+    }
 }
 
-private fun addAskDetail(ask: String, slateName: String, role: String): String = when (ask) {
-    "Both profiles" -> "Both profiles required"
-    "Full length" -> "Head-to-toe framing check"
-    "Landscape" -> "Shoot all scenes landscape"
-    "Portrait" -> "Shoot all scenes portrait"
-    "Idents" -> "Holding ID to camera"
-    "Hands to camera" -> "Show palms and backs of hands"
-    "Availability" -> "State shoot dates you can make"
-    "Current hair & look" -> "Confirm current hairstyle"
-    else -> ""
+private fun addAskDetail(ask: String, slateName: String, role: String): String {
+    val l = ask.lowercase()
+    return when {
+        l.contains("contact") || l.contains("phone") -> "Include in submission message or slate"
+        l.contains("showreel") || l.contains("reel") -> "Include showreel link or video"
+        l.contains("link") -> "Include in audition submission"
+        l.contains("picture") || l.contains("photo") || l.contains("headshot") -> "Recent photos / headshot"
+        l.contains("intro") || l.contains("slate") -> "Detailed introduction video"
+        ask == "Both profiles" -> "Both profiles required"
+        ask == "Full length" -> "Head-to-toe framing check"
+        ask == "Landscape" -> "Shoot all scenes landscape"
+        ask == "Portrait" -> "Shoot all scenes portrait"
+        ask == "Idents" -> "Holding ID to camera"
+        ask == "Hands to camera" -> "Show palms and backs of hands"
+        ask == "Availability" -> "State shoot dates you can make"
+        ask == "Current hair & look" -> "Confirm current hairstyle"
+        else -> ""
+    }
 }
 
 @Composable
 private fun AddAskIconView(ask: String, tint: Color, size: Dp) {
     val icon = when {
         ask.startsWith("Scene") -> Icons.Outlined.Movie
-        ask == "Headshot" -> Icons.Outlined.Portrait
-        ask == "Slate" -> Icons.Outlined.Badge
+        ask.startsWith("Headshot") -> Icons.Outlined.Portrait
+        ask.startsWith("Slate") -> Icons.Outlined.Badge
         else -> addAskIcon(ask)
     }
     Icon(icon, null, tint = tint, modifier = Modifier.size(size))

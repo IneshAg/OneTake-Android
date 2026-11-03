@@ -158,10 +158,20 @@ internal object NoticeParser {
         return trimmed
     }
 
+    fun formatAskPhrase(raw: String): String {
+        val trimmed = raw.trim().replace(Regex("""^[•\-\*–—\s\d\.)]+"""), "").trim()
+        if (trimmed.isEmpty()) return ""
+        return if (trimmed == trimmed.uppercase() && trimmed.length > 2) {
+            trimmed.lowercase().replaceFirstChar { it.uppercase() }
+        } else {
+            trimmed.replaceFirstChar { it.uppercase() }
+        }
+    }
+
     fun mapSemanticAsk(rawAsk: String): String? {
         val l = rawAsk.trim().lowercase()
         return when {
-            Regex("""(?i)\b(?:recent\s+pictures?|photos?|photographs?|headshots?|pictures?)\b""").containsMatchIn(l) -> "Headshot"
+            Regex("""(?i)\b(?:recent\s+pictures?|recent\s+photos?|photos?|photographs?|headshots?|pictures?)\b""").containsMatchIn(l) -> "Headshot"
             Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile|slate|ident|idents)\b""").containsMatchIn(l) -> {
                 if (Regex("""(?i)\b(?:slate\s*first|slate\s*at\s*(?:the\s*)?beginning)\b""").containsMatchIn(l)) "Slate first" else "Slate"
             }
@@ -177,18 +187,90 @@ internal object NoticeParser {
     fun extractSemanticAsks(text: String): List<String> {
         val l = text.lowercase()
         val asks = mutableListOf<String>()
-        if (Regex("""(?i)\b(?:recent\s+pictures?|photos?|photographs?|headshots?|pictures?)\b""").containsMatchIn(l)) asks.add("Headshot")
-        if (Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile|slate|ident|idents)\b""").containsMatchIn(l)) {
+        if (Regex("""(?i)\b(?:recent\s+pictures?|recent\s+photos?|photos?|photographs?|headshots?|pictures?)\b""").containsMatchIn(l)) asks.add("Headshot")
+        val negatedSlate = Regex("""(?i)\b(?:no|without|don'?t|do[ \t]+not)[ \t]+(?:[a-z]+[ \t]+){0,2}slate\b""").containsMatchIn(l)
+        if (!negatedSlate && Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile|slate|ident|idents)\b""").containsMatchIn(l)) {
             if (Regex("""(?i)\b(?:slate\s*first|slate\s*at\s*(?:the\s*)?beginning)\b""").containsMatchIn(l)) {
                 asks.add("Slate first")
+            } else {
+                asks.add("Slate")
             }
-            asks.add("Slate")
         }
         if (Regex("""(?i)\b(?:full-length|full\s*length|full\s*body|head\s*to\s*toe|head\s*to\s*feet)\b""").containsMatchIn(l)) asks.add("Full length")
         if (Regex("""(?i)\b(?:both\s*profiles?|side\s*profiles?|left\s*and\s*right\s*profile)\b""").containsMatchIn(l)) asks.add("Both profiles")
         if (Regex("""(?i)\b(?:landscape|horizontal)\b""").containsMatchIn(l)) asks.add("Landscape")
         if (Regex("""(?i)\b(?:under\s*3\s*min|max(?:imum)?\s*3\s*min)\b""").containsMatchIn(l)) asks.add("Under 3 min")
+
+        // Also parse bullet items under "Send:", "Submit:", "Kindly send:", "Requirements:"
+        val sendSectionRegex = Regex("""(?im)^(?:send|submit|please\s+send|kindly\s+send(?:\s+in\s+your)?|requirements?)\s*:\s*$""")
+        val lines = text.lines()
+        var inSendSection = false
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isBlank()) {
+                if (inSendSection) inSendSection = false
+                continue
+            }
+            if (sendSectionRegex.matches(trimmed)) {
+                inSendSection = true
+                continue
+            }
+            if (inSendSection) {
+                if (KEY_LINE.matches(trimmed) || trimmed.startsWith("to:", ignoreCase = true) || trimmed.startsWith("submit to", ignoreCase = true) || EMAIL_PATTERN.containsMatchIn(trimmed)) {
+                    inSendSection = false
+                    continue
+                }
+                val cleanedItem = trimmed.replace(Regex("""^[•\-\*–—\s\d\.)]+"""), "").trim()
+                if (cleanedItem.isNotBlank() && cleanedItem.length in 3..40) {
+                    val mapped = mapSemanticAsk(cleanedItem)
+                    if (mapped != null) {
+                        asks.add(mapped)
+                    } else if (!isNoticeKeywordOrHeader(cleanedItem)) {
+                        asks.add(formatAskPhrase(cleanedItem))
+                    }
+                }
+            }
+        }
+
         return asks.distinct()
+    }
+
+    fun injectUnmaskedEmailsAndContacts(castingNotes: String, rawText: String): String {
+        val realEmails = EMAIL_PATTERN.findAll(rawText).map { it.value }.distinct().toList()
+        if (realEmails.isEmpty()) return castingNotes
+
+        val emailsJoined = realEmails.joinToString(", ")
+        val emailPlaceholders = listOf(
+            Regex("""(?i)\[EMAIL_SUBMISSION\]"""),
+            Regex("""(?i)\[EMAIL\]"""),
+            Regex("""(?i)(?:contact|email|emails)\s+(?:provided|mentioned|given|listed|details)?\s*(?:in|on|as\s+per)\s*(?:the\s*)?(?:notice|casting\s+call|call)"""),
+            Regex("""(?i)contact\s+provided"""),
+        )
+
+        var notes = castingNotes
+        var replaced = false
+        for (pattern in emailPlaceholders) {
+            if (pattern.containsMatchIn(notes)) {
+                notes = notes.replace(pattern, emailsJoined)
+                replaced = true
+            }
+        }
+
+        // If the notes don't mention any email or submit line, append "• Submit to: <emails>"
+        if (!replaced && !notes.contains(emailsJoined)) {
+            val submitLineRegex = Regex("""(?im)^[•\-\*–—\s]*(?:submit\s+to|send\s+to|email\s+to|contact)\s*[:\-].*$""")
+            if (submitLineRegex.containsMatchIn(notes)) {
+                notes = notes.replace(submitLineRegex, "• Submit to: $emailsJoined")
+            } else {
+                notes = if (notes.isBlank()) {
+                    "• Submit to: $emailsJoined"
+                } else {
+                    "$notes\n• Submit to: $emailsJoined"
+                }
+            }
+        }
+
+        return notes
     }
 
     fun detectDestination(destinationHint: String?, rawText: String): Destination {
@@ -332,18 +414,7 @@ internal object NoticeParser {
         val notes = extractedNotes.ifBlank { fallbackNotes }
 
         val headerLower = headerPartition.lowercase()
-        val negatedSlate = Regex("""(?i)\b(?:no|without|don'?t|do[ \t]+not)[ \t]+(?:[a-z]+[ \t]+){0,2}slate\b""")
-            .containsMatchIn(headerLower)
-
-        val asks = buildList {
-            if (!negatedSlate && Regex("""(?i)\b(?:slate|ident)\b""").containsMatchIn(headerLower)) add("Slate first")
-            if (Regex("""(?i)\b(?:landscape|horizontal)\b""").containsMatchIn(headerLower)) add("Landscape")
-            if (Regex("""(?i)\b(?:full-length|full[ \t]+length|full[ \t]+body|head[ \t]+to[ \t]+toe|head[ \t]+to[ \t]+feet)\b""").containsMatchIn(headerLower)) add("Full length")
-            if (Regex("""(?i)\b(?:both[ \t]+profiles|side[ \t]+profiles|profile[ \t]+shots|left[ \t]+and[ \t]+right[ \t]+profile)\b""").containsMatchIn(headerLower)) add("Both profiles")
-            if (Regex("""(?i)\bunder[ \t]+(?:3|three)[ \t]*min""").containsMatchIn(headerLower)) add("Under 3 min")
-            if (Regex("""(?i)\b(?:recent\s+pictures?|photos?|photographs?|pictures?)\b""").containsMatchIn(headerLower)) add("Headshot")
-            if (!negatedSlate && Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile)\b""").containsMatchIn(headerLower)) add("Slate")
-        }.distinct()
+        val asks = extractSemanticAsks(headerPartition)
 
         val destination = detectDestination(null, clean)
 
@@ -908,17 +979,19 @@ internal object NoticeParser {
                 if (mapped != null) {
                     listOf(mapped)
                 } else if (!LLM_PLACEHOLDER_REGEX.matches(ask)) {
-                    listOf(ask)
+                    listOf(formatAskPhrase(ask))
                 } else {
                     emptyList()
                 }
             }
             .distinct()
 
+        val headerForAsks = classifyAndPartition(rawText).headerPartition.ifBlank { rawText }
+        val textAsks = extractSemanticAsks(headerForAsks)
         val asks = if (mappedLlmAsks.isNotEmpty()) {
-            mappedLlmAsks
+            (mappedLlmAsks + textAsks).distinct()
         } else {
-            extractSemanticAsks(rawText)
+            textAsks
         }
 
         val isCastingNoticeOnly = llm.documentKind.trim().equals("CastingNotice", ignoreCase = true)
@@ -1042,11 +1115,12 @@ internal object NoticeParser {
         }
 
         val cleanedCastingNotes = llm.castingNotes.cleanLlmField().orEmpty()
-        val notes = if (cleanedCastingNotes.isNotBlank()) {
+        val rawNotes = if (cleanedCastingNotes.isNotBlank()) {
             cleanedCastingNotes
         } else {
             extractCastingNotes(rawText)
         }
+        val notes = injectUnmaskedEmailsAndContacts(rawNotes, rawText)
 
         return NoticeFields(
             project = cleanedProject,

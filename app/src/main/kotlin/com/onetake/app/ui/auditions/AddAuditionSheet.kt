@@ -159,7 +159,15 @@ internal data class AddDraft(
 
         val needsProfiles = "Both profiles" in asks
         val pieces = mutableListOf<Piece>()
-        if (asks.isEmpty() || "Headshot" in asks) {
+        val hasPhotoAsk = asks.isEmpty() || asks.any {
+            it.equals("Headshot", ignoreCase = true) ||
+            Regex("""(?i)\b(?:recent\s+pictures?|recent\s+photos?|photos?|photographs?|headshots?|pictures?)\b""").containsMatchIn(it)
+        }
+        val hasSlateAsk = asks.isEmpty() || asks.any {
+            it.equals("Slate", ignoreCase = true) || it.equals("Slate first", ignoreCase = true) ||
+            Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile|slate|ident|idents)\b""").containsMatchIn(it)
+        }
+        if (hasPhotoAsk) {
             pieces.add(
                 Piece(
                     kind = PieceKind.Headshot,
@@ -169,7 +177,7 @@ internal data class AddDraft(
                 )
             )
         }
-        if (asks.isEmpty() || "Slate" in asks || "Slate first" in asks) {
+        if (hasSlateAsk) {
             pieces.add(Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false))
         }
         if ("Full length" in asks) {

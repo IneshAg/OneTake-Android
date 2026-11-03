@@ -216,4 +216,33 @@ class HybridNoticeExtractorTest {
         // Confirms it does not contain the entire 8000 char script
         assertTrue(sliced.length < fullNotice.length / 4)
     }
+
+    @Test
+    fun maskPiiDoesNotCorruptContactNumberText() {
+        val text = "Send: • CONTACT NUMBER • DETAILED INTRODUCTION • RECENT PICTURES"
+        val masked = HybridNoticeExtractor.maskPii(text)
+        assertTrue(masked.contains("CONTACT NUMBER"))
+        assertTrue(!masked.contains("[PHONE]"))
+    }
+
+    @Test
+    fun sliceForAiCorePreservesFullNoticeWhenUnderLimit() {
+        val poster = """
+            MUKESH CHHABRA CASTING COMPANY
+            CASTING CALL
+            LOOKING FOR SIKH ACTORS
+            • Age: 30-55 years
+            • Language: Hindi, English & Punjabi
+            • Requirement: Must wear a turban
+            • Location: Based in Bhopal
+            Send:
+            • CONTACT NUMBER
+            • DETAILED INTRODUCTION
+            • RECENT PICTURES
+            to: ojas@mccc.in, nupur@mccc.in
+        """.trimIndent()
+
+        val sliced = HybridNoticeExtractor.sliceForAiCore(poster)
+        assertEquals(poster, sliced)
+    }
 }

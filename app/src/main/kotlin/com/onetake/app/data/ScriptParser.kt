@@ -103,7 +103,7 @@ object ScriptParser {
             }
 
             if (isCharacterHeading(line) && hasSpokenFollowLine(rawLines, i)) {
-                val name = line.substringBefore("(").trim()
+                val name = cleanCueName(line)
                 if (!isNonCharacterCue(name)) {
                     characters.add(name)
                 }
@@ -198,6 +198,7 @@ object ScriptParser {
         } else {
             var currentCharacter: String? = null
             val currentDialogue = StringBuilder()
+            var insideMultiLineParenthetical = false
 
             fun flushDialogue() {
                 val char = currentCharacter
@@ -231,9 +232,19 @@ object ScriptParser {
                 // When currentCharacter == null, a valid character heading starts a speech block.
                 // When currentCharacter != null, only switch speaker if the line is a valid character heading
                 // AND has a spoken follow line (normally cues are preceded by a blank line anyway).
+                if (insideMultiLineParenthetical) {
+                    if (line.contains(")") || line.contains("]")) {
+                        insideMultiLineParenthetical = false
+                    }
+                    continue
+                }
+
                 if (isCharacterHeading(line) && hasSpokenFollowLine(rawLines, i) && currentCharacter == null) {
                     flushDialogue()
-                    currentCharacter = line.substringBefore("(").trim()
+                    currentCharacter = cleanCueName(line)
+                } else if ((line.startsWith("(") && !line.contains(")")) || (line.startsWith("[") && !line.contains("]"))) {
+                    insideMultiLineParenthetical = true
+                    continue
                 } else if (PARENTHETICAL_REGEX.matches(line)) {
                     if (currentCharacter != null) {
                         if (currentDialogue.isNotEmpty()) currentDialogue.append(" ")
@@ -340,8 +351,24 @@ object ScriptParser {
         return tokens.drop(idx)
     }
 
+    fun cleanCueName(raw: String): String {
+        var name = raw.trim()
+        if (name.startsWith("[") && name.endsWith("]") && name.length > 2) {
+            name = name.substring(1, name.length - 1).trim()
+        }
+        name = name.substringBefore("(").substringBefore("[").trim()
+        name = name.replace(Regex("""(?i)\s*-\s*(?:CONT'D|V\.O\.|O\.S\.)"""), "").trim()
+        if (name.endsWith(".")) {
+            name = name.dropLast(1).trim()
+        }
+        return name
+    }
+
     fun isCharacterHeading(line: String): Boolean {
-        val trimmed = line.trim()
+        var trimmed = line.trim()
+        if (trimmed.startsWith("[") && trimmed.endsWith("]") && trimmed.length > 2) {
+            trimmed = trimmed.substring(1, trimmed.length - 1).trim()
+        }
         if (trimmed.length < 2 || trimmed.length > 38) return false
         if (trimmed != trimmed.uppercase()) return false
         val namePart = trimmed.substringBefore("(").trim()
@@ -354,5 +381,123 @@ object ScriptParser {
         }
         if (isNonCharacterCue(namePart)) return false
         return CHARACTER_HEADING_REGEX.matches(trimmed)
+    }
+
+    // MARK: - Hierarchical Scene Portion Chunking (Pass 2)
+
+    data class ScenePortion(
+        val id: String,
+        val number: Int,
+        val heading: String,
+        val characters: List<String>,
+        val rawText: String,
+        val lineCount: Int,
+        val pageNumber: Int? = null
+    ) {
+        val displayTitle: String
+            get() = if (heading.isEmpty()) "Scene $number" else heading
+    }
+
+    /**
+     * Identifies individual scene portions from a multi-page sides document without parsing all lines yet.
+     * Splits by scene headings (e.g. ACT ONE SCENE SIX, INT. / EXT., SCENE 1) or monologue cuts.
+     */
+    fun identifyScenePortions(text: String, pages: List<String> = emptyList()): List<ScenePortion> {
+        val portions = mutableListOf<ScenePortion>()
+        val sceneHeadingRegex = Regex(
+            """(?im)^[\s>*—\-\[\]]*(?:ACT\s+(?:ONE|TWO|THREE|[0-9IVX]+)(?:[\s,]+SCENE\s+[0-9IVX]+)?|(?:INT\.|EXT\.|INT/EXT|EXT/INT)\s+.*|SCENE\s+[0-9A-Z]+|For\s+(?:Female|Male|Any)\s+(?:Identifying|Gender)|[A-Z]{2,20}\s*[-—–]\s*(?:Page|Pg\.?)\s*\d+)\b"""
+        )
+
+        val lines = text.lines()
+        var currentHeading: String? = null
+        val currentLines = mutableListOf<String>()
+        var sceneCounter = 1
+
+        fun saveCurrentPortion() {
+            if (currentLines.isEmpty()) return
+            val rawChunk = currentLines.joinToString("\n").trim()
+            if (rawChunk.length <= 40) return
+
+            val heading = currentHeading ?: "Scene $sceneCounter"
+            val chars = extractCharacters(rawChunk)
+            val estimatedLines = rawChunk.lines().count { it.isNotBlank() }
+
+            portions.add(
+                ScenePortion(
+                    id = "scene-$sceneCounter-${Math.abs(heading.hashCode())}",
+                    number = sceneCounter,
+                    heading = heading,
+                    characters = chars,
+                    rawText = rawChunk,
+                    lineCount = estimatedLines,
+                    pageNumber = null
+                )
+            )
+            sceneCounter++
+            currentLines.clear()
+        }
+
+        for (line in lines) {
+            val trimmed = line.trim()
+            val isHeading = sceneHeadingRegex.find(trimmed)?.range?.first == 0
+
+            if (isHeading) {
+                saveCurrentPortion()
+                currentHeading = trimmed
+                currentLines.add(line)
+            } else {
+                currentLines.add(line)
+            }
+        }
+        saveCurrentPortion()
+
+        // Fallback: If no explicit headings split the text but multiple pages exist, use page boundaries
+        if (portions.size <= 1 && pages.size > 1) {
+            portions.clear()
+            val startIdx = if (pages.size >= 3) 1 else 0
+            for (idx in startIdx until pages.size) {
+                val pageText = pages[idx].trim()
+                if (pageText.isEmpty()) continue
+                val chars = extractCharacters(pageText)
+                val firstLine = pageText.lines().firstOrNull()?.trim() ?: "Page ${idx + 1}"
+                portions.add(
+                    ScenePortion(
+                        id = "page-${idx + 1}",
+                        number = portions.size + 1,
+                        heading = firstLine,
+                        characters = chars,
+                        rawText = pageText,
+                        lineCount = pageText.lines().size,
+                        pageNumber = idx + 1
+                    )
+                )
+            }
+        }
+
+        return portions
+    }
+
+    /**
+     * Pass 2: Parses only the user-selected scene portions independently, then concatenates them
+     * into a unified list of [ScriptScene] with consistent sequential numbering.
+     */
+    fun parseSelectedPortions(portions: List<ScenePortion>, myRole: String): List<ScriptScene> {
+        val allScenes = mutableListOf<ScriptScene>()
+        var sceneNumber = 1
+
+        for (portion in portions) {
+            val scenes = parseScenes(portion.rawText, myRole)
+            for (s in scenes) {
+                allScenes.add(
+                    s.copy(
+                        number = sceneNumber,
+                        title = "Scene $sceneNumber",
+                        heading = if (portion.heading.isNotEmpty()) portion.heading else s.heading
+                    )
+                )
+                sceneNumber++
+            }
+        }
+        return allScenes
     }
 }

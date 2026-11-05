@@ -183,4 +183,62 @@ class ScriptParserTest {
         val chars = ScriptParser.extractCharacters(noticeText)
         assertTrue("Notice headers and keyboard artifacts must not be extracted as characters (was $chars)", chars.isEmpty())
     }
+
+    @Test
+    fun `test non-standard cues and multi-line parentheticals`() {
+        val sides = """
+            [HAMLET]
+            (leaning close to the audience,
+             pausing for dramatic breath)
+            To be, or not to be.
+
+            CLAUDIUS - CONT'D
+            What does he mean?
+        """.trimIndent()
+
+        val chars = ScriptParser.extractCharacters(sides)
+        assertEquals(listOf("HAMLET", "CLAUDIUS"), chars)
+
+        val scene = ScriptParser.parse(sides, myCharacter = "Hamlet")
+        assertEquals(2, scene.lines.size)
+        assertEquals("HAMLET", scene.lines[0].character)
+        assertTrue(scene.lines[0].isMine)
+        assertEquals("To be, or not to be.", scene.lines[0].text)
+        assertEquals("CLAUDIUS", scene.lines[1].character)
+        assertFalse(scene.lines[1].isMine)
+        assertEquals("What does he mean?", scene.lines[1].text)
+    }
+
+    @Test
+    fun testIdentifyScenePortionsAndHierarchicalChunking() {
+        val multiSceneScript = """
+        ACT ONE SCENE SIX
+        SANDY:
+        Do a split, give a yell!
+        DANNY:
+        Hiya, Sandy.
+
+        ACT TWO SCENE FIVE
+        SANDY:
+        Look at me, I'm Sandra Dee.
+        """.trimIndent()
+
+        val portions = ScriptParser.identifyScenePortions(multiSceneScript)
+        assertEquals(2, portions.size)
+        assertEquals("ACT ONE SCENE SIX", portions[0].heading)
+        assertTrue(portions[0].characters.contains("SANDY"))
+        assertTrue(portions[0].characters.contains("DANNY"))
+
+        assertEquals("ACT TWO SCENE FIVE", portions[1].heading)
+        assertTrue(portions[1].characters.contains("SANDY"))
+
+        // Pass 2: User selects only Scene 2 (ACT TWO SCENE FIVE)
+        val selectedPortion = listOf(portions[1])
+        val parsed = ScriptParser.parseSelectedPortions(selectedPortion, myRole = "Sandy")
+        assertEquals(1, parsed.size)
+        assertEquals("Scene 1", parsed[0].title)
+        assertEquals(1, parsed[0].lines.size)
+        assertEquals("SANDY", parsed[0].lines[0].character)
+        assertEquals("Look at me, I'm Sandra Dee.", parsed[0].lines[0].text)
+    }
 }

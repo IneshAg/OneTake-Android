@@ -11,6 +11,19 @@ import java.time.LocalDateTime
 
 class TakesReviewTest {
     @Test
+    fun testTakeRadioCircleTogglesKeptStatusInStore() {
+        val store = AppStore(Application())
+        val take1 = Take(id = "tk-1", auditionId = "aud-1", sceneIndex = 0, number = 1, durationSeconds = 40, recordedAt = LocalDateTime.now(), isCircled = true, notes = emptyList())
+        val take2 = Take(id = "tk-2", auditionId = "aud-1", sceneIndex = 0, number = 2, durationSeconds = 45, recordedAt = LocalDateTime.now(), isCircled = false, notes = emptyList())
+        store.takes = listOf(take1, take2)
+
+        store.circle(take2)
+
+        assertFalse("Previous take must be uncircled", store.takes.first { it.id == "tk-1" }.isCircled)
+        assertTrue("Newly selected take must be circled", store.takes.first { it.id == "tk-2" }.isCircled)
+    }
+
+    @Test
     fun testCircleTakeTogglesCircledStatusExclusively() {
         val store = AppStore(Application())
         val take1 = Take(id = "tk-1", number = 1, durationSeconds = 65, recordedAt = LocalDateTime.now(), isCircled = true, notes = emptyList())

@@ -1,6 +1,8 @@
 package com.onetake.app.ui.profile
 
+import android.app.Application
 import androidx.exifinterface.media.ExifInterface
+import com.onetake.app.AppStore
 import com.onetake.app.ui.camera.HeadshotFramingEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -292,5 +294,37 @@ class HeadshotFramingEngineTest {
         assertTrue(guidance.isLightGood)
         assertEquals("square", guidance.angleLabel)
         assertEquals("soft and even", guidance.lightLabel)
+    }
+
+    @Test
+    fun testHeadshotFramingProfileAnglesAndStoreSave() {
+        val store = AppStore(Application())
+
+        val guidanceLeft = HeadshotFramingEngine.evaluateFramingMetrics(
+            faceLeft = 240, faceTop = 500, faceRight = 840, faceBottom = 1200,
+            uprightWidth = 1080, uprightHeight = 1920,
+            yaw = 25f, roll = 0f,
+            targetAngle = HeadshotFramingEngine.HeadshotAngle.Left,
+            isFrontCamera = true, lightLabel = "soft and even", isLightGood = true
+        )
+        assertTrue("Yaw 25f on front camera should satisfy profile left", guidanceLeft.isAngleGood)
+        assertEquals("profile left", guidanceLeft.angleLabel)
+
+        val guidanceRight = HeadshotFramingEngine.evaluateFramingMetrics(
+            faceLeft = 240, faceTop = 500, faceRight = 840, faceBottom = 1200,
+            uprightWidth = 1080, uprightHeight = 1920,
+            yaw = -25f, roll = 0f,
+            targetAngle = HeadshotFramingEngine.HeadshotAngle.Right,
+            isFrontCamera = true, lightLabel = "soft and even", isLightGood = true
+        )
+        assertTrue("Yaw -25f on front camera should satisfy profile right", guidanceRight.isAngleGood)
+        assertEquals("profile right", guidanceRight.angleLabel)
+
+        store.saveHeadshot("front", "content://media/headshot-front.jpg")
+        store.saveHeadshot("left", "content://media/headshot-left.jpg")
+        store.saveHeadshot("right", "content://media/headshot-right.jpg")
+
+        assertEquals(3, store.headshotsTaken)
+        assertEquals("content://media/headshot-front.jpg", store.headshots["front"])
     }
 }

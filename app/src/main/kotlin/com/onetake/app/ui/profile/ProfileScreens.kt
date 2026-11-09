@@ -69,6 +69,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Mic
@@ -95,6 +96,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
@@ -116,6 +118,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.onetake.app.CameraFlow
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
@@ -1217,19 +1220,32 @@ fun HeadshotFlowScreen(initialAngle: String? = null) {
         onCaptureTrigger = { takeHeadshot() },
     )
 
+    // Auto-shutter after 800ms stable pose
+    LaunchedEffect(guidance?.isCenteredAndReady) {
+        if (guidance?.isCenteredAndReady == true && !capturing) {
+            delay(800)
+            if (guidance?.isCenteredAndReady == true && !capturing) {
+                takeHeadshot()
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(OT.camera.bg)) {
         CameraBackground(camera, Modifier.fillMaxSize(), front = front, photoOnly = true)
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-            // Top bar: close · angle picker · balance. Lives above the oval area, never over it.
+            // Top bar: back circle · centered overline · camera switch
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(min = 56.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp).heightIn(min = 56.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                CircleIconButton(Icons.Filled.Close, "Close", onClick = { nav.closeCamera() }, onDark = true)
-                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    HeadshotAnglePicker(angle) { angle = it }
-                }
-                Spacer(Modifier.width(48.dp))
+                CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = { nav.closeCamera() }, onDark = true)
+                Text(
+                    text = "HEADSHOT · ${angle.ordinal + 1} OF 3",
+                    style = OT.type.stageOverline,
+                    color = OT.colors.accentGold,
+                )
+                CircleIconButton(Icons.Filled.Cameraswitch, "Switch camera", onClick = { front = !front }, onDark = true)
             }
 
             // Face oval, centred in the space between the top bar and the controls.
@@ -1245,9 +1261,17 @@ fun HeadshotFlowScreen(initialAngle: String? = null) {
                         .fillMaxHeight()
                         .aspectRatio(200f / 270f, matchHeightConstraintsFirst = true),
                 ) {
+                    val strokeStyle = if (isReady) {
+                        Stroke(width = 3.dp.toPx())
+                    } else {
+                        Stroke(
+                            width = 1.5.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f),
+                        )
+                    }
                     drawOval(
                         color = ovalColor,
-                        style = Stroke(width = if (isReady) 3.dp.toPx() else 1.5.dp.toPx()),
+                        style = strokeStyle,
                     )
                 }
             }
@@ -1256,55 +1280,102 @@ fun HeadshotFlowScreen(initialAngle: String? = null) {
                 Modifier.fillMaxWidth().padding(horizontal = OT.dims.gutter),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Live dynamic guidance headline powered by real-time ML Kit analysis
-                val headlineText = guidance?.headline ?: "Align your face in the oval"
+                val posePrompt = when (angle) {
+                    HeadshotAngle.Front -> "Look straight ahead"
+                    HeadshotAngle.Left -> "Turn to your left"
+                    HeadshotAngle.Right -> "Turn to your right"
+                }
 
                 Text(
-                    text = headlineText,
-                    style = OT.type.headline.copy(fontWeight = FontWeight.SemiBold),
-                    color = if (isReady) OT.colors.accent else OT.camera.label,
+                    text = posePrompt,
+                    style = OT.type.heroStageTitle.copy(fontSize = 32.sp),
+                    color = OT.colors.labelPrimary,
                     textAlign = TextAlign.Center,
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = guidance?.headline ?: "Chin level. Hold still — it takes itself.",
+                    style = OT.type.caption,
+                    color = if (isReady) OT.colors.accent else OT.colors.labelSecondary,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(14.dp))
 
-                // Live dynamic chips for light and angle
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HeadshotChip(
-                        title = "Light",
-                        value = guidance?.lightLabel ?: "measuring…",
-                        isGood = guidance?.isLightGood ?: false,
-                    )
-                    HeadshotChip(
-                        title = "Angle",
-                        value = guidance?.angleLabel ?: "aligning…",
-                        isGood = guidance?.isAngleGood ?: false,
-                    )
+                // 3 Step Indicators: FRONT · LEFT · RIGHT
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    HeadshotAngle.entries.forEach { a ->
+                        val isAngleDone = store.headshot(a.name.lowercase()) != null
+                        val isCurrent = a == angle
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.clickable { angle = a },
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .then(
+                                        when {
+                                            isAngleDone -> Modifier.background(OT.colors.accentGold)
+                                            isCurrent -> Modifier.background(OT.colors.stageLight)
+                                            else -> Modifier.border(1.dp, OT.colors.borderMuted, CircleShape)
+                                        }
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (isAngleDone) {
+                                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color(0xFF050505), modifier = Modifier.size(13.dp))
+                                }
+                            }
+                            Text(
+                                text = a.name.uppercase(),
+                                style = OT.type.stageOverline,
+                                color = if (isCurrent) OT.colors.accentGold else OT.colors.labelTertiary,
+                            )
+                        }
+                    }
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(18.dp))
 
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                // Bottom Action row: [Retake front] · Shutter button · [Done]
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (angle != HeadshotAngle.Front && store.headshot("front") != null) {
+                        Text(
+                            text = "Retake front",
+                            style = OT.type.actionPill,
+                            color = OT.colors.labelSecondary,
+                            modifier = Modifier.clickable { angle = HeadshotAngle.Front },
+                        )
+                    } else {
+                        Spacer(Modifier.width(80.dp))
+                    }
+
                     Box(
                         Modifier
-                            .size(78.dp)
-                            .border(4.dp, if (isReady) OT.colors.accent else Color.White, CircleShape)
+                            .size(76.dp)
                             .clip(CircleShape)
-                            .clickable(enabled = !capturing, role = Role.Button) { takeHeadshot() }
-                            .semantics { contentDescription = "Take photo" },
+                            .background(if (isReady) OT.colors.accentGold.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         Box(
                             Modifier
-                                .size(64.dp)
+                                .size(58.dp)
                                 .clip(CircleShape)
-                                .background(if (isReady) OT.colors.accent else Color.White),
+                                .background(if (isReady) OT.colors.accentGold else Color.White)
+                                .clickable(enabled = !capturing) { takeHeadshot() },
                         )
                     }
-                    CircleIconButton(
-                        Icons.Filled.Cameraswitch,
-                        "Switch camera",
-                        onClick = { front = !front },
-                        onDark = true,
-                        modifier = Modifier.align(Alignment.CenterEnd),
+
+                    Text(
+                        text = "Done",
+                        style = OT.type.actionPill,
+                        color = OT.colors.accentGold,
+                        modifier = Modifier.clickable { nav.closeCamera() },
                     )
                 }
                 Spacer(Modifier.height(6.dp))
@@ -1323,7 +1394,7 @@ fun HeadshotFlowScreen(initialAngle: String? = null) {
                         )
                     }
                     Text(
-                        text = voiceCommander.lastHeard ?: "Tap, or say “Now”",
+                        text = voiceCommander.lastHeard ?: "Hold still — it takes itself, or tap",
                         style = OT.type.footnote,
                         color = if (voiceCommander.lastHeard != null) OT.colors.accent else OT.camera.label2,
                     )

@@ -118,4 +118,21 @@ class AuditionDetailTest {
         val updated2 = store.audition("aud-flow-test")
         assertEquals(PieceKind.Scene, updated2?.nextPiece?.kind)
     }
+
+    @Test
+    fun testMostUrgentAuditionPrioritizationOnLitStage() {
+        val store = AppStore(Application())
+        val dueLater = Audition(id = "2", project = "Project B", due = LocalDateTime.now().plusDays(3), status = AuditionStatus.Due, role = "Role B", projectType = "", roleSize = "", castingOffice = "", asks = emptyList(), pieces = emptyList(), scenes = emptyList(), destination = Destination.Spotlight)
+        val dueSoon = Audition(id = "1", project = "Project A", due = LocalDateTime.now().plusHours(4), status = AuditionStatus.Due, role = "Role A", projectType = "", roleSize = "", castingOffice = "", asks = emptyList(), pieces = emptyList(), scenes = emptyList(), destination = Destination.Spotlight)
+        val sent = Audition(id = "3", project = "Project C", due = LocalDateTime.now().minusDays(1), status = AuditionStatus.Sent, role = "Role C", projectType = "", roleSize = "", castingOffice = "", asks = emptyList(), pieces = emptyList(), scenes = emptyList(), destination = Destination.Spotlight)
+
+        store.auditions = listOf(sent, dueLater, dueSoon)
+
+        val active = store.active
+        assertEquals(2, active.size)
+        assertEquals("1", active.first().id)
+        assertEquals("Project A", active.first().project)
+        assertEquals(1, store.sent.size)
+        assertEquals("3", store.sent.first().id)
+    }
 }

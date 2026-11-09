@@ -1,18 +1,65 @@
 package com.onetake.app.ui.packageview
 
+import android.app.Application
 import com.onetake.app.data.MediaExporter
+import com.onetake.app.data.TapeChecker
 import com.onetake.app.models.Audition
 import com.onetake.app.models.AuditionStatus
 import com.onetake.app.models.Destination
+import com.onetake.app.models.Piece
+import com.onetake.app.models.PieceKind
 import com.onetake.app.models.SlateInfo
 import com.onetake.app.models.Take
 import com.onetake.app.models.formatDuration
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
 
 class PackageScreenTest {
+
+    @Test
+    fun testTapeCheckerAutomatedChecksEvaluation() {
+        val audition = Audition(
+            id = "aud-1", project = "Project Alpha", projectType = "Feature", role = "Lead",
+            roleSize = "Lead", castingOffice = "CD", due = LocalDateTime.now().plusDays(2),
+            asks = listOf("Both profiles"),
+            pieces = listOf(
+                Piece(kind = PieceKind.Headshot, title = "Headshot", isDone = true),
+                Piece(kind = PieceKind.Slate, title = "Slate", isDone = true)
+            ),
+            scenes = emptyList(), destination = Destination.Spotlight
+        )
+        val headshots = mapOf("front" to "content://h/front.jpg", "left" to "content://h/left.jpg", "right" to "content://h/right.jpg")
+        val slate = SlateInfo(name = "Jane Actor", height = "5'8\"", basedIn = "NY", representation = "Agency")
+
+        val checks = TapeChecker.run(
+            context = Application(),
+            audition = audition,
+            takes = emptyList(),
+            headshots = headshots,
+            slate = slate,
+            slateAtStart = true
+        )
+
+        val headshotCheck = checks.firstOrNull { it.title == "Headshot" }
+        assertNotNull(headshotCheck)
+        val profilesCheck = checks.firstOrNull { it.title == "Both profiles" }
+        assertNotNull(profilesCheck)
+    }
+
+    @Test
+    fun testCurtainDeliveryTimingFormattingPastDeadline() {
+        val due = LocalDateTime.of(2026, 11, 6, 10, 0)
+        val deliveredPast = LocalDateTime.of(2026, 11, 6, 10, 15)
+        val deliveredEarly = LocalDateTime.of(2026, 11, 5, 10, 0)
+        val deliveredOnTime = LocalDateTime.of(2026, 11, 6, 9, 30)
+
+        assertEquals("Delivered — 15 minutes past deadline", formatCurtainDeliveryTiming(due, deliveredPast))
+        assertEquals("Delivered — a day early", formatCurtainDeliveryTiming(due, deliveredEarly))
+        assertEquals("Delivered on time", formatCurtainDeliveryTiming(due, deliveredOnTime))
+    }
 
     @Test
     fun testDeliverableFileNameFormat() {

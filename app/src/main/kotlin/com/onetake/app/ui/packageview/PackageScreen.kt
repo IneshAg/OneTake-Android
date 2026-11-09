@@ -28,6 +28,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.Check
+import com.onetake.app.ui.components.SpotlightStageScaffold
+import com.onetake.app.ui.components.PrimaryStageCta
+import com.onetake.app.models.otRelative
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CheckCircle
@@ -152,6 +158,15 @@ private fun totalDurationLabel(a: Audition, takes: List<Take>): String {
     val circled = takes.filter { it.auditionId == a.id && it.isCircled }
     if (circled.isEmpty()) return "—"
     return formatDuration(circled.sumOf { it.durationSeconds })
+}
+
+internal fun formatCurtainDeliveryTiming(due: LocalDateTime, delivered: LocalDateTime): String {
+    val diffMinutes = java.time.Duration.between(due, delivered).toMinutes()
+    return when {
+        diffMinutes > 0 -> "Delivered — $diffMinutes minutes past deadline"
+        diffMinutes <= -1440 -> "Delivered — a day early"
+        else -> "Delivered on time"
+    }
 }
 
 @Composable
@@ -290,8 +305,8 @@ fun PackageScreen(auditionId: String) {
                     ) { p -> scope.launch { progress = p } }
                 }
                 haptics.success()
-                phase = PkgPhase.Review
                 viewFile(context, file)
+                phase = PkgPhase.Sent
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -369,287 +384,128 @@ private fun PkgReview(
     val nav = LocalNavigator.current
     val context = LocalContext.current
     val c = OT.colors
-    var showDestination by remember { mutableStateOf(false) }
-    var previewPiece by remember { mutableStateOf<PkgPiecePreview?>(null) }
-    var showExportPrompt by remember { mutableStateOf(false) }
 
-    val cardShape = remember { RoundedCornerShape(24.dp) }
-    val zipPkgFileName = remember(a, store.slate.name) { MediaExporter.deliverableZipFileName(a, store.slate) }
     val auditionTakes = store.takes.filter { it.auditionId == a.id }
+    val durationText = totalDurationLabel(a, auditionTakes)
 
     val checks by produceState<List<TapeChecker.Check>?>(null, a, auditionTakes, store.headshots, store.slate, store.slateAtStart) {
         value = withContext(Dispatchers.IO) {
             TapeChecker.run(context.applicationContext, a, auditionTakes, store.headshots, store.slate, store.slateAtStart)
         }
     }
-    val issuesCount = checks?.count { !it.passed } ?: 0
-    val checkPassed = checks != null && issuesCount == 0
-    val checkTitle = if (checks == null) "Tape check" else if (checkPassed) "Tape check" else "Tape check ($issuesCount to review)"
-    val checkValue = if (checks == null) "Checking…" else if (checkPassed) "Passed" else "Review"
-    val checkTint = if (checkPassed) c.success else c.warning
-    val checkIcon = if (checkPassed) Icons.Filled.CheckCircle else Icons.Filled.Warning
 
-    Column(Modifier.fillMaxSize()) {
-        PkgTopBar(icon = Icons.AutoMirrored.Filled.ArrowBack, label = "Back", onClick = { nav.back() })
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = OT.dims.gutter)
-                .padding(bottom = 24.dp),
-        ) {
-            Text("Ready to send.", style = OT.type.largeTitle, color = c.labelPrimary, modifier = Modifier.semantics { heading() })
+    val totalSeconds = auditionTakes.filter { it.isCircled }.sumOf { it.durationSeconds }
+    val under5Min = totalSeconds < 300
+    val soundGood = checks?.none { it.title.contains("Sound", ignoreCase = true) && !it.passed } ?: true
+    val orderGood = checks?.none { it.title.contains("Order", ignoreCase = true) && !it.passed } ?: true
+
+    val deliverableStrip = listOfNotNull(
+        "HEADSHOT".takeIf { store.headshots.isNotEmpty() },
+        "SLATE".takeIf { a.pieces.any { it.kind == PieceKind.Slate } },
+    ) + a.scenes.map { it.title.uppercase() }
+
+    SpotlightStageScaffold(
+        topCaption = "YOUR TAPE · $durationText",
+        onBack = { nav.back() },
+        stageContent = {
+            // Overline: READY TO SEND
+            Text(
+                text = "READY TO SEND",
+                style = OT.type.stageOverline,
+                color = OT.colors.accentGold,
+            )
+            Spacer(Modifier.height(4.dp))
+
+            // Hero Title: Project
+            Text(
+                text = a.project,
+                style = OT.type.heroStageTitle,
+                color = OT.colors.labelPrimary,
+            )
             Spacer(Modifier.height(6.dp))
-            Text("Due ${a.due.otDue} · ${a.readyCount} of ${a.totalCount} ready", style = OT.type.callout, color = c.labelSecondary)
+
+            // Deliverable Sequence Strip
+            Text(
+                text = deliverableStrip.joinToString("   "),
+                style = OT.type.stageOverline,
+                color = OT.colors.labelSecondary,
+            )
             Spacer(Modifier.height(20.dp))
 
-            val durationText = totalDurationLabel(a, auditionTakes)
-            val sizeLabel = exportedSizeLabel(a)
-
-            // Monolithic Assembled Tape Summary Card
+            // 3 Automated Verification Rows
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(cardShape)
-                    .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, cardShape)
+                    .clip(RoundedCornerShape(16.dp))
                     .background(OT.colors.surfaceCard)
-                    .padding(18.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "ON THE TAPE, IN ORDER",
-                        style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp),
-                        color = OT.colors.accent,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(durationText, style = OT.type.headline, color = c.labelPrimary)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Order matches the notice", style = OT.type.footnote, color = OT.colors.labelPrimary)
+                    Text(if (orderGood) "✓" else "!", style = OT.type.callout, color = if (orderGood) OT.colors.accentGold else OT.colors.warning)
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(a.project, style = OT.type.title, color = Color.White)
-                Text("Role: ${a.role}", style = OT.type.callout, color = c.labelSecondary)
-                Spacer(Modifier.height(14.dp))
-                PkgTapeStrip(a, auditionTakes, onSelectPiece = { previewPiece = it })
+                OTDivider()
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Sound clear · face lit", style = OT.type.footnote, color = OT.colors.labelPrimary)
+                    Text(if (soundGood) "✓" else "!", style = OT.type.callout, color = if (soundGood) OT.colors.accentGold else OT.colors.warning)
+                }
+                OTDivider()
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Under 5 minutes", style = OT.type.footnote, color = OT.colors.labelPrimary)
+                    Text(if (under5Min) "✓" else "!", style = OT.type.callout, color = if (under5Min) OT.colors.accentGold else OT.colors.warning)
+                }
             }
+            Spacer(Modifier.height(24.dp))
 
-            Spacer(Modifier.height(20.dp))
-            SectionLabel("Package contents & verification", Modifier.padding(start = 4.dp, bottom = 8.dp))
+            // Primary Circular CTA: SAVE VIDEO FILE
+            PrimaryStageCta(
+                icon = Icons.Filled.ArrowDownward,
+                caption = "SAVE VIDEO FILE",
+                onClick = onExportAndPreview,
+            )
+        },
+        wingsContent = {
+            Text("IN THE WINGS", style = OT.type.stageOverline, color = OT.colors.accentGold)
+            Spacer(Modifier.height(8.dp))
 
-            // Inset Grouped Roster
-            Column(
+            // Row 1: Share combined tape (.mp4)
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(cardShape)
-                    .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, cardShape)
-                    .background(OT.colors.surfaceCard),
+                    .heightIn(min = 52.dp)
+                    .clickable { onExportAndPreview() }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                PkgRow(
-                    icon = Icons.Outlined.Movie,
-                    title = zipPkgFileName,
-                    detail = "Self-tape package (.zip) · ${a.destination.label}",
-                    value = "Manifest",
-                    titleWeight = FontWeight.SemiBold,
-                    titleSmall = true,
-                    showDivider = true,
-                    onClick = { previewPiece = PkgPiecePreview.DeliverableDetails },
-                )
-                PkgRow(
-                    icon = Icons.AutoMirrored.Filled.Send,
-                    title = a.destination.label,
-                    value = sizeLabel,
-                    onClick = { showDestination = true },
-                    showDivider = true,
-                )
-                PkgRow(
-                    icon = checkIcon,
-                    iconTint = checkTint,
-                    title = checkTitle,
-                    value = checkValue,
-                    onClick = { /* Tape Check is integrated into Ready to Send */ },
-                    showDivider = true,
-                )
-                PkgRow(
-                    icon = Icons.Filled.GraphicEq,
-                    iconTint = c.success,
-                    title = "Audio",
-                    value = "Verify tracks",
-                    onClick = { previewPiece = PkgPiecePreview.AudioInspection },
-                    showDivider = true,
-                )
-                val headshotCount = store.headshots.size
-                PkgRow(
-                    icon = Icons.Filled.Person,
-                    title = "Headshots",
-                    detail = if (headshotCount > 0) "$headshotCount angles attached · 4:5 crop" else "No angles captured yet",
-                    value = if (headshotCount > 0) "Review" else "Add",
-                    onClick = { previewPiece = PkgPiecePreview.Headshots },
-                    showDivider = true,
-                )
-                PkgRow(
-                    icon = Icons.Outlined.Info,
-                    title = "Spoken slate",
-                    detail = store.slate.spoken.ifBlank { "Actor details on tape" },
-                    value = if (store.slate.name.isNotBlank()) "Verified" else "Set name",
-                    onClick = { previewPiece = PkgPiecePreview.Slate(a.slateVideoUri) },
-                    showDivider = true,
-                )
-                val fullTapeFile = remember(a.id, store.slate.name) {
-                    MediaExporter.existingFullTapeFile(context, a, store.slate)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Share combined tape (.mp4)", style = OT.type.heroStageTitle.copy(fontSize = 18.sp, lineHeight = 22.sp), color = OT.colors.labelPrimary)
+                    Text("Complete tape with slate and all scenes", style = OT.type.footnote, color = OT.colors.labelTertiary)
                 }
-                if (fullTapeFile != null && fullTapeFile.exists()) {
-                    PkgRow(
-                        icon = Icons.Outlined.PlayArrow,
-                        title = "Preview full tape",
-                        detail = "Watch stitched deliverable in order",
-                        value = "Play",
-                        onClick = { viewFile(context, fullTapeFile) },
-                        showDivider = false,
-                    )
-                } else {
-                    PkgRow(
-                        icon = Icons.Outlined.PlayArrow,
-                        title = "Preview full tape",
-                        detail = "Stitch and watch all clips before sending",
-                        value = "Generate",
-                        onClick = { showExportPrompt = true },
-                        showDivider = false,
-                    )
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = OT.colors.accentGold, modifier = Modifier.size(20.dp))
+            }
+            OTDivider()
+
+            // Row 2: Export full package (.zip)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .clickable { onSendZip() }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Export full package (.zip)", style = OT.type.heroStageTitle.copy(fontSize = 18.sp, lineHeight = 22.sp), color = OT.colors.labelPrimary)
+                    Text("All headshots, raw takes and project manifest", style = OT.type.footnote, color = OT.colors.labelTertiary)
                 }
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = OT.colors.accentGold, modifier = Modifier.size(20.dp))
             }
-        }
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(c.bgCanvas)
-                .navigationBarsPadding()
-                .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            PrimaryButton(
-                "Send .zip package",
-                onClick = onSendZip,
-                icon = Icons.AutoMirrored.Filled.Send,
-                iconTrailing = true,
-            )
-            SecondaryButton(
-                "Save .zip to device",
-                onClick = onSaveZip,
-                icon = Icons.Filled.Upload,
-            )
-            PlainButton("Choose different takes", onClick = { nav.push(Route.Takes(a.id)) })
-        }
-    }
-
-    if (showDestination) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        val scope = rememberCoroutineScope()
-        ModalBottomSheet(
-            onDismissRequest = { showDestination = false },
-            sheetState = sheetState,
-            containerColor = c.surfaceCard,
-        ) {
-            PkgDestinationSheet(
-                selected = a.destination,
-                onSelect = { d ->
-                    store.setDestination(a.id, d)
-                    scope.launch { sheetState.hide() }.invokeOnCompletion { showDestination = false }
-                },
-            )
-        }
-    }
-
-    val preview = previewPiece
-    if (preview != null) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        val scope = rememberCoroutineScope()
-        val closeSheet: () -> Unit = {
-            scope.launch { sheetState.hide() }.invokeOnCompletion { previewPiece = null }
-        }
-
-        ModalBottomSheet(
-            onDismissRequest = { previewPiece = null },
-            sheetState = sheetState,
-            containerColor = c.surfaceCard,
-        ) {
-            when (preview) {
-                is PkgPiecePreview.Headshots -> PkgHeadshotsSheet(
-                    onClose = closeSheet,
-                    onRetake = {
-                        closeSheet()
-                        nav.openCamera(CameraFlow.Headshot)
-                    },
-                )
-                is PkgPiecePreview.Slate -> PkgClipSheet(
-                    title = "Slate Preview",
-                    videoUri = preview.videoUri,
-                    detail = store.slate.spoken.ifBlank { "Spoken slate opening your tape." },
-                    onShoot = {
-                        closeSheet()
-                        nav.openCamera(CameraFlow.Shoot(a.id, -1))
-                    },
-                    onClose = closeSheet,
-                )
-                is PkgPiecePreview.FullLength -> PkgClipSheet(
-                    title = "Full Length Preview",
-                    videoUri = preview.videoUri,
-                    detail = "Head-to-toe full length shot requested by casting.",
-                    onShoot = {
-                        closeSheet()
-                        nav.openCamera(CameraFlow.Shoot(a.id, -1))
-                    },
-                    onClose = closeSheet,
-                )
-                is PkgPiecePreview.SceneTake -> PkgSceneTakeSheet(
-                    sceneTitle = preview.sceneTitle,
-                    sceneIndex = preview.sceneIndex,
-                    take = preview.take,
-                    onChooseTakes = {
-                        closeSheet()
-                        nav.push(Route.Takes(a.id))
-                    },
-                    onShoot = {
-                        closeSheet()
-                        nav.openCamera(CameraFlow.Shoot(a.id, preview.sceneIndex))
-                    },
-                    onClose = closeSheet,
-                )
-                is PkgPiecePreview.AudioInspection -> PkgAudioSheet(
-                    a = a,
-                    takes = auditionTakes,
-                    onClose = closeSheet,
-                )
-                is PkgPiecePreview.DeliverableDetails -> PkgDeliverableDetailsSheet(
-                    a = a,
-                    zipFileName = zipPkgFileName,
-                    takes = auditionTakes,
-                    onClose = closeSheet,
-                )
-            }
-        }
-    }
-
-    if (showExportPrompt) {
-        AlertDialog(
-            onDismissRequest = { showExportPrompt = false },
-            title = { Text("Generate tape preview?", style = OT.type.headline) },
-            text = {
-                Text(
-                    "OneTake will stitch your recorded slate, full length and circled takes into a single 1080p MP4 file so you can watch your complete tape in order before sending.",
-                    style = OT.type.callout,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showExportPrompt = false
-                    onExportAndPreview()
-                }) { Text("Generate preview", color = OT.colors.accent) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showExportPrompt = false }) { Text("Cancel", color = OT.colors.labelSecondary) }
-            },
-            containerColor = OT.colors.surfaceRaised,
-        )
-    }
+            OTDivider()
+        },
+    )
 }
 
 @Composable
@@ -1384,82 +1240,126 @@ private fun PkgSendFailed(message: String?, onBack: () -> Unit, onRetry: () -> U
     }
 }
 
-// MARK: - 21 Sent — handed off through the real share sheet, not a fabricated server confirmation
+// MARK: - 21 Sent — Stage Curtain confirmation
 
 @Composable
 private fun PkgSent(a: Audition, onDone: () -> Unit) {
-    val c = OT.colors
+    val store = LocalAppStore.current
+    val nav = LocalNavigator.current
     val haptics = rememberHaptics()
-    val sharedAt = remember { LocalDateTime.now() }
-    LaunchedEffect(Unit) { haptics.success() }
-    val h = a.hoursLeft
-    val earlyText = when {
-        h > 1 -> "$h hours early."
-        h == 1 -> "1 hour early."
-        else -> "Right on time."
+    LaunchedEffect(Unit) {
+        haptics.success()
+        store.markSent(a.id)
     }
-    val sceneCount = a.scenes.size
-    val scenePart = if (sceneCount == 1) "1 scene" else "$sceneCount scenes"
 
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = OT.dims.gutter)
-                .padding(top = 40.dp, bottom = 16.dp),
-        ) {
-            OTCard(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).rotate(1.5f),
-                radius = 18.dp,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "SHARED · ${sharedAt.otWeekdayCaps} ${sharedAt.let { "%02d:%02d".format(it.hour, it.minute) }}",
-                        style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp),
-                        color = c.success,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Icon(Icons.Filled.CheckCircle, "Shared", tint = c.success, modifier = Modifier.size(18.dp))
-                }
-                Spacer(Modifier.height(6.dp))
-                val store = LocalAppStore.current
-                val fileName = MediaExporter.deliverableFileName(a, store.slate)
-                Text(fileName, style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
-                Spacer(Modifier.height(6.dp))
-                Text("Headshot · slate · $scenePart", style = OT.type.footnote, color = c.labelSecondary)
-            }
+    val activeAuditions = store.active.filter { it.id != a.id }
+    val nextAudition = activeAuditions.firstOrNull()
 
-            Spacer(Modifier.height(40.dp))
+    SpotlightStageScaffold(
+        showStageLight = true,
+        isStageLightPulsing = false,
+        stageContent = {
             Text(
-                "It’s on its way.",
-                style = OT.type.largeTitle.copy(fontSize = 38.sp, lineHeight = 44.sp),
-                color = c.labelPrimary,
-                modifier = Modifier.semantics { heading() },
+                text = "CURTAIN",
+                style = OT.type.stageOverline,
+                color = OT.colors.accentGold,
             )
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(earlyText, style = OT.type.title.copy(fontSize = 22.sp, lineHeight = 28.sp), color = c.success)
-                Text("Break a leg.", style = OT.type.headline, color = c.labelSecondary, modifier = Modifier.padding(bottom = 2.dp))
-            }
-            Spacer(Modifier.height(16.dp))
-            PkgSentNote(Icons.Outlined.Share, "Handed off through your share sheet to ${a.destination.label}")
-            Spacer(Modifier.height(6.dp))
-            PkgSentNote(Icons.Outlined.Movie, "All your takes stay here if they ask for another")
+            Spacer(Modifier.height(8.dp))
 
-            Spacer(Modifier.height(28.dp))
-            PkgHeadshotFan(Modifier.fillMaxWidth().height(170.dp))
-        }
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = OT.dims.gutter, vertical = 8.dp),
-        ) {
-            PrimaryButton("Done", onClick = onDone)
-        }
-    }
+            Text(
+                text = "Sent.",
+                style = OT.type.curtainHeroTitle,
+                color = OT.colors.labelPrimary,
+            )
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                text = "${a.project} · ${a.role}",
+                style = OT.type.callout,
+                color = OT.colors.labelSecondary,
+            )
+            Text(
+                text = formatCurtainDeliveryTiming(a.due, LocalDateTime.now()),
+                style = OT.type.footnote,
+                color = OT.colors.accentGold,
+            )
+            Spacer(Modifier.height(32.dp))
+
+            // Center Confirmation Badge: 68dp circle filled #FFF8EB with black checkmark ✓ (28dp)
+            Box(
+                modifier = Modifier.size(80.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                // Halo ring
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(OT.colors.stageLight.copy(alpha = 0.14f)),
+                )
+                // Center badge
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFFF8EB)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = "Sent",
+                        tint = Color(0xFF050505),
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
+            }
+        },
+        wingsContent = {
+            Text("NEXT IN THE WINGS", style = OT.type.stageOverline, color = OT.colors.accentGold)
+            Spacer(Modifier.height(8.dp))
+
+            if (nextAudition != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 52.dp)
+                        .clickable { nav.push(Route.AuditionDetail(nextAudition.id)) }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "${nextAudition.project} · ${nextAudition.role}",
+                            style = OT.type.heroStageTitle.copy(fontSize = 18.sp, lineHeight = 22.sp),
+                            color = OT.colors.labelPrimary,
+                        )
+                        Text(
+                            "Due ${nextAudition.due.otRelative}",
+                            style = OT.type.footnote,
+                            color = OT.colors.labelTertiary,
+                        )
+                    }
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = OT.colors.accentGold, modifier = Modifier.size(20.dp))
+                }
+                OTDivider()
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .clickable(onClick = onDone)
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("Back to home", style = OT.type.callout, color = OT.colors.labelPrimary)
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = OT.colors.accentGold, modifier = Modifier.size(20.dp))
+            }
+            OTDivider()
+        },
+    )
 }
 
 @Composable

@@ -27,7 +27,7 @@ data class Piece(
     val id: String = UUID.randomUUID().toString(),
     val kind: PieceKind,
     val title: String,
-    val detail: String,
+    val detail: String = "",
     val isDone: Boolean,
 )
 

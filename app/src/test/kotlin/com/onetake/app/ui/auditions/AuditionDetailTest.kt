@@ -135,4 +135,18 @@ class AuditionDetailTest {
         assertEquals(1, store.sent.size)
         assertEquals("3", store.sent.first().id)
     }
+
+    @Test
+    fun testNextPieceStepProgressFormatting() {
+        val pieces = listOf(
+            Piece(kind = PieceKind.Headshot, title = "Headshot", isDone = true),
+            Piece(kind = PieceKind.Slate, title = "Slate", isDone = false),
+            Piece(kind = PieceKind.Scene, title = "Scene 1", isDone = false)
+        )
+        val progress = formatNextPieceProgress(pieces)
+        assertEquals("NEXT · 2 OF 3", progress)
+
+        val allDone = pieces.map { it.copy(isDone = true) }
+        org.junit.Assert.assertNull(formatNextPieceProgress(allDone))
+    }
 }

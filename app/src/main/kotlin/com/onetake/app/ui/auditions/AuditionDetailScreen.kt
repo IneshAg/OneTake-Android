@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +47,7 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -88,6 +91,8 @@ import com.onetake.app.models.Take
 import com.onetake.app.models.formatDuration
 import com.onetake.app.models.otDayMonth
 import com.onetake.app.models.otDue
+import com.onetake.app.models.otWeekdayCaps
+import com.onetake.app.models.otTime
 import com.onetake.app.ui.components.GLASS_EDGE_COLOR
 import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.Chevron
@@ -99,9 +104,12 @@ import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.OTSwitch
 import com.onetake.app.ui.components.PackageStepsBar
 import com.onetake.app.ui.components.PrimaryButton
+import com.onetake.app.ui.components.PrimaryStageCta
 import com.onetake.app.ui.components.PushedScreen
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.SheetHeader
+import com.onetake.app.ui.components.SpotlightStageGeometry
+import com.onetake.app.ui.components.SpotlightStageScaffold
 import com.onetake.app.ui.theme.OT
 import java.time.Instant
 import java.time.LocalDate
@@ -111,7 +119,13 @@ import java.util.Locale
 import com.onetake.app.models.Destination
 import kotlinx.coroutines.launch
 
-/** 07 Audition detail (and 7.0 "just added · 0 of 4" when nothing is done yet). */
+internal fun formatNextPieceProgress(pieces: List<Piece>): String? {
+    val pendingIndex = pieces.indexOfFirst { !it.isDone }
+    if (pendingIndex == -1) return null
+    return "NEXT · ${pendingIndex + 1} OF ${pieces.size}"
+}
+
+/** 07 Audition detail with Spotlight Stage and In the Wings sequence. */
 @Composable
 fun AuditionDetailScreen(auditionId: String) {
     val store = LocalAppStore.current
@@ -119,7 +133,7 @@ fun AuditionDetailScreen(auditionId: String) {
     val a = store.audition(auditionId)
 
     if (a == null) {
-        PushedScreen {
+        SpotlightStageScaffold(onBack = { nav.back() }) {
             Column(
                 Modifier.fillMaxWidth().padding(top = 120.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -155,10 +169,11 @@ fun AuditionDetailScreen(auditionId: String) {
     var showDelete by remember { mutableStateOf(false) }
     var showEdit by remember { mutableStateOf(false) }
     var showSides by remember { mutableStateOf(false) }
-    val c = OT.colors
 
-    PushedScreen(
-        trailing = {
+    SpotlightStageScaffold(
+        topCaption = "DUE ${a.due.otWeekdayCaps} · ${a.due.otTime}",
+        onBack = { nav.back() },
+        topTrailingContent = {
             Box {
                 CircleIconButton(Icons.Filled.MoreHoriz, "More actions", onClick = { showMenu = true })
                 DropdownMenu(
@@ -175,7 +190,7 @@ fun AuditionDetailScreen(auditionId: String) {
                         showEdit = true
                     }
                     OTDivider()
-                    DetailMenuItem("Revised sides", "Swap in new pages", Icons.Outlined.Description) {
+                    DetailMenuItem("Add or edit sides", "Swap in new pages", Icons.Outlined.Description) {
                         showMenu = false
                         showSides = true
                     }
@@ -187,30 +202,135 @@ fun AuditionDetailScreen(auditionId: String) {
                 }
             }
         },
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            DetailHeader(a)
-            DetailPackageSummary(a, onClick = { showPackage = true })
-            DetailUpNext(a, nav)
-            val auditionTakes = store.takes.filter { it.auditionId == a.id }
-            if (auditionTakes.isNotEmpty()) {
-                DetailTakesCard(takes = auditionTakes, onClick = { nav.push(Route.Takes(a.id)) })
+        wingsContent = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "IN THE WINGS",
+                    style = OT.type.stageOverline,
+                    color = OT.colors.labelSecondary,
+                )
             }
-            detailThenLine(a)?.let { then ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .clickable { showPackage = true },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Then", style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold), color = c.labelPrimary)
-                    Spacer(Modifier.width(8.dp))
-                    Text(then, style = OT.type.footnote, color = c.labelSecondary, modifier = Modifier.weight(1f))
-                    Chevron()
+            val activePiece = a.nextPiece
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(bottom = 24.dp),
+            ) {
+                items(a.pieces) { piece ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { detailOpenPiece(nav, a, piece) }
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = piece.title,
+                                style = OT.type.wingRowTitle,
+                                color = OT.colors.labelPrimary,
+                            )
+                            if (piece.detail.isNotBlank()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = piece.detail,
+                                    style = OT.type.footnote,
+                                    color = OT.colors.labelSecondary,
+                                )
+                            }
+                        }
+                        val (statusText, statusColor) = when {
+                            piece.isDone -> "done ✓" to OT.colors.accentGold
+                            piece.id == activePiece?.id -> "up next" to OT.colors.accentGold
+                            else -> "after this" to OT.colors.labelTertiary
+                        }
+                        Text(
+                            text = statusText,
+                            style = OT.type.stageOverline,
+                            color = statusColor,
+                        )
+                    }
+                    HorizontalDivider(
+                        color = OT.colors.borderMuted.copy(alpha = 0.5f),
+                        thickness = 0.5.dp,
+                    )
                 }
             }
-            Spacer(Modifier.height(16.dp))
+        },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(top = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            val next = a.nextPiece
+            val progressOverline = formatNextPieceProgress(a.pieces)
+            Text(
+                text = progressOverline ?: "ALL PIECES READY",
+                style = OT.type.stageOverline,
+                color = OT.colors.accentGold,
+            )
+            Spacer(Modifier.height(10.dp))
+            val heroTitle = when {
+                next?.kind == PieceKind.Headshot -> "Take Headshot"
+                next?.kind == PieceKind.Slate -> "Record Slate"
+                next?.kind == PieceKind.Scene -> {
+                    val sceneIndex = detailSceneIndex(a, next)
+                    val scene = a.scenes.getOrNull(sceneIndex) ?: a.scenes.firstOrNull()
+                    scene?.let { detailSceneName(it, next) } ?: next.title
+                }
+                next?.kind == PieceKind.FullLength -> "Full-Length Shot"
+                next != null -> next.title
+                else -> "Watch & Send"
+            }
+            Text(
+                text = heroTitle,
+                style = OT.type.heroStageTitle,
+                color = OT.colors.labelPrimary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            val subtitle = when {
+                next?.kind == PieceKind.Scene -> {
+                    val sceneIndex = detailSceneIndex(a, next)
+                    val scene = a.scenes.getOrNull(sceneIndex)
+                    val mine = scene?.lines?.count { it.isMine } ?: 0
+                    "${a.project} · ${scene?.heading ?: "Scene ${sceneIndex + 1}"} · $mine lines"
+                }
+                next != null -> "${a.project} · ${a.role}"
+                else -> "${a.project} · Ready to package & deliver"
+            }
+            Text(
+                text = subtitle,
+                style = OT.type.body,
+                color = OT.colors.labelSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(32.dp))
+            PrimaryStageCta(
+                icon = Icons.AutoMirrored.Filled.ArrowForward,
+                caption = "CONTINUE",
+                onClick = {
+                    if (next != null) {
+                        detailOpenPiece(nav, a, next)
+                    } else {
+                        nav.push(Route.Package(a.id))
+                    }
+                },
+            )
         }
     }
 

@@ -26,4 +26,13 @@ class ScriptSearchTest {
         val results = engine.search("")
         assertTrue(results.isEmpty())
     }
+
+    @Test
+    fun testSearchScreenDefaultsScopeToPreviousTab() {
+        val fromAuditionsScope = resolveInitialSearchScope(previousTab = com.onetake.app.AppTab.Auditions)
+        val fromPracticeScope = resolveInitialSearchScope(previousTab = com.onetake.app.AppTab.Practice)
+
+        assertEquals(SearchScope.Auditions, fromAuditionsScope)
+        assertEquals(SearchScope.Practice, fromPracticeScope)
+    }
 }

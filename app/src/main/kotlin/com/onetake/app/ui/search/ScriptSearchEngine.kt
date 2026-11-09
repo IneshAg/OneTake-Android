@@ -1,10 +1,19 @@
 package com.onetake.app.ui.search
 
 enum class SearchScope(val label: String) {
-    ALL("All"),
-    DIALOGUE("Dialogue"),
-    CHARACTERS("Characters"),
-    CUES("Cues"),
+    All("All"),
+    Auditions("Auditions"),
+    Practice("Practice"),
+    Dialogue("Dialogue"),
+    Characters("Characters"),
+    Cues("Cues");
+
+    companion object {
+        val ALL = All
+        val DIALOGUE = Dialogue
+        val CHARACTERS = Characters
+        val CUES = Cues
+    }
 }
 
 data class ScriptSearchLine(
@@ -44,16 +53,22 @@ class ScriptSearchEngine(
 
         val allLines = sampleScripts + dynamicLines
         val filteredLines = when (scope) {
-            SearchScope.ALL -> allLines.filter {
+            SearchScope.All, SearchScope.ALL -> allLines.filter {
                 it.text.contains(trimmed, ignoreCase = true) || it.character.contains(trimmed, ignoreCase = true)
             }
-            SearchScope.DIALOGUE -> allLines.filter {
+            SearchScope.Auditions -> allLines.filter {
+                it.auditionId != null && (it.text.contains(trimmed, ignoreCase = true) || it.character.contains(trimmed, ignoreCase = true))
+            }
+            SearchScope.Practice -> allLines.filter {
+                it.practicePieceId != null && (it.text.contains(trimmed, ignoreCase = true) || it.character.contains(trimmed, ignoreCase = true))
+            }
+            SearchScope.Dialogue, SearchScope.DIALOGUE -> allLines.filter {
                 it.text.contains(trimmed, ignoreCase = true)
             }
-            SearchScope.CHARACTERS -> allLines.filter {
+            SearchScope.Characters, SearchScope.CHARACTERS -> allLines.filter {
                 it.character.contains(trimmed, ignoreCase = true)
             }
-            SearchScope.CUES -> allLines.filter {
+            SearchScope.Cues, SearchScope.CUES -> allLines.filter {
                 !it.isMine && (it.text.contains(trimmed, ignoreCase = true) || it.character.contains(trimmed, ignoreCase = true))
             }
         }

@@ -82,6 +82,8 @@ sealed class CameraFlow(val path: String) {
 class Navigator(private val nav: NavHostController) {
     var tab by mutableStateOf(AppTab.Auditions)
         private set
+    var previousTab by mutableStateOf<AppTab?>(null)
+        private set
 
     fun push(route: Route) = nav.navigate(route.path)
 
@@ -95,6 +97,9 @@ class Navigator(private val nav: NavHostController) {
     }
 
     fun select(tab: AppTab) {
+        if (this.tab != tab) {
+            previousTab = this.tab
+        }
         this.tab = tab
         nav.navigate(tab.route) {
             popUpTo(nav.graph.findStartDestination().id) { saveState = true }
@@ -105,6 +110,9 @@ class Navigator(private val nav: NavHostController) {
 
     /** Switch tab and land on its root (e.g. Sent → "Done" goes to Auditions). */
     fun resetTo(tab: AppTab) {
+        if (this.tab != tab) {
+            previousTab = this.tab
+        }
         this.tab = tab
         nav.navigate(tab.route) {
             popUpTo(nav.graph.findStartDestination().id) { saveState = false }
@@ -125,7 +133,10 @@ class Navigator(private val nav: NavHostController) {
     }
 
     internal fun syncTab(route: String?) {
-        AppTab.entries.firstOrNull { it.route == route }?.let { tab = it }
+        AppTab.entries.firstOrNull { it.route == route }?.let {
+            if (tab != it) previousTab = tab
+            tab = it
+        }
     }
 }
 

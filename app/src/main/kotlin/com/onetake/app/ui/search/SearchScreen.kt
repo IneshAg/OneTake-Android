@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.onetake.app.AppTab
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Route
@@ -55,6 +56,12 @@ import com.onetake.app.TabBarClearance
 import com.onetake.app.ui.components.GLASS_EDGE_COLOR
 import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.theme.OT
+
+fun resolveInitialSearchScope(previousTab: AppTab?): SearchScope = when (previousTab) {
+    AppTab.Practice -> SearchScope.Practice
+    AppTab.Auditions -> SearchScope.Auditions
+    else -> SearchScope.All
+}
 
 /**
  * Dedicated Standalone Search Screen:
@@ -69,7 +76,8 @@ fun SearchScreen(
     val searchEngine = remember { ScriptSearchEngine() }
 
     var query by remember { mutableStateOf("") }
-    var selectedScope by remember { mutableStateOf(SearchScope.ALL) }
+    val initialScope = remember { resolveInitialSearchScope(nav.previousTab) }
+    var selectedScope by remember { mutableStateOf(initialScope) }
 
     val dynamicLines = remember(store.auditions, store.practice) {
         val fromAuditions = store.auditions.flatMap { audition ->

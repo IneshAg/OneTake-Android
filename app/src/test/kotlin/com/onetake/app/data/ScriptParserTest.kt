@@ -1,5 +1,12 @@
 package com.onetake.app.data
 
+import android.app.Application
+import com.onetake.app.AppStore
+import com.onetake.app.models.Audition
+import com.onetake.app.models.Destination
+import com.onetake.app.models.ScriptLine
+import com.onetake.app.models.ScriptScene
+import java.time.LocalDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -182,5 +189,39 @@ class ScriptParserTest {
 
         val chars = ScriptParser.extractCharacters(noticeText)
         assertTrue("Notice headers and keyboard artifacts must not be extracted as characters (was $chars)", chars.isEmpty())
+    }
+
+    @Test
+    fun testInlineScriptLineSpeakerFlipUpdatesOwnershipInStore() {
+        val store = AppStore(Application())
+        val line1 = ScriptLine(id = "line-1", character = "MAYA", text = "I didn't expect you.", isMine = false)
+        val line2 = ScriptLine(id = "line-2", character = "ALEX", text = "I had to come.", isMine = true)
+        val scene = ScriptScene(id = "scene-101", title = "Scene 1", lines = listOf(line1, line2))
+        val audition = Audition(
+            id = "aud-1", project = "Project X", projectType = "", role = "Alex", roleSize = "",
+            castingOffice = "", due = LocalDateTime.now(), asks = emptyList(), pieces = emptyList(),
+            scenes = listOf(scene), destination = Destination.Spotlight
+        )
+        store.auditions = listOf(audition)
+
+        store.updateScriptLine(
+            auditionId = "aud-1",
+            sceneId = "scene-101",
+            lineId = "line-1",
+            newCharacter = "YOU",
+            newText = "I didn't expect you.",
+            isMine = true,
+        )
+
+        val updatedAudition = store.audition("aud-1")!!
+        val updatedScene = updatedAudition.scenes.first { it.id == "scene-101" }
+        val updatedLine = updatedScene.lines.first { it.id == "line-1" }
+        assertTrue("Flipped line must have isMine = true", updatedLine.isMine)
+        assertEquals("YOU", updatedLine.character)
+
+        val unchangedLine = updatedScene.lines.first { it.id == "line-2" }
+        assertTrue(unchangedLine.isMine)
+        assertEquals("ALEX", unchangedLine.character)
+        assertEquals(2, updatedScene.lines.size)
     }
 }

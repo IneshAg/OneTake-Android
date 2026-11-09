@@ -40,11 +40,11 @@ data class ScriptLine(
 
 data class ScriptScene(
     val id: String = UUID.randomUUID().toString(),
-    val number: Int,
-    val title: String,
-    val heading: String,
-    val lines: List<ScriptLine>,
-    val estimatedSeconds: Int,
+    val number: Int = 1,
+    val title: String = "",
+    val heading: String = "",
+    val lines: List<ScriptLine> = emptyList(),
+    val estimatedSeconds: Int = 60,
 ) {
     companion object {
         /** Stand-in scene for an audition added without sides until real pages are added. */
@@ -79,8 +79,8 @@ data class Audition(
     val asks: List<String>,
     val pieces: List<Piece>,
     val scenes: List<ScriptScene>,
-    val destination: Destination,
-    val status: AuditionStatus,
+    val destination: Destination = Destination.Spotlight,
+    val status: AuditionStatus = AuditionStatus.Due,
     val sentDate: LocalDateTime? = null,
     val headshotAsset: String = "headshot",
     /** Real recordings, once this audition has actually been shot — null until then. Persisted as

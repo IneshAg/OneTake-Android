@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -33,6 +34,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -111,9 +115,12 @@ import com.onetake.app.ui.components.CircleIconButton
 import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.OTSwitch
 import com.onetake.app.ui.components.PrimaryButton
+import com.onetake.app.ui.components.PrimaryStageCta
 import com.onetake.app.ui.components.PushedScreen
 import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.components.SectionLabel
+import com.onetake.app.ui.components.SpotlightStageGeometry
+import com.onetake.app.ui.components.SpotlightStageScaffold
 import com.onetake.app.ui.components.ToggleRow
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.ReaderFiles
@@ -349,10 +356,10 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
         return
     }
 
+    var activeLineIndex by rememberSaveable(auditionId, sceneIndex) { mutableIntStateOf(0) }
     var peeks by remember(sceneIndex) { mutableStateOf(mapOf<String, Int>()) }
     var menuOpen by remember { mutableStateOf(false) }
     var showPrompter by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf(false) }
     var editingLine by remember { mutableStateOf<ScriptLine?>(null) }
 
     val mode = PrepPrefs.mode
@@ -360,183 +367,252 @@ fun PrepareScreen(auditionId: String, sceneIndex: Int) {
     val mineLines = scene.lines.filter { it.isMine }
     val mineCount = mineLines.size
     val learned = store.practiceProgress(auditionId, sceneIndex)?.linesLearned?.coerceAtMost(mineCount) ?: 0
-    val visible = if (editing) scene.lines else scene.lines.filter { PrepPrefs.hidden[it.id] != true }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(c.bgCanvas),
-    ) {
-        Column(Modifier.fillMaxSize()) {
-            PrepNavHeader(
-                title = if (a != null) "Scene ${scene.number} of ${maxOf(1, a.scenes.size)}" else "Scene ${scene.number}",
-                subtitle = prepSceneSubtitle(scene),
-                leadingIcon = Icons.AutoMirrored.Filled.ArrowBack,
-                leadingDescription = "Back",
-                onLeading = { nav.back() },
-            ) {
+    val lines = scene.lines
+    val safeLineIndex = if (lines.isNotEmpty()) activeLineIndex.coerceIn(0, lines.size - 1) else 0
+    val safeLineNumber = if (lines.isNotEmpty()) safeLineIndex + 1 else 0
+
+    SpotlightStageScaffold(
+        topCaption = if (lines.isNotEmpty()) "SCENE ${scene.number} · LINE $safeLineNumber OF ${lines.size}" else "SCENE ${scene.number}",
+        onBack = { nav.back() },
+        topTrailingContent = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircleIconButton(Icons.Filled.TextFields, "Text size", onClick = { showPrompter = true })
+                CircleIconButton(Icons.Filled.Edit, "Edit line", onClick = {
+                    editingLine = lines.getOrNull(safeLineIndex) ?: lines.firstOrNull()
+                })
             }
+        },
+        wingsContent = {
             Column(
-                Modifier
-                    .weight(1f)
+                modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = OT.dims.gutter)
-                    .padding(top = 4.dp, bottom = 120.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(top = 10.dp)
             ) {
-                Text(
-                    prepSceneTitle(a, scene),
-                    style = OT.type.largeTitle,
-                    color = c.labelPrimary,
-                    modifier = Modifier.semantics { heading() },
-                )
-                // Casting's adjustment (from a callback) — seen before every take.
-                a?.notes?.takeIf { it.isNotBlank() }?.let { note ->
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(c.accentSoft)
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text("FROM CASTING", style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold), color = c.accent)
-                        Text(note, style = OT.type.callout, color = c.labelPrimary)
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        repeat(mineCount) { i ->
-                            Box(
-                                Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .then(
-                                        if (i < learned) Modifier.background(c.accent)
-                                        else Modifier.border(1.dp, c.labelTertiary, CircleShape)
-                                    )
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    Text("$learned of $mineCount lines learned", style = OT.type.footnote, color = c.labelTertiary)
-                    Spacer(Modifier.weight(1f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "IN THE WINGS · ${learned} OF ${mineCount} LEARNED",
+                        style = OT.type.stageOverline,
+                        color = OT.colors.labelSecondary,
+                    )
                     Row(
-                        Modifier
-                            .heightIn(min = 48.dp)
+                        modifier = Modifier
                             .clip(CircleShape)
-                            .clickable(role = Role.Button) { if (a != null) nav.push(Route.Reader(a.id, sceneIndex)) }
-                            .padding(horizontal = 4.dp),
+                            .clickable { if (a != null) nav.push(Route.Reader(a.id, sceneIndex)) }
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Box(Modifier.size(7.dp).clip(CircleShape).background(c.reader))
+                        Box(Modifier.size(6.dp).clip(CircleShape).background(c.reader))
                         Text(
-                            "$readerName · your recording",
-                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
+                            readerName,
+                            style = OT.type.caption,
                             color = c.reader,
-                            maxLines = 1,
                         )
-                        Icon(Icons.Filled.ExpandMore, null, tint = c.reader, modifier = Modifier.size(16.dp))
                     }
                 }
 
-                if (editing) {
-                    PrepEditBanner(onRestore = {
-                        scene.lines.forEach { PrepPrefs.edits.remove(it.id); PrepPrefs.hidden.remove(it.id) }
-                        haptics.tick()
-                    })
-                }
-
-                var mineNumber = 0
-                visible.forEach { line ->
-                    if (line.isMine) mineNumber += 1
-                    val number = mineNumber
-                    val text = PrepPrefs.edits[line.id] ?: line.text
-                    val level = peeks[line.id] ?: 0
-                    val hiddenInCopy = PrepPrefs.hidden[line.id] == true
-                    val (shown, placeholder) = when {
-                        !line.isMine || editing || mode == PrepLineMode.Full -> text to false
-                        mode == PrepLineMode.FirstLetters -> (if (level >= 1) text else prepFirstLetters(text)) to false
-                        level == 0 -> "Tap to peek" to true
-                        level == 1 -> prepFirstLetters(text) to false
-                        else -> text to false
-                    }
-                    val chip = if (line.isMine && !editing && mode == PrepLineMode.Hide && level == 1)
-                        "Peeking line $number · tap again for the whole line" else null
-                    val onTap: (() -> Unit)? = when {
-                        editing -> { { editingLine = line } }
-                        line.isMine && mode != PrepLineMode.Full -> {
-                            {
-                                val next = if (mode == PrepLineMode.Hide) (level + 1) % 3 else if (level == 0) 1 else 0
-                                peeks = peeks + (line.id to next)
-                                haptics.tick()
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    itemsIndexed(lines) { i, line ->
+                        val isSelected = i == safeLineIndex
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) c.fillField else Color.Transparent)
+                                .clickable {
+                                    activeLineIndex = i
+                                    haptics.tick()
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text(
+                                text = line.character,
+                                style = OT.type.stageOverline,
+                                color = if (line.isMine) OT.colors.accentGold else OT.colors.labelTertiary,
+                                modifier = Modifier.widthIn(min = 60.dp),
+                            )
+                            Text(
+                                text = PrepPrefs.edits[line.id] ?: line.text,
+                                style = OT.type.body.copy(fontSize = 14.sp),
+                                color = if (isSelected) OT.colors.labelPrimary else OT.colors.labelSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (isSelected) {
+                                Box(Modifier.size(6.dp).clip(CircleShape).background(OT.colors.accentGold))
                             }
                         }
-                        else -> null
                     }
-                    PrepLineView(
-                        line = line,
-                        text = shown,
-                        isPlaceholder = placeholder,
-                        hiddenInCopy = hiddenInCopy,
-                        peekChip = chip,
-                        onTap = onTap,
-                    )
+                }
+
+                // Bottom Rehearsal Control Bar (Hide my lines · Takes · Run lines)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box {
+                        PrepCapsule(mode.label, Icons.Filled.UnfoldMore, onClick = { menuOpen = true })
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            PrepLineMode.entries.forEach { m ->
+                                DropdownMenuItem(
+                                    text = { Text(m.label, style = OT.type.body) },
+                                    onClick = {
+                                        PrepPrefs.mode = m
+                                        peeks = emptyMap()
+                                        menuOpen = false
+                                        haptics.tick()
+                                    },
+                                    trailingIcon = if (m == mode) {
+                                        { Icon(Icons.Filled.Check, null, tint = c.accent) }
+                                    } else null,
+                                )
+                            }
+                        }
+                    }
+                    val takesCount = store.takes.count { it.auditionId == (a?.id ?: auditionId) && (it.sceneIndex ?: 0) == sceneIndex }
+                    if (takesCount > 0) {
+                        PrepCapsule("Takes ($takesCount)", Icons.Filled.Movie, onClick = { nav.push(Route.Takes(a?.id ?: auditionId)) })
+                    }
+                    PrepCapsule("Run lines", Icons.Filled.PlayArrow, onClick = { nav.push(Route.RunLines(auditionId, sceneIndex)) })
                 }
             }
-        }
-
-        // Floating action capsule (Full lines ⌄ · Run lines ▶ · Record ◎)
-        Row(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(horizontal = OT.dims.gutter, vertical = 8.dp)
-                .shadow(16.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.14f))
-                .clip(CircleShape)
-                .background(c.surfaceRaised)
-                .padding(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        },
+    ) {
+        // The Lit Stage Prompter Viewport
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(top = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
-            Box {
-                PrepCapsule(mode.label, Icons.Filled.UnfoldMore, onClick = { menuOpen = true })
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    PrepLineMode.entries.forEach { m ->
-                        DropdownMenuItem(
-                            text = { Text(m.label, style = OT.type.body) },
-                            onClick = {
-                                PrepPrefs.mode = m
-                                peeks = emptyMap()
-                                menuOpen = false
+            if (lines.isEmpty()) {
+                Text("NO SIDES LOADED", style = OT.type.stageOverline, color = OT.colors.accentGold)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Add your script lines to rehearse",
+                    style = OT.type.heroStageTitle,
+                    color = OT.colors.labelPrimary,
+                    textAlign = TextAlign.Center,
+                )
+            } else {
+                val activeLine = lines[safeLineIndex]
+                val prevLine = if (safeLineIndex > 0) lines.getOrNull(safeLineIndex - 1) else null
+                val nextLine = if (safeLineIndex + 1 < lines.size) lines.getOrNull(safeLineIndex + 1) else null
+
+                // Casting direction note if present
+                a?.notes?.takeIf { it.isNotBlank() }?.let { note ->
+                    Text(
+                        text = "NOTE: $note",
+                        style = OT.type.caption,
+                        color = OT.colors.accentGold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                }
+
+                if (prevLine != null) {
+                    Text(
+                        text = "${prevLine.character}: ${prevLine.text}",
+                        style = OT.type.dimmedCue,
+                        color = OT.colors.borderMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp)
+                            .clickable {
+                                activeLineIndex = maxOf(0, safeLineIndex - 1)
                                 haptics.tick()
                             },
-                            trailingIcon = if (m == mode) {
-                                { Icon(Icons.Filled.Check, null, tint = c.accent) }
-                            } else null,
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(if (editing) "Done editing" else "Edit rehearsal copy", style = OT.type.body) },
-                        onClick = {
-                            editing = !editing
-                            menuOpen = false
+                    )
+                    Spacer(Modifier.height(14.dp))
+                }
+
+                val cueTitle = if (activeLine.isMine) "YOU · ${activeLine.character}" else activeLine.character
+                Text(
+                    text = cueTitle.uppercase(),
+                    style = OT.type.stageOverline,
+                    color = OT.colors.accentGold,
+                )
+                Spacer(Modifier.height(6.dp))
+
+                val text = PrepPrefs.edits[activeLine.id] ?: activeLine.text
+                val level = peeks[activeLine.id] ?: 0
+                val (shownText, isPlaceholder) = when {
+                    !activeLine.isMine || mode == PrepLineMode.Full -> text to false
+                    mode == PrepLineMode.FirstLetters -> (if (level >= 1) text else prepFirstLetters(text)) to false
+                    level == 0 -> "Tap to peek" to true
+                    level == 1 -> prepFirstLetters(text) to false
+                    else -> text to false
+                }
+
+                Text(
+                    text = shownText,
+                    style = OT.type.activeDialogue,
+                    color = if (isPlaceholder) OT.colors.labelTertiary else OT.colors.labelPrimary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .clickable {
+                            if (activeLine.isMine && mode != PrepLineMode.Full) {
+                                val nextLvl = if (mode == PrepLineMode.Hide) (level + 1) % 3 else if (level == 0) 1 else 0
+                                peeks = peeks + (activeLine.id to nextLvl)
+                                haptics.tick()
+                            } else {
+                                editingLine = activeLine
+                            }
                         },
-                        leadingIcon = { Icon(Icons.Filled.Edit, null, tint = c.labelSecondary) },
+                )
+
+                if (nextLine != null) {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = "${nextLine.character}: ${nextLine.text}",
+                        style = OT.type.dimmedCue,
+                        color = OT.colors.borderMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp)
+                            .clickable {
+                                activeLineIndex = minOf(lines.size - 1, safeLineIndex + 1)
+                                haptics.tick()
+                            },
                     )
                 }
             }
-            val takesCount = store.takes.count { it.auditionId == (a?.id ?: auditionId) && (it.sceneIndex ?: 0) == sceneIndex }
-            if (takesCount > 0) {
-                PrepCapsule("Takes ($takesCount)", Icons.Filled.Movie, onClick = { nav.push(Route.Takes(a?.id ?: auditionId)) })
-            }
-            PrepCapsule("Run lines", Icons.Filled.PlayArrow, onClick = { nav.push(Route.RunLines(auditionId, sceneIndex)) })
-            PrepCapsule("Record", Icons.Filled.RadioButtonChecked, filled = true, onClick = {
-                if (a != null) nav.openCamera(CameraFlow.Shoot(a.id, sceneIndex)) else nav.openCamera(CameraFlow.PracticeTake(auditionId))
-            })
+
+            Spacer(Modifier.height(24.dp))
+            PrimaryStageCta(
+                icon = Icons.Filled.RadioButtonChecked,
+                isRecord = true,
+                caption = "RECORD TAKE",
+                onClick = {
+                    if (a != null) nav.openCamera(CameraFlow.Shoot(a.id, sceneIndex))
+                    else nav.openCamera(CameraFlow.PracticeTake(auditionId))
+                },
+            )
         }
     }
 

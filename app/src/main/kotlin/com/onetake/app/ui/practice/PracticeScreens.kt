@@ -122,12 +122,15 @@ import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.system.rememberVoiceCommandEngine
 import java.io.File
 import com.onetake.app.ui.components.SFSymbols
-import com.onetake.app.ui.practice.components.PracticeTopBar
+import com.onetake.app.ui.components.SpotlightStageScaffold
+import com.onetake.app.ui.components.PrimaryStageCta
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Person
 import com.onetake.app.ui.practice.components.CompactDrillGrid
 import com.onetake.app.ui.practice.components.PracticeRepertoireList
 import com.onetake.app.ui.theme.OT
 
-// MARK: - 24 Practice (tab root) - System 2 Monolithic Studio
+// MARK: - 24 Practice (tab root) - Spotlight Stage Repertoire
 
 @Composable
 fun PracticeScreen(
@@ -137,86 +140,147 @@ fun PracticeScreen(
     val store = LocalAppStore.current
     val nav = LocalNavigator.current
     val c = OT.colors
-    val isRepertoireEmpty = store.practice.isEmpty()
-    val scrollState = rememberScrollState()
+    val activePiece = store.activePracticePiece
     var selectedPiece by remember { mutableStateOf<PracticePiece?>(null) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(c.bgCanvas)
-            .then(if (!isRepertoireEmpty) Modifier.verticalScroll(scrollState) else Modifier)
-            .statusBarsPadding()
-            .padding(horizontal = OT.dims.gutter)
-            .padding(bottom = TabBarClearance),
-    ) {
-        // 1. Top Action Bar: Bold "Practice" title + [ + Import ] + [ Avatar ]
-        PracticeTopBar(
-            onAddClick = { nav.push(Route.PracticeSetup) },
-            onAvatarClick = { onOpenProfile?.invoke() },
-        )
-
-        Spacer(Modifier.height(18.dp))
-
-        // 2. Compact 2x2 Drill Suite (Option 1) - ALWAYS visible on practice tab
-        CompactDrillGrid(
-            onSelectMode = { mode ->
-                when (mode) {
-                    LineLearningMode.FIRST_LETTER -> PrepPrefs.mode = PrepLineMode.FirstLetters
-                    LineLearningMode.MASK_AND_REVEAL -> PrepPrefs.mode = PrepLineMode.MaskAndReveal
-                    LineLearningMode.AUDIO_GAP -> PrepPrefs.mode = PrepLineMode.AudioGap
-                    LineLearningMode.HANDS_FREE_WALK -> Unit
-                }
-                val targetId = store.practice.firstOrNull()?.id ?: store.auditions.firstOrNull()?.id
-                if (targetId != null) {
-                    if (mode == LineLearningMode.HANDS_FREE_WALK) {
-                        nav.push(Route.AudioWalk(targetId, 0))
-                    } else {
-                        nav.push(Route.RunLines(targetId, 0))
-                    }
-                } else {
-                    nav.push(Route.PracticeSetup)
-                }
-            },
-        )
-
-        Spacer(Modifier.height(24.dp))
-
-        if (isRepertoireEmpty) {
-            // Centered empty state below Quick Drills with theater masks symbol
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    SpotlightStageScaffold(
+        modifier = modifier.padding(bottom = TabBarClearance),
+        showStageLight = true,
+        topTrailingContent = {
+            if (onOpenProfile != null) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(c.fillField)
+                        .clickable(role = Role.Button, onClick = onOpenProfile),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Icon(
-                        imageVector = SFSymbols.TheaterMasksFill,
-                        contentDescription = null,
-                        tint = Color(0xFF86868B),
-                        modifier = Modifier.size(44.dp),
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = "No Practice",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF86868B),
+                        imageVector = Icons.Filled.Person,
+                        contentDescription = "Profile",
+                        tint = c.labelPrimary,
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }
-        } else {
-            // 3. Inset Roster: Saved Scripts & Assigned Voice Partners
-            PracticeRepertoireList(
-                pieces = store.practice,
-                onPieceClick = { piece ->
-                    selectedPiece = piece
-                },
-                onAddScriptClick = { nav.push(Route.PracticeSetup) },
-            )
-        }
-    }
+        },
+        stageContent = {
+            if (activePiece != null) {
+                Text(
+                    text = "YOUR PRACTICE ON STAGE",
+                    style = OT.type.stageOverline,
+                    color = OT.colors.accentGold,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    text = activePiece.title,
+                    style = OT.type.heroStageTitle,
+                    color = OT.colors.labelPrimary,
+                )
+                Spacer(Modifier.height(6.dp))
+
+                val charPart = if (activePiece.character.isNotBlank()) "${activePiece.character} · " else ""
+                Text(
+                    text = "$charPart${activePiece.linesLearned}/${activePiece.linesTotal} lines",
+                    style = OT.type.callout,
+                    color = OT.colors.labelSecondary,
+                )
+                Spacer(Modifier.height(24.dp))
+
+                PrimaryStageCta(
+                    icon = Icons.AutoMirrored.Filled.ArrowForward,
+                    caption = "REHEARSE",
+                    onClick = {
+                        nav.push(Route.Prepare(activePiece.id, activePiece.sceneIndex ?: 0))
+                    },
+                )
+            } else {
+                Text(
+                    text = "PRACTICE STAGE",
+                    style = OT.type.stageOverline,
+                    color = OT.colors.accentGold,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    text = "Run a Scene",
+                    style = OT.type.heroStageTitle,
+                    color = OT.colors.labelPrimary,
+                )
+                Spacer(Modifier.height(6.dp))
+
+                Text(
+                    text = "Bring in sides or a monologue to rehearse and self-tape",
+                    style = OT.type.callout,
+                    color = OT.colors.labelSecondary,
+                )
+                Spacer(Modifier.height(24.dp))
+
+                PrimaryStageCta(
+                    icon = Icons.Filled.Add,
+                    caption = "ADD SCRIPT",
+                    onClick = { nav.push(Route.PracticeSetup) },
+                )
+            }
+        },
+        wingsContent = {
+            Text("IN THE WINGS", style = OT.type.stageOverline, color = OT.colors.accentGold)
+            Spacer(Modifier.height(8.dp))
+
+            if (store.practice.isNotEmpty()) {
+                store.practice.forEach { piece ->
+                    val isCurrent = piece.id == activePiece?.id
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp)
+                            .clickable { selectedPiece = piece }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                piece.title,
+                                style = OT.type.heroStageTitle.copy(fontSize = 18.sp, lineHeight = 22.sp),
+                                color = if (isCurrent) OT.colors.accentGold else OT.colors.labelPrimary,
+                            )
+                            val charPart = if (piece.character.isNotBlank()) "${piece.character} · " else ""
+                            Text(
+                                "$charPart${piece.linesLearned}/${piece.linesTotal} lines",
+                                style = OT.type.footnote,
+                                color = OT.colors.labelTertiary,
+                            )
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = OT.colors.labelTertiary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    OTDivider()
+                }
+            }
+
+            // + Add script row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .clickable { nav.push(Route.PracticeSetup) }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("+ Add script", style = OT.type.callout, color = OT.colors.accentGold)
+                Icon(Icons.Filled.Add, contentDescription = null, tint = OT.colors.accentGold, modifier = Modifier.size(18.dp))
+            }
+            OTDivider()
+        },
+    )
 
     selectedPiece?.let { piece ->
         PracticePieceActionSheet(

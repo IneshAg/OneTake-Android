@@ -263,16 +263,18 @@ object Persistence {
         put("takesRecorded", takesRecorded)
         auditionId?.let { put("auditionId", it) }
         sceneIndex?.let { put("sceneIndex", it) }
+        lastPracticed?.let { put("lastPracticed", it.format(isoFmt)) }
     }
 
     private fun JSONObject.toPracticePiece(): PracticePiece = PracticePiece(
-        id = getString("id"), title = getString("title"), detail = getString("detail"),
+        id = getString("id"), title = getString("title"), detail = optString("detail", ""),
         linesLearned = getInt("linesLearned"), linesTotal = getInt("linesTotal"),
         character = optString("character", ""),
         scene = optJSONObject("scene")?.toScriptScene(),
         takesRecorded = optInt("takesRecorded", 0),
         auditionId = optNullableString("auditionId"),
         sceneIndex = if (has("sceneIndex") && !isNull("sceneIndex")) getInt("sceneIndex") else null,
+        lastPracticed = optNullableString("lastPracticed")?.let { LocalDateTime.parse(it, isoFmt) },
     )
 
     private fun List<PracticePiece>.practiceToJson() = JSONArray(map { it.toJson() })

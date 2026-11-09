@@ -88,6 +88,9 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         get() = practiceState.value
         set(value) { practiceState.value = value; persist() }
 
+    val activePracticePiece: PracticePiece?
+        get() = practice.maxByOrNull { it.lastPracticed ?: LocalDateTime.MIN } ?: practice.firstOrNull()
+
     // Settings that change behaviour — persisted with everything else.
     private val slateAtStartState = mutableStateOf(true)
     /** Whether the exported tape opens with the slate clip. */

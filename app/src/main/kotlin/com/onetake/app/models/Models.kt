@@ -145,7 +145,7 @@ data class ScheduleItem(
 data class PracticePiece(
     val id: String = UUID.randomUUID().toString(),
     val title: String,
-    val detail: String,
+    val detail: String = "",
     val linesLearned: Int,
     val linesTotal: Int,
     val character: String = "",
@@ -155,6 +155,7 @@ data class PracticePiece(
     /** Which audition this piece's scene came from, so drills/Run Lines can find real scene content. */
     val auditionId: String? = null,
     val sceneIndex: Int? = null,
+    val lastPracticed: LocalDateTime? = null,
 )
 
 data class SlateInfo(

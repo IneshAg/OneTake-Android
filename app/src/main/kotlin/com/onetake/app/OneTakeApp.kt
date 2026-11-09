@@ -206,9 +206,15 @@ private fun RootTabs() {
                 exit = fadeOut() + slideOutVertically { it },
                 modifier = Modifier.align(Alignment.BottomCenter),
             ) {
+                val isSearchAvailable = com.onetake.app.ui.components.navbar.LiquidGlassNavBarDefaults.isSearchAvailable(
+                    tab = navigator.tab,
+                    hasAuditions = store.auditions.isNotEmpty(),
+                    hasPractice = store.practice.isNotEmpty(),
+                )
                 com.onetake.app.ui.components.navbar.LiquidGlassNavBar(
                     selected = navigator.tab,
                     onSelect = navigator::select,
+                    isSearchAvailable = isSearchAvailable,
                 )
             }
 

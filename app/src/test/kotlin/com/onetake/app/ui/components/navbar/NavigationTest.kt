@@ -41,4 +41,18 @@ class NavigationTest {
         org.junit.Assert.assertFalse("ShootSetup must be pruned", routeClassNames.contains("ShootSetup"))
         org.junit.Assert.assertFalse("TapeCheck must be pruned", routeClassNames.contains("TapeCheck"))
     }
+
+    @Test
+    fun testSearchOrbAvailabilityAcrossTabs() {
+        org.junit.Assert.assertFalse("Auditions tab with no auditions must hide search orb",
+            LiquidGlassNavBarDefaults.isSearchAvailable(AppTab.Auditions, hasAuditions = false, hasPractice = true))
+        org.junit.Assert.assertTrue("Auditions tab with active auditions must show search orb",
+            LiquidGlassNavBarDefaults.isSearchAvailable(AppTab.Auditions, hasAuditions = true, hasPractice = false))
+        org.junit.Assert.assertFalse("Practice tab with no practice pieces must hide search orb",
+            LiquidGlassNavBarDefaults.isSearchAvailable(AppTab.Practice, hasAuditions = true, hasPractice = false))
+        org.junit.Assert.assertTrue("Practice tab with practice pieces must show search orb",
+            LiquidGlassNavBarDefaults.isSearchAvailable(AppTab.Practice, hasAuditions = false, hasPractice = true))
+        org.junit.Assert.assertTrue("Search tab must always show search orb",
+            LiquidGlassNavBarDefaults.isSearchAvailable(AppTab.Search, hasAuditions = false, hasPractice = false))
+    }
 }

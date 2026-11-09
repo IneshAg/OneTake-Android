@@ -3,6 +3,7 @@ package com.onetake.app.ui.components.navbar
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -72,6 +74,7 @@ import com.onetake.app.AppTab
 import com.onetake.app.ui.components.GLASS_EDGE_COLOR
 import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.GlassSpring
+import com.onetake.app.ui.components.GlassSpringDp
 import com.onetake.app.ui.components.LocalLiquidGlassEnabled
 import com.onetake.app.ui.components.PILL_INSET
 import com.onetake.app.ui.components.SQUASH
@@ -150,10 +153,20 @@ private fun LiquidSelectionPill(
     )
 }
 
+object LiquidGlassNavBarDefaults {
+    fun isSearchAvailable(tab: AppTab, hasAuditions: Boolean, hasPractice: Boolean): Boolean {
+        return when (tab) {
+            AppTab.Auditions -> hasAuditions
+            AppTab.Practice -> hasPractice
+            AppTab.Search -> true
+        }
+    }
+}
+
 /**
  * Ultra-Fluid Liquid Glass Navigation Bar:
- * - Grouped pill holding the primary 4 tabs on the left.
- * - Standalone circular Search button on the right.
+ * - Grouped pill holding the primary 2 tabs on the left.
+ * - Standalone circular Search button on the right (context-aware receding).
  * - Real-time backdrop blur and specular highlights via liquidGlass.
  * - Compose-native spring with organic liquid stretch & squash and zero latency.
  * - Single persistent selection surface: zero pop or visual hitch on landing.
@@ -164,6 +177,7 @@ fun LiquidGlassNavBar(
     selected: AppTab,
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
+    isSearchAvailable: Boolean = true,
 ) {
     val pillShape = remember { RoundedCornerShape(percent = 50) }
     val circleShape = remember { CircleShape }
@@ -243,15 +257,15 @@ fun LiquidGlassNavBar(
         modifier = modifier
             .fillMaxWidth()
             .windowInsetsPadding(floatingBarInsets)
-            .padding(start = 20.dp, end = 20.dp, bottom = 8.dp)
-            .height(62.dp),
+            .padding(bottom = 8.dp)
+            .height(60.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.Center,
     ) {
         // ── 1. Grouped Primary Tabs Pill ──────────────────────────────────────
         Box(
             modifier = Modifier
-                .weight(1f)
+                .width(204.dp)
                 .fillMaxHeight(),
         ) {
             Box(
@@ -395,7 +409,13 @@ fun LiquidGlassNavBar(
             }
         }
 
-        // ── 2. Standalone Search Circular Button ──────────────────────────────
+        // ── 2. Standalone Search Circular Button (Context-Aware Receding Orb) ──
+        val searchTargetWidth = if (isSearchAvailable) 60.dp else 0.dp
+        val animatedWidth by animateDpAsState(targetValue = searchTargetWidth, animationSpec = GlassSpringDp, label = "searchWidth")
+        val searchAlpha by animateFloatAsState(targetValue = if (isSearchAvailable) 1f else 0f, animationSpec = tween(220), label = "searchAlpha")
+        val searchTranslateX by animateDpAsState(targetValue = if (isSearchAvailable) 0.dp else (-70).dp, animationSpec = GlassSpringDp, label = "searchTranslateX")
+        val searchScaleProgress by animateFloatAsState(targetValue = if (isSearchAvailable) 1f else 0.35f, animationSpec = GlassSpring, label = "searchScaleProgress")
+
         val searchScale by animateFloatAsState(
             targetValue = if (isSearchSelected) 1.08f else 1f,
             animationSpec = GlassSpring,
@@ -416,58 +436,67 @@ fun LiquidGlassNavBar(
             label = "searchBgAlpha",
         )
 
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .aspectRatio(1f)
-                .clip(circleShape)
-                .liquidGlass(circleShape, fallbackColor = if (isSearchSelected) c.fillField else barBg)
-                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, circleShape)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    role = Role.Tab,
-                ) {
-                    if (!isSearchSelected) {
-                        haptics.play(Haptic.Select)
-                        currentOnSelect(AppTab.Search)
+        if (animatedWidth > 0.dp) {
+            Spacer(modifier = Modifier.width((10 * (animatedWidth / 60.dp)).dp))
+            Box(
+                modifier = Modifier
+                    .size(animatedWidth)
+                    .graphicsLayer {
+                        translationX = searchTranslateX.toPx()
+                        scaleX = searchScaleProgress
+                        scaleY = searchScaleProgress
+                        alpha = searchAlpha
                     }
+                    .clip(circleShape)
+                    .liquidGlass(circleShape, fallbackColor = if (isSearchSelected) c.fillField else barBg)
+                    .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, circleShape)
+                    .clickable(
+                        enabled = isSearchAvailable,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Tab,
+                    ) {
+                        if (!isSearchSelected) {
+                            haptics.play(Haptic.Select)
+                            currentOnSelect(AppTab.Search)
+                        }
+                    }
+                    .semantics {
+                        contentDescription = "Search"
+                        this.selected = isSearchSelected
+                        this.role = Role.Tab
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (searchBgAlpha > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(4.dp)
+                            .graphicsLayer { alpha = searchBgAlpha }
+                            .clip(circleShape)
+                            .background(indicatorColor)
+                            .then(
+                                if (useGlass) {
+                                    Modifier.border(0.75.dp, Color.White.copy(alpha = 0.20f), circleShape)
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                    )
                 }
-                .semantics {
-                    contentDescription = "Search"
-                    this.selected = isSearchSelected
-                    this.role = Role.Tab
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            if (searchBgAlpha > 0f) {
-                Box(
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = null,
+                    tint = searchTint,
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(4.dp)
-                        .graphicsLayer { alpha = searchBgAlpha }
-                        .clip(circleShape)
-                        .background(indicatorColor)
-                        .then(
-                            if (useGlass) {
-                                Modifier.border(0.75.dp, Color.White.copy(alpha = 0.20f), circleShape)
-                            } else {
-                                Modifier
-                            }
-                        ),
+                        .size(24.dp)
+                        .graphicsLayer {
+                            scaleX = searchScale
+                            scaleY = searchScale
+                        },
                 )
             }
-            Icon(
-                imageVector = Icons.Filled.Search,
-                contentDescription = null,
-                tint = searchTint,
-                modifier = Modifier
-                    .size(24.dp)
-                    .graphicsLayer {
-                        scaleX = searchScale
-                        scaleY = searchScale
-                    },
-            )
         }
     }
 }

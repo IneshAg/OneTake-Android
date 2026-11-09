@@ -68,6 +68,7 @@ val floatingBarInsets: WindowInsets
 
 /** Spring the selection indicator rides on: damping 0.76, stiffness 380. */
 val GlassSpring = spring<Float>(dampingRatio = 0.76f, stiffness = 380f)
+val GlassSpringDp = spring<androidx.compose.ui.unit.Dp>(dampingRatio = 0.76f, stiffness = 380f)
 
 /** How far the indicator elongates along its travel (18%). */
 const val STRETCH = 0.18f

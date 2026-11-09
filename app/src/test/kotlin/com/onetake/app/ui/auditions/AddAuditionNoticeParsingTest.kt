@@ -325,4 +325,30 @@ class AddAuditionNoticeParsingTest {
         assertFalse("Landscape must not trigger: ${f.asks}", "Landscape" in f.asks)
         assertFalse("Full length must not trigger: ${f.asks}", "Full length" in f.asks)
     }
+
+    @Test
+    fun testZeroSceneCastingNoticeGeneratesAddScenePrompt() {
+        val noticeWithoutScenes = """
+            CASTING CALL: COMMERCIAL
+            Project: Sunshine Juice
+            Role: Runner
+            Due: Tomorrow 10am
+            Please submit front and side headshots and a 30s slate.
+        """.trimIndent()
+
+        val fields = NoticeParser.parse(noticeWithoutScenes)
+        assertEquals("Sunshine Juice", fields.project)
+        assertEquals("Runner", fields.role)
+        assertEquals(0, fields.sceneCount)
+
+        val draft = AddDraft(
+            project = fields.project,
+            role = fields.role,
+            scenes = fields.sceneCount,
+            asks = listOf("Front and side headshots", "30s slate")
+        )
+        val audition = draft.makeAudition()
+        assertTrue("Audition with 0 parsed scenes must have empty scenes list", audition.scenes.isEmpty())
+        org.junit.Assert.assertNull("No scene piece when scenes count is 0", audition.pieces.firstOrNull { it.kind == PieceKind.Scene })
+    }
 }

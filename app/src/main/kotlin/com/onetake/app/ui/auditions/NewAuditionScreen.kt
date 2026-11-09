@@ -38,6 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.outlined.AccessibilityNew
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.Link
@@ -119,8 +121,12 @@ import com.onetake.app.ui.components.LargeTitle
 import com.onetake.app.ui.components.ListRow
 import com.onetake.app.ui.components.OTDivider
 import com.onetake.app.ui.components.PrimaryButton
+import com.onetake.app.ui.components.PrimaryStageCta
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.SheetHeader
+import com.onetake.app.ui.components.SpotlightStageScaffold
+import com.onetake.app.ui.components.StageLightBar
+import com.onetake.app.ui.system.clipboardText
 import com.onetake.app.ui.system.fileProviderUri
 import com.onetake.app.ui.system.rememberHaptics
 import com.onetake.app.ui.theme.OT
@@ -138,6 +144,193 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+
+enum class AddAuditionSource {
+    Paste,
+    Scan,
+    Photo,
+    PdfOrFile,
+    Share,
+    Type,
+}
+
+internal fun addReviewTitle(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "Audition details"
+    else -> "Here's what they want"
+}
+
+internal fun addReviewSubtitle(source: AddAuditionSource, asksCount: Int): String {
+    val count = asksCount + 1
+    val items = if (count == 1) "1 item" else "$count items"
+    return when (source) {
+        AddAuditionSource.Type -> "Set up your role, deadline, and deliverables, then save."
+        AddAuditionSource.Scan -> "$items found from your scan. Tap any line to edit, then save."
+        AddAuditionSource.PdfOrFile -> "$items found in the PDF. Tap any line to edit, then save."
+        AddAuditionSource.Photo -> "$items found in the image. Tap any line to edit, then save."
+        AddAuditionSource.Paste, AddAuditionSource.Share -> "$items found in the notice. Tap any line to edit, then save."
+    }
+}
+
+internal fun addAsksSectionTitle(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "What to prepare"
+    else -> "They asked for"
+}
+
+internal fun addEditHeaderTitle(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "What to prepare"
+    else -> "What they want"
+}
+
+internal fun addEditSubtitle(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "Customize each deliverable and step. Only what's listed here becomes a step in your audition."
+    AddAuditionSource.Scan -> "OneTake read this from your scan. It can miss things — add, remove or change any step. Only what's here becomes a step."
+    AddAuditionSource.PdfOrFile -> "OneTake read this from the PDF. It can miss things — add, remove or change any step. Only what's here becomes a step."
+    AddAuditionSource.Photo -> "OneTake read this from the image. It can miss things — add, remove or change any step. Only what's here becomes a step."
+    AddAuditionSource.Paste, AddAuditionSource.Share -> "OneTake read this from the notice. It can miss things — add, remove or change any step. Only what's here becomes a step."
+}
+
+internal fun addEditAddButtonLabel(source: AddAuditionSource): String = when (source) {
+    AddAuditionSource.Type -> "Add a deliverable"
+    else -> "Add something they asked for"
+}
+
+/** Rule-based and ScriptParser-backed casting notice & sides parser. */
+internal data class AddDraft(
+    val project: String = "",
+    val role: String = "",
+    val projectType: String = "Feature film",
+    val roleSize: String = "Lead",
+    val castingOffice: String = "",
+    val notes: String = "",
+    val due: LocalDateTime? = null,
+    val scenes: Int = 1,
+    val asks: List<String> = emptyList(),
+    val destination: Destination = Destination.ActorsAccess,
+    val rawScriptText: String = "",
+    val source: AddAuditionSource = AddAuditionSource.Paste,
+    val kind: DocumentKind = DocumentKind.CastingNotice,
+    val detectedCharacters: List<String> = emptyList(),
+    val allAvailableRoles: List<String> = emptyList(),
+) {
+    fun makeAudition(hasHeadshot: Boolean = false, hasProfiles: Boolean = false): Audition {
+        val effectiveRole = role
+            .ifBlank { if (detectedCharacters.size == 1) detectedCharacters.first() else "" }
+            .ifBlank { "Role" }
+
+        val finalScenes: List<ScriptScene> = if (scenes <= 0) {
+            emptyList()
+        } else {
+            val extractedChars = if (rawScriptText.isNotBlank()) ScriptParser.extractCharacters(rawScriptText) else emptyList()
+            val canParseScript = rawScriptText.isNotBlank() && (
+                extractedChars.isNotEmpty() ||
+                    kind == DocumentKind.SidesOnly ||
+                    source == AddAuditionSource.Type
+                )
+            val parsedScenes = if (!canParseScript) {
+                emptyList()
+            } else {
+                ScriptParser.parseScenes(rawScriptText, myCharacter = effectiveRole)
+                    .filter { it.lines.isNotEmpty() }
+            }
+            parsedScenes.ifEmpty {
+                (1..scenes).map { ScriptScene.placeholder(it, effectiveRole) }
+            }
+        }
+
+        val needsProfiles = "Both profiles" in asks
+        val pieces = mutableListOf<Piece>()
+        val hasPhotoAsk = asks.isEmpty() || asks.any {
+            it.equals("Headshot", ignoreCase = true) ||
+            Regex("""(?i)\b(?:recent\s+pictures?|recent\s+photos?|photos?|photographs?|headshots?|pictures?)\b""").containsMatchIn(it)
+        }
+        val hasSlateAsk = asks.isEmpty() || asks.any {
+            it.equals("Slate", ignoreCase = true) || it.equals("Slate first", ignoreCase = true) ||
+            Regex("""(?i)\b(?:detailed\s+introduction|intro\s+video|introduction|audition\s+profile|slate|ident|idents)\b""").containsMatchIn(it)
+        }
+        if (hasPhotoAsk) {
+            pieces.add(
+                Piece(
+                    kind = PieceKind.Headshot,
+                    title = "Headshot",
+                    detail = if (needsProfiles) "Front + profiles" else "Front",
+                    isDone = if (needsProfiles) (hasHeadshot && hasProfiles) else hasHeadshot,
+                )
+            )
+        }
+        if (hasSlateAsk) {
+            pieces.add(Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false))
+        }
+        if ("Full length" in asks) {
+            pieces.add(Piece(kind = PieceKind.FullLength, title = "Full length", detail = "Head to feet", isDone = false))
+        }
+        for (scene in finalScenes) {
+            pieces.add(Piece(kind = PieceKind.Scene, title = scene.title, detail = "", isDone = false))
+        }
+
+        return Audition(
+            project = project.ifBlank { "Untitled audition" },
+            projectType = projectType.ifBlank { "Feature film" },
+            role = effectiveRole,
+            roleSize = roleSize.ifBlank { "Lead" },
+            castingOffice = castingOffice.trim(),
+            notes = notes.trim(),
+            due = due ?: LocalDateTime.now().plusDays(3),
+            asks = asks,
+            pieces = pieces,
+            scenes = finalScenes,
+            destination = destination,
+            status = AuditionStatus.Due,
+        )
+    }
+}
+
+/** Notice → draft. The rules live in [NoticeParser] (pure, unit-tested). */
+internal fun addParseNotice(text: String): AddDraft {
+    val f = NoticeParser.parse(text)
+    val autoRole = f.role.ifEmpty {
+        if (f.detectedCharacters.size == 1) f.detectedCharacters.first() else ""
+    }
+    return AddDraft(
+        project = f.project,
+        role = autoRole,
+        projectType = f.projectType.ifBlank { "Feature film" },
+        roleSize = f.roleSize.ifBlank { "Lead" },
+        castingOffice = f.castingOffice,
+        notes = f.notes,
+        due = f.due,
+        scenes = if (f.kind == DocumentKind.CastingNotice && f.scriptText.isBlank()) 0 else maxOf(0, f.sceneCount),
+        asks = f.asks,
+        destination = f.destination,
+        rawScriptText = f.scriptText,
+        kind = f.kind,
+        detectedCharacters = f.detectedCharacters,
+        allAvailableRoles = f.allAvailableRoles,
+    )
+}
+
+internal fun addDraftFromNoticeFields(f: NoticeFields, source: AddAuditionSource = AddAuditionSource.Paste): AddDraft {
+    val autoRole = f.role.ifEmpty {
+        if (f.allAvailableRoles.size == 1) f.allAvailableRoles.first()
+        else if (f.detectedCharacters.size == 1) f.detectedCharacters.first() else ""
+    }
+    return AddDraft(
+        project = f.project,
+        role = autoRole,
+        projectType = f.projectType.ifBlank { "Feature film" },
+        roleSize = f.roleSize.ifBlank { "Lead" },
+        castingOffice = f.castingOffice,
+        notes = f.notes,
+        due = f.due,
+        scenes = if (f.kind == DocumentKind.CastingNotice && f.scriptText.isBlank()) 0 else maxOf(0, f.sceneCount),
+        asks = f.asks,
+        destination = f.destination,
+        rawScriptText = f.scriptText,
+        source = source,
+        kind = f.kind,
+        detectedCharacters = f.detectedCharacters,
+        allAvailableRoles = f.allAvailableRoles,
+    )
+}
 
 private enum class AddStep { Reading, MissingDate, Review, EditAsks, CouldNotRead }
 
@@ -393,6 +586,10 @@ fun NewAuditionScreen(onClose: () -> Unit) {
                 onChange = { draft = it },
                 onScanAnotherPage = scanAnotherPage,
                 onAddAnotherPhoto = addAnotherPhoto,
+                onPaste = { pasted ->
+                    notice = pasted
+                    path = listOf(AddStep.Reading)
+                },
                 onBack = { requestBackOrExit() },
                 onEdit = { path = path + AddStep.EditAsks },
                 onSave = { save() },
@@ -452,6 +649,44 @@ fun NewAuditionScreen(onClose: () -> Unit) {
 }
 
 // MARK: - Workflow Steps
+
+@Composable
+internal fun ModelDownloadStatusPill(
+    status: ModelStatus,
+    modifier: Modifier = Modifier,
+) {
+    val downloading = status as? ModelStatus.Downloading ?: return
+    val c = OT.colors
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.accentSoft)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        CircularProgressIndicator(
+            progress = { (downloading.progressPercent / 100f).coerceIn(0f, 1f) },
+            strokeWidth = 2.5.dp,
+            color = c.accent,
+            modifier = Modifier.size(16.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "Downloading On-Device AI Engine (${downloading.progressPercent}%) — using fast parser for now",
+                style = OT.type.headline.copy(fontSize = 13.sp),
+                color = c.labelPrimary,
+            )
+            Text(
+                text = "${downloading.downloadedMb} MB / ${downloading.totalMb} MB",
+                style = OT.type.caption,
+                color = c.labelSecondary,
+            )
+        }
+    }
+}
 
 @Composable
 private fun AddReadingStep(
@@ -764,11 +999,13 @@ private fun AddReviewStep(
     onChange: (AddDraft) -> Unit,
     onScanAnotherPage: () -> Unit,
     onAddAnotherPhoto: () -> Unit,
+    onPaste: (String) -> Unit,
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onSave: () -> Unit,
 ) {
     val c = OT.colors
+    val context = LocalContext.current
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
 
@@ -781,21 +1018,40 @@ private fun AddReviewStep(
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = onBack)
-            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .border(1.dp, Color(0xFF2A2723), CircleShape)
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Close",
+                    tint = c.labelSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                StageLightBar(isPulsing = false)
+                Text("NEW AUDITION", style = OT.type.navCaption, color = c.labelSecondary)
+            }
             Box(
                 Modifier
-                    .heightIn(min = 40.dp)
+                    .heightIn(min = 36.dp)
                     .clip(CircleShape)
                     .background(c.fillField)
                     .clickable(role = Role.Button, onClick = onEdit)
                     .padding(horizontal = 16.dp),
                 contentAlignment = Alignment.Center,
-            ) { Text("Edit", style = OT.type.subhead, color = c.labelPrimary) }
-            Spacer(Modifier.width(8.dp))
+            ) { Text("Edit", style = OT.type.actionPill, color = c.accentGold) }
         }
         Column(
             Modifier
@@ -1126,8 +1382,77 @@ private fun AddReviewStep(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = OT.dims.gutter, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            PrimaryButton("Save audition", onClick = onSave)
+            PrimaryStageCta(
+                icon = Icons.Filled.Check,
+                caption = "LOOKS RIGHT",
+                onClick = onSave,
+            )
+
+            // Bottom Ingestion Bar
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "OR BRING IT IN ANOTHER WAY",
+                    style = OT.type.stageOverline,
+                    color = c.labelTertiary,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .clip(CircleShape)
+                            .background(c.fillField)
+                            .clickable {
+                                val text = runCatching { clipboardText(context) }.getOrNull().orEmpty()
+                                if (text.isNotBlank()) onPaste(text)
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Default.ContentPaste, contentDescription = null, tint = c.accent, modifier = Modifier.size(16.dp))
+                            Text("Paste", style = OT.type.actionPill, color = c.labelPrimary)
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .clip(CircleShape)
+                            .background(c.fillField)
+                            .clickable { onScanAnotherPage() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Outlined.DocumentScanner, contentDescription = null, tint = c.accent, modifier = Modifier.size(16.dp))
+                            Text("Scan", style = OT.type.actionPill, color = c.labelPrimary)
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .clip(CircleShape)
+                            .background(c.fillField)
+                            .clickable { onAddAnotherPhoto() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Outlined.Folder, contentDescription = null, tint = c.accent, modifier = Modifier.size(16.dp))
+                            Text("File", style = OT.type.actionPill, color = c.labelPrimary)
+                        }
+                    }
+                }
+            }
         }
     }
 

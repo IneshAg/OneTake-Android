@@ -68,6 +68,9 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
@@ -128,6 +131,7 @@ import com.onetake.app.ui.components.GLASS_EDGE_COLOR
 import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.components.PlainButton
 import com.onetake.app.ui.components.PrimaryButton
+import com.onetake.app.ui.components.PrimaryStageCta
 import com.onetake.app.ui.components.SecondaryButton
 import com.onetake.app.ui.system.KeepScreenOn
 import com.onetake.app.ui.system.VoiceCommand
@@ -431,17 +435,18 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
             ShootStage.Scene -> {
                 lastTakeSeconds = seconds
                 lastSavedKind = PieceKind.Scene
+                val isFirstTake = store.takes.none { it.auditionId == auditionId && (it.sceneIndex ?: 0) == sceneIndex }
                 val take = Take(
                     number = takeNumber,
                     durationSeconds = seconds,
                     recordedAt = LocalDateTime.now(),
-                    isCircled = false,
+                    isCircled = isFirstTake,
                     notes = emptyList(),
                     auditionId = auditionId,
                     sceneIndex = sceneIndex,
                 )
                 camera.stopRecording { saveTake(it, take) }
-                stage = ShootStage.Saved
+                nav.closeCamera(then = Route.Takes(auditionId))
             }
             else -> camera.stopRecording()
         }
@@ -650,142 +655,53 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                 .navigationBarsPadding()
                 .padding(horizontal = OT.dims.gutter),
         ) {
-            // Top bar
+            // Top HUD Bar: [READY] / [● REC 0:42] · SCENE n · TAKE t · camera flip
             Row(
                 Modifier.fillMaxWidth().padding(top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                CircleIconButton(Icons.Filled.Close, "Close", onClick = { nav.closeCamera() }, onDark = true)
-                Spacer(Modifier.weight(1f))
-
-                // Voice trigger toggle & indicator
-                if (stage != ShootStage.Check && voiceCommander.available) {
-                    Row(
-                        Modifier
-                            .heightIn(min = 32.dp)
-                            .clip(CircleShape)
-                            .background(OT.camera.glass)
-                            .clickable { voiceEnabled = !voiceEnabled }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Icon(
-                            if (voiceEnabled) Icons.Filled.Mic else Icons.Filled.MicOff,
-                            contentDescription = if (voiceEnabled) "Voice commands on" else "Voice commands off",
-                            tint = if (voiceEnabled && voiceCommander.isListening) OT.colors.accent else if (voiceEnabled) Color.White else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Text(
-                            if (voiceEnabled) "Voice" else "Muted",
-                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                            color = if (voiceEnabled) Color.White else Color.White.copy(alpha = 0.5f),
-                        )
-                    }
-                }
-
-                // Countdown Timer selector
-                if (!recording && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
-                    Box {
-                        Row(
-                            Modifier
-                                .heightIn(min = 32.dp)
-                                .clip(CircleShape)
-                                .background(OT.camera.glass)
-                                .clickable { if (countdown == null) showTimerMenu = true }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Icon(
-                                Icons.Outlined.Timer,
-                                contentDescription = "Timer",
-                                tint = if (timerSeconds > 0) OT.colors.accent else Color.White,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Text(
-                                if (timerSeconds == 0) "None" else "${timerSeconds}s",
-                                style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold),
-                                color = Color.White,
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showTimerMenu,
-                            onDismissRequest = { showTimerMenu = false },
-                            modifier = Modifier
-                                .background(Color(0xF01A1A1E))
-                                .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, RoundedCornerShape(16.dp)),
-                        ) {
-                            val timerOptions = listOf(
-                                0 to "None (instant)",
-                                3 to "3s (default)",
-                                5 to "5s",
-                                10 to "10s",
-                                15 to "15s",
-                            )
-                            timerOptions.forEach { (sec, label) ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(
-                                            Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically,
-                                        ) {
-                                            Text(
-                                                label,
-                                                style = OT.type.body,
-                                                color = if (timerSeconds == sec) OT.colors.accent else Color.White,
-                                            )
-                                            if (timerSeconds == sec) {
-                                                Spacer(Modifier.width(12.dp))
-                                                Icon(Icons.Filled.Check, null, tint = OT.colors.accent, modifier = Modifier.size(18.dp))
-                                            }
-                                        }
-                                    },
-                                    onClick = {
-                                        timerSeconds = sec
-                                        showTimerMenu = false
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Stage & Duration Pill
+                // Recording status pill
                 Row(
-                    Modifier.heightIn(min = 32.dp).clip(CircleShape).background(OT.camera.glass).padding(horizontal = 12.dp),
+                    Modifier
+                        .heightIn(min = 32.dp)
+                        .clip(CircleShape)
+                        .background(OT.camera.glass)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    if (recording) Box(Modifier.size(8.dp).clip(CircleShape).background(OT.camera.recRed))
-                    Text(
-                        pillText,
-                        style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
-                        color = if (recording) OT.camera.recRed else Color.White,
-                        maxLines = 1,
-                    )
-                }
-
-                if (recording) {
-                    Row(
-                        Modifier
-                            .heightIn(min = 32.dp)
-                            .clip(CircleShape)
-                            .background(OT.camera.glass)
-                            .padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Icon(
-                            Icons.Filled.GraphicEq,
-                            contentDescription = "Sound recording",
-                            tint = if (liveTapeCheck.sound == LiveTapeCheckEngine.SoundStatus.Clipping) OT.colors.warning else OT.colors.success,
-                            modifier = Modifier.size(14.dp),
+                    if (recording) {
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(OT.camera.recRed))
+                        Text(
+                            "REC ${formatDuration(camera.elapsed.toInt())}",
+                            style = OT.type.footnote.copy(fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
+                            color = Color.White,
+                        )
+                    } else {
+                        Text(
+                            "READY",
+                            style = OT.type.stageOverline,
+                            color = OT.colors.accentGold,
                         )
                     }
                 }
+
+                // Centered: SCENE ${n} · TAKE ${t}
+                val currentSceneNum = scene?.number ?: (sceneIndex + 1)
+                Text(
+                    text = "SCENE $currentSceneNum · TAKE $takeNumber",
+                    style = OT.type.stageOverline,
+                    color = OT.colors.accentGold,
+                )
+
+                // Right: Circular camera flip button
+                CircleIconButton(
+                    Icons.Filled.Cameraswitch,
+                    "Switch camera",
+                    onClick = { front = !front },
+                    onDark = true,
+                )
             }
             Spacer(Modifier.height(12.dp))
 
@@ -1045,46 +961,64 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                 Spacer(Modifier.height(8.dp))
             }
 
-            // HUD
+            // Voice command pills: "Action", "Cut", "Again", "Line?"
             if (stage != ShootStage.Saved && stage != ShootStage.SlateDone) {
-                val minutes = remember { (context.filesDir.usableSpace / (130L * 1024 * 1024)).coerceAtLeast(0) }
                 Row(
                     Modifier.align(Alignment.CenterHorizontally),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (voiceEnabled && micPermissionGranted && (stage == ShootStage.Slate || stage == ShootStage.FullLength || stage == ShootStage.Scene)) {
-                        ShootChip(
-                            icon = Icons.Filled.Mic,
-                            text = if (recording) "Say 'Cut'" else "Say 'Action'",
-                            tint = if (voiceCommander.isListening) OT.colors.accent else Color.White,
-                        )
-                    }
-                    ShootChip(
-                        icon = if (exposureLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
-                        text = if (exposureLocked) "Exposure locked" else "Lock exposure",
-                        tint = if (exposureLocked) DarkOT.warning else Color.White,
-                        modifier = Modifier.clickable(role = Role.Button) {
-                            val nextLock = !exposureLocked
-                            val face = liveTapeCheck.faceBoxNorm
-                            camera.setExposureLocked(
-                                locked = nextLock,
-                                focusCenterNormX = face?.centerX ?: 0.5f,
-                                focusCenterNormY = face?.centerY ?: 0.36f,
+                    val voiceCmds = listOf("Action", "Cut", "Again", "Line?")
+                    val heard = voiceCommander.lastHeard?.lowercase().orEmpty()
+                    voiceCmds.forEach { cmd ->
+                        val isMatched = heard.contains(cmd.lowercase().removeSuffix("?"))
+                        Box(
+                            Modifier
+                                .clip(CircleShape)
+                                .background(if (isMatched) OT.colors.accentGold.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.5f))
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isMatched) OT.colors.accentGold else OT.colors.borderMuted,
+                                    shape = CircleShape,
+                                )
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                cmd,
+                                style = OT.type.caption.copy(fontWeight = FontWeight.SemiBold),
+                                color = if (isMatched) OT.colors.accentGold else OT.colors.labelSecondary,
                             )
-                            haptics.tick()
-                        },
-                    )
-                    ShootChip(Icons.Filled.Storage, "$minutes min")
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))
 
-            // Bottom controls — fixed height so nothing jumps between stages.
+            // Bottom controls: VU meter on left, PrimaryStageCta in center
             Row(
                 Modifier.fillMaxWidth().height(104.dp).padding(bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Spacer(Modifier.width(48.dp))
+                // Left: Live audio VU level meter
+                Row(
+                    modifier = Modifier.width(60.dp).padding(start = 8.dp),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    val normLevel = ((liveTapeCheck.audioLevelDb + 50f) / 50f).coerceIn(0.1f, 1f)
+                    val barCount = 4
+                    for (i in 0 until barCount) {
+                        val active = normLevel >= (i + 1) / barCount.toFloat()
+                        Box(
+                            Modifier
+                                .width(6.dp)
+                                .height((8 + i * 5).dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(if (active) (if (liveTapeCheck.sound == LiveTapeCheckEngine.SoundStatus.Clipping) OT.colors.warning else OT.colors.accentGold) else OT.colors.borderMuted)
+                        )
+                    }
+                }
+
                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     when (stage) {
                         ShootStage.Check -> PrimaryButton(
@@ -1111,22 +1045,22 @@ fun ShootFlowScreen(auditionId: String, initialScene: Int? = null) {
                         )
                         ShootStage.SlateDone, ShootStage.Saved -> Unit
                         else -> {
-                            ShootRecordButton(isRecording = recording) {
-                                when {
-                                    countdown != null -> cancelCountdown()
-                                    recording -> cut()
-                                    else -> roll()
+                            PrimaryStageCta(
+                                icon = if (recording) Icons.Filled.Stop else Icons.Filled.RadioButtonChecked,
+                                isRecord = true,
+                                onClick = {
+                                    when {
+                                        countdown != null -> cancelCountdown()
+                                        recording -> cut()
+                                        else -> roll()
+                                    }
                                 }
-                            }
+                            )
                         }
                     }
                 }
-                CircleIconButton(
-                    Icons.Filled.Cameraswitch,
-                    "Switch camera",
-                    onClick = { if (!recording && countdown == null) front = !front },
-                    onDark = true,
-                )
+
+                Spacer(Modifier.width(60.dp))
             }
         }
     }
@@ -1492,25 +1426,34 @@ private fun ShootScenePrompt(
     onToggleAutoPace: () -> Unit = {},
     onTap: () -> Unit,
 ) {
-    val readerColor = DarkOT.reader
     Column(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(Color.Black.copy(alpha = 0.55f))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.Black.copy(alpha = 0.5f),
+                        Color.Black.copy(alpha = 0.85f),
+                    )
+                )
+            )
             .clickable(onClickLabel = "Next line", role = Role.Button, onClick = onTap)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        val eyebrowStyle = OT.type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp)
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(Modifier.weight(1f)) {
-                if (eyebrow != null) Text(eyebrow.uppercase(), style = eyebrowStyle, color = OT.camera.label2)
-                Text(character.uppercase(), style = eyebrowStyle, color = if (mine) OT.camera.label2 else readerColor)
+                if (eyebrow != null) Text(eyebrow.uppercase(), style = OT.type.stageOverline, color = OT.colors.accentGold)
+                Text(
+                    character.uppercase(),
+                    style = OT.type.stageOverline,
+                    color = if (mine) OT.colors.accentGold else OT.colors.labelSecondary
+                )
             }
             if (autoPace != null) {
                 Box(
@@ -1529,16 +1472,20 @@ private fun ShootScenePrompt(
             }
         }
         Text(
-            text,
-            fontSize = 24.sp,
-            lineHeight = 30.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (mine) Color.White else Color.White.copy(alpha = 0.7f),
+            text = text,
+            style = if (mine) OT.type.activeDialogue else OT.type.dimmedCue.copy(fontSize = 26.sp, lineHeight = 32.sp),
+            color = if (mine) OT.colors.labelPrimary else OT.colors.labelSecondary,
         )
         if (next != null) {
             Spacer(Modifier.height(4.dp))
-            Text(next.first.uppercase(), style = eyebrowStyle, color = Color.White.copy(alpha = 0.4f))
-            Text(next.second, style = OT.type.footnote, color = Color.White.copy(alpha = 0.4f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(next.first.uppercase(), style = OT.type.stageOverline, color = OT.colors.labelTertiary)
+            Text(
+                next.second,
+                style = OT.type.dimmedCue,
+                color = OT.colors.labelTertiary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

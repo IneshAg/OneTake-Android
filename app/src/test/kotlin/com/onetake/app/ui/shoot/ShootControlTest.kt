@@ -1,8 +1,11 @@
 package com.onetake.app.ui.shoot
 
 import com.onetake.app.ui.profile.HeadshotVoiceCommander
+import com.onetake.app.ui.system.VoiceCommand
+import com.onetake.app.ui.system.VoiceCommandMatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -275,5 +278,17 @@ class ShootControlTest {
         assertTrue("Short line hold ($shortHold) should be at least 2200ms", shortHold >= 2200L)
         assertTrue("Long line hold ($longHold) should exceed short line hold ($shortHold)", longHold > shortHold + 3000L)
         assertTrue("Long line hold ($longHold) should be capped <= 15000ms", longHold <= 15000L)
+    }
+
+    @Test
+    fun testVoiceCommandsArbitrationBetweenStandbyAndRecording() {
+        val standbyStage = setOf(VoiceCommand.Record)
+        val recordingStage = setOf(VoiceCommand.Cut)
+
+        assertEquals(VoiceCommand.Record, VoiceCommandMatcher.match("Action!", standbyStage))
+        assertNull(VoiceCommandMatcher.match("Cut!", standbyStage))
+
+        assertNull(VoiceCommandMatcher.match("Action!", recordingStage))
+        assertEquals(VoiceCommand.Cut, VoiceCommandMatcher.match("Cut!", recordingStage))
     }
 }

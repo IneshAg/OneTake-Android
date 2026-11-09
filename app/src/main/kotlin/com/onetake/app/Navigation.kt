@@ -25,11 +25,7 @@ sealed class Route(val path: String) {
     data class RunLines(val id: String, val sceneIndex: Int) : Route("runLines/$id/$sceneIndex")
     data class Reader(val id: String, val sceneIndex: Int = 0) : Route("reader/$id/$sceneIndex")
     data class RecordReader(val id: String, val sceneIndex: Int = 0) : Route("recordReader/$id/$sceneIndex")
-    /** `scene` is the scene the camera should open on; -1 lets it pick the next one still to shoot. */
-    data class ShootMode(val id: String, val scene: Int = -1) : Route("shootMode/$id/$scene")
-    data class ShootSetup(val id: String, val scene: Int = -1) : Route("shootSetup/$id/$scene")
     data class Takes(val id: String) : Route("takes/$id")
-    data class TapeCheck(val id: String) : Route("tapeCheck/$id")
     data class Package(val id: String) : Route("package/$id")
     data class Headshots(val auditionId: String? = null) : Route(if (auditionId != null) "headshots/$auditionId" else "headshots") {
         companion object : Route("headshots")
@@ -51,10 +47,7 @@ sealed class Route(val path: String) {
         const val AUDIO_WALK = "audioWalk/{id}/{scene}"
         const val READER = "reader/{id}/{scene}"
         const val RECORD_READER = "recordReader/{id}/{scene}"
-        const val SHOOT_MODE = "shootMode/{id}/{scene}"
-        const val SHOOT_SETUP = "shootSetup/{id}/{scene}"
         const val TAKES = "takes/{id}"
-        const val TAPE_CHECK = "tapeCheck/{id}"
         const val PACKAGE = "package/{id}"
         const val HEADSHOTS_AUDITION = "headshots/{id}"
         const val CAMERA_SHOOT = "camera/shoot/{id}/{scene}"
@@ -89,7 +82,6 @@ sealed class CameraFlow(val path: String) {
 class Navigator(private val nav: NavHostController) {
     var tab by mutableStateOf(AppTab.Auditions)
         private set
-    var isAddAuditionVisible by mutableStateOf(false)
 
     fun push(route: Route) = nav.navigate(route.path)
 
@@ -129,7 +121,7 @@ class Navigator(private val nav: NavHostController) {
     }
 
     fun showAddAudition() {
-        isAddAuditionVisible = true
+        push(Route.NewAudition)
     }
 
     internal fun syncTab(route: String?) {

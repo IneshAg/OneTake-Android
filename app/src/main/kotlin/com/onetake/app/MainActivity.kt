@@ -6,13 +6,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import com.onetake.app.data.SharedNotice
 import com.onetake.app.ui.theme.OneTakeTheme
-import com.onetake.app.ui.theme.StudioFinish
 import com.onetake.app.widget.NextAuditionWidget
 
 class MainActivity : ComponentActivity() {
@@ -25,14 +20,8 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handle(intent)
         enableEdgeToEdge()
         setContent {
-            // Saveable: survives activity recreation (e.g. a dark-mode switch) instead of resetting.
-            var finish by rememberSaveable { mutableStateOf(StudioFinish.VELVET) }
-            OneTakeTheme(studioFinish = finish) {
-                OneTakeApp(
-                    store = store,
-                    currentFinish = finish,
-                    onSelectFinish = { finish = it },
-                )
+            OneTakeTheme {
+                OneTakeApp(store = store)
             }
         }
     }

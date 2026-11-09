@@ -90,37 +90,25 @@ import com.onetake.app.ui.profile.NotificationSettingsScreen
 import com.onetake.app.ui.profile.PrivacyScreen
 import com.onetake.app.ui.profile.ProfileScreen
 import com.onetake.app.ui.shoot.ShootFlowScreen
-import com.onetake.app.ui.shoot.ShootModeScreen
-import com.onetake.app.ui.shoot.ShootSetupScreen
 import com.onetake.app.ui.takes.TakesScreen
-import com.onetake.app.ui.takes.TapeCheckScreen
 import com.onetake.app.ui.profile.ProfileSheet
 import com.onetake.app.ui.theme.OT
-import com.onetake.app.ui.theme.StudioFinish
 
 @Composable
 fun OneTakeApp(
     store: AppStore,
-    currentFinish: StudioFinish = StudioFinish.VELVET,
-    onSelectFinish: (StudioFinish) -> Unit = {},
 ) {
     CompositionLocalProvider(LocalAppStore provides store) {
         if (!store.isOnboarded) {
             OnboardingFlow()
         } else {
-            RootTabs(
-                currentFinish = currentFinish,
-                onSelectFinish = onSelectFinish,
-            )
+            RootTabs()
         }
     }
 }
 
 @Composable
-private fun RootTabs(
-    currentFinish: StudioFinish,
-    onSelectFinish: (StudioFinish) -> Unit,
-) {
+private fun RootTabs() {
     val store = LocalAppStore.current
     val nav = rememberNavController()
     val navigator = remember(nav) { Navigator(nav) }
@@ -189,10 +177,7 @@ private fun RootTabs(
                 withIdScene(Route.Pattern.AUDIO_WALK) { id, s -> AudioWalkScreen(id, s) }
                 withIdScene(Route.Pattern.READER) { id, s -> ReaderScreen(id, s) }
                 withIdScene(Route.Pattern.RECORD_READER) { id, s -> RecordReaderScreen(id, s) }
-                withIdScene(Route.Pattern.SHOOT_MODE) { id, s -> ShootModeScreen(id, s) }
-                withIdScene(Route.Pattern.SHOOT_SETUP) { id, s -> ShootSetupScreen(id, s) }
                 withId(Route.Pattern.TAKES) { TakesScreen(it) }
-                withId(Route.Pattern.TAPE_CHECK) { TapeCheckScreen(it) }
                 withId(Route.Pattern.PACKAGE) { PackageScreen(it) }
                 composable(Route.Headshots.path) { HeadshotsScreen() }
                 withId(Route.Pattern.HEADSHOTS_AUDITION) { HeadshotsScreen(it) }
@@ -227,14 +212,8 @@ private fun RootTabs(
                 )
             }
 
-            if (navigator.isAddAuditionVisible) {
-                AddAuditionSheet(onDismiss = { navigator.isAddAuditionVisible = false })
-            }
-
             if (isProfileSheetVisible) {
                 ProfileSheet(
-                    currentFinish = currentFinish,
-                    onSelectFinish = onSelectFinish,
                     onDismiss = { isProfileSheetVisible = false },
                 )
             }

@@ -46,7 +46,6 @@ import com.onetake.app.Route
 import com.onetake.app.ui.components.GLASS_EDGE_COLOR
 import com.onetake.app.ui.components.GLASS_EDGE_WIDTH
 import com.onetake.app.ui.theme.OT
-import com.onetake.app.ui.theme.StudioFinish
 
 /**
  * Profile & Studio Settings Sheet:
@@ -57,8 +56,6 @@ import com.onetake.app.ui.theme.StudioFinish
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileSheet(
-    currentFinish: StudioFinish,
-    onSelectFinish: (StudioFinish) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val store = LocalAppStore.current
@@ -120,99 +117,9 @@ fun ProfileSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // 1. Dual Studio Appearance Switcher
-            Text(
-                text = "STUDIO FINISH",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.08.sp,
-                color = Color(0xFF86868B),
-                modifier = Modifier.padding(start = 4.dp, bottom = 10.dp),
-            )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(segShape)
-                    .background(Color(0xFF0D0D10))
-                    .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, segShape)
-                    .padding(4.dp),
-            ) {
-                val isVelvet = currentFinish == StudioFinish.VELVET
-                val isObsidian = currentFinish == StudioFinish.OBSIDIAN
-
-                // Velvet Studio Segment
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (isVelvet) Color(0x33C8A8E0) else Color.Transparent)
-                        .border(
-                            width = if (isVelvet) 0.5.dp else 0.dp,
-                            color = if (isVelvet) Color(0x66C8A8E0) else Color.Transparent,
-                            shape = RoundedCornerShape(12.dp),
-                        )
-                        .clickable { onSelectFinish(StudioFinish.VELVET) }
-                        .padding(vertical = 10.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (isVelvet) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = Color(0xFFC8A8E0),
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
-                    Text(
-                        text = "Velvet Purple",
-                        fontSize = 13.sp,
-                        fontWeight = if (isVelvet) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (isVelvet) Color.White else Color(0xFF86868B),
-                    )
-                }
-
-                // Obsidian Studio Segment
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (isObsidian) Color(0x33FFFFFF) else Color.Transparent)
-                        .border(
-                            width = if (isObsidian) 0.5.dp else 0.dp,
-                            color = if (isObsidian) Color(0x66FFFFFF) else Color.Transparent,
-                            shape = RoundedCornerShape(12.dp),
-                        )
-                        .clickable { onSelectFinish(StudioFinish.OBSIDIAN) }
-                        .padding(vertical = 10.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (isObsidian) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
-                    Text(
-                        text = "Obsidian Silver",
-                        fontSize = 13.sp,
-                        fontWeight = if (isObsidian) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (isObsidian) Color.White else Color(0xFF86868B),
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(28.dp))
-
-            // 2. Actor Slate Info Card
+            // Actor Slate Info Card
             Text(
                 text = "ACTOR SLATE",
                 fontSize = 11.sp,

@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import com.onetake.app.CameraFlow
 import com.onetake.app.LocalAppStore
 import com.onetake.app.LocalNavigator
 import com.onetake.app.Navigator
@@ -152,7 +153,6 @@ fun AuditionDetailScreen(auditionId: String) {
     var showMenu by remember { mutableStateOf(false) }
     var showPackage by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
-    var showCallback by remember { mutableStateOf(false) }
     var showEdit by remember { mutableStateOf(false) }
     var showSides by remember { mutableStateOf(false) }
     val c = OT.colors
@@ -178,11 +178,6 @@ fun AuditionDetailScreen(auditionId: String) {
                     DetailMenuItem("Revised sides", "Swap in new pages", Icons.Outlined.Description) {
                         showMenu = false
                         showSides = true
-                    }
-                    OTDivider()
-                    DetailMenuItem("Start a callback", "Same role, next round", Icons.AutoMirrored.Filled.ArrowForward) {
-                        showMenu = false
-                        showCallback = true
                     }
                     OTDivider()
                     DetailMenuItem("Delete audition", null, Icons.Outlined.Delete, destructive = true) {
@@ -224,9 +219,6 @@ fun AuditionDetailScreen(auditionId: String) {
             showPackage = false
             detailOpenPiece(nav, a, piece)
         })
-    }
-    if (showCallback) {
-        DetailCallbackSheet(a, onDismiss = { showCallback = false })
     }
     if (showEdit) {
         DetailEditSheet(a, onDismiss = { showEdit = false })
@@ -377,7 +369,7 @@ private fun DetailUpNext(a: Audition, nav: Navigator) {
                     SectionLabel("Up next · ${next?.title.orEmpty()}")
                     DetailCardTitle(if (next?.kind == PieceKind.Slate) "Record the slate" else "Full-length shot")
                     DetailQuoteLine(store.slate.spoken)
-                    PrimaryButton("Set up the camera", onClick = { nav.push(Route.ShootMode(a.id)) })
+                    PrimaryButton("Set up the camera", onClick = { nav.openCamera(CameraFlow.Shoot(a.id)) })
                 }
                 next != null && next.kind == PieceKind.Scene && !next.title.startsWith("Watch") -> {
                     val sceneIndex = detailSceneIndex(a, next)
@@ -451,7 +443,7 @@ private fun detailThenLine(a: Audition): String? {
 private fun detailOpenPiece(nav: Navigator, a: Audition, piece: Piece) {
     when (piece.kind) {
         PieceKind.Headshot -> nav.push(Route.Headshots(a.id))
-        PieceKind.Slate, PieceKind.FullLength -> nav.push(Route.ShootMode(a.id))
+        PieceKind.Slate, PieceKind.FullLength -> nav.openCamera(CameraFlow.Shoot(a.id))
         PieceKind.Scene -> nav.push(Route.Prepare(a.id, detailSceneIndex(a, piece)))
     }
 }
@@ -623,178 +615,7 @@ private fun DetailPieceBadge(a: Audition, piece: Piece, isNext: Boolean) {
     }
 }
 
-// MARK: - 7c Start a callback
-
 private val detailChipDate = DateTimeFormatter.ofPattern("EEE, d MMM", Locale.US)
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DetailCallbackSheet(a: Audition, onDismiss: () -> Unit) {
-    val store = LocalAppStore.current
-    val nav = LocalNavigator.current
-    val c = OT.colors
-    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val today = remember { LocalDate.now() }
-    val suggested = remember { today.plusDays(5) }
-    var choice by remember { mutableIntStateOf(1) } // 0 tomorrow · 1 suggested · 2 other
-    var otherDate by remember { mutableStateOf<LocalDate?>(null) }
-    var showPicker by remember { mutableStateOf(false) }
-    var selectedScenes by remember { mutableStateOf(a.scenes.map { it.id }.toSet()) }
-    var notes by remember { mutableStateOf("") }
-    var bringReader by remember { mutableStateOf(true) }
-    val readerName = remember(a.id) {
-        a.scenes.flatMap { it.lines }.firstOrNull { !it.isMine }?.character
-            ?.lowercase()?.replaceFirstChar { it.titlecase(Locale.US) }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = state,
-        containerColor = c.bgCanvas,
-    ) {
-        Column(Modifier.fillMaxWidth()) {
-            SheetHeader("Callback", leading = "Cancel", onLeading = onDismiss)
-            Column(
-                Modifier
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = OT.dims.gutter),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                LargeTitle("Start a callback", subtitle = "Same role, same reader. Your first tape stays exactly as you sent it.")
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(a.project, style = OT.type.headline, color = c.labelPrimary)
-                        Text(
-                            "${a.role} · first round" + (a.sentDate?.let { " sent ${it.otDayMonth}" } ?: ""),
-                            style = OT.type.footnote,
-                            color = c.labelTertiary,
-                        )
-                    }
-                    Text(
-                        "Round 2",
-                        style = OT.type.footnote.copy(fontWeight = FontWeight.Medium),
-                        color = c.accent,
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(c.accentSoft).padding(horizontal = 10.dp, vertical = 5.dp),
-                    )
-                }
-
-                SectionLabel("When is it due?", Modifier.padding(top = 4.dp))
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DetailChip("Tomorrow", choice == 0) { choice = 0 }
-                    DetailChip(suggested.format(detailChipDate), choice == 1) { choice = 1 }
-                    DetailChip(otherDate?.format(detailChipDate) ?: "Other date", choice == 2) { showPicker = true }
-                }
-                Text("By 10:00 AM", style = OT.type.footnote, color = c.due)
-                OTDivider()
-
-                SectionLabel("Scenes to tape")
-                a.scenes.forEach { scene ->
-                    val on = scene.id in selectedScenes
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 52.dp)
-                            .clickable { selectedScenes = if (on) selectedScenes - scene.id else selectedScenes + scene.id },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        if (on) {
-                            Icon(Icons.Filled.CheckCircle, "Selected", tint = c.accent, modifier = Modifier.size(24.dp))
-                        } else {
-                            Box(Modifier.size(24.dp).padding(2.dp).border(1.5.dp, c.labelTertiary, CircleShape))
-                        }
-                        Column {
-                            Text("${scene.number} · ${detailSceneName(scene)}", style = OT.type.body, color = c.labelPrimary)
-                            Text("Same pages · ≈ ${formatDuration(scene.estimatedSeconds)}", style = OT.type.footnote, color = c.labelTertiary)
-                        }
-                    }
-                }
-                OTDivider()
-
-                SectionLabel("Notes from casting")
-                BasicTextField(
-                    value = notes,
-                    onValueChange = { notes = it },
-                    textStyle = OT.type.body.copy(color = c.labelPrimary),
-                    cursorBrush = SolidColor(c.accent),
-                    modifier = Modifier.fillMaxWidth(),
-                    decorationBox = { inner ->
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 72.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(c.fillField)
-                                .padding(14.dp),
-                        ) {
-                            if (notes.isEmpty()) {
-                                Text("e.g. “Less angry, more hurt. Slower on the last line.”", style = OT.type.body, color = c.labelTertiary)
-                            }
-                            inner()
-                        }
-                    },
-                )
-                Text("Shown on Prepare, so you see the adjustment before every take.", style = OT.type.footnote, color = c.labelTertiary)
-                OTDivider()
-
-                Row(
-                    Modifier.fillMaxWidth().clickable { bringReader = !bringReader }.padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        SectionLabel("Bring over")
-                        Text(if (readerName != null) "Reader track · $readerName" else "Reader track", style = OT.type.body, color = c.labelPrimary)
-                    }
-                    OTSwitch(bringReader, { bringReader = it })
-                }
-                Spacer(Modifier.height(4.dp))
-            }
-            PrimaryButton(
-                "Create callback",
-                onClick = {
-                    val dueDate = when (choice) {
-                        0 -> today.plusDays(1)
-                        2 -> otherDate ?: suggested
-                        else -> suggested
-                    }
-                    val callback = store.startCallback(
-                        original = a,
-                        due = dueDate.atTime(10, 0),
-                        sceneIds = selectedScenes,
-                        notes = notes,
-                        shareReader = bringReader,
-                    )
-                    onDismiss()
-                    nav.push(Route.AuditionDetail(callback.id))
-                },
-                enabled = selectedScenes.isNotEmpty(),
-                modifier = Modifier.padding(horizontal = OT.dims.gutter, vertical = 8.dp),
-            )
-        }
-    }
-
-    if (showPicker) {
-        val pickerState = rememberDatePickerState(
-            initialSelectedDateMillis = (otherDate ?: suggested).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli(),
-        )
-        DatePickerDialog(
-            onDismissRequest = { showPicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    pickerState.selectedDateMillis?.let {
-                        otherDate = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
-                        choice = 2
-                    }
-                    showPicker = false
-                }) { Text("Done", color = c.accent) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPicker = false }) { Text("Cancel", color = c.labelSecondary) }
-            },
-        ) { DatePicker(state = pickerState) }
-    }
-}
 
 @Composable
 private fun DetailChip(text: String, selected: Boolean, onClick: () -> Unit) {

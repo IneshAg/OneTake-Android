@@ -465,7 +465,7 @@ private fun PkgReview(
                     iconTint = checkTint,
                     title = checkTitle,
                     value = checkValue,
-                    onClick = { nav.push(Route.TapeCheck(a.id)) },
+                    onClick = { /* Tape Check is integrated into Ready to Send */ },
                     showDivider = true,
                 )
                 PkgRow(

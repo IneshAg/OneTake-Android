@@ -154,7 +154,7 @@ fun TakesScreen(auditionId: String) {
             current = current,
             onClose = { comparing = false },
             onCircle = { store.circle(it); haptics.success() },
-            onSend = { comparing = false; nav.push(Route.TapeCheck(auditionId)) },
+            onSend = { comparing = false; nav.push(Route.Package(auditionId)) },
         )
         return
     }
@@ -334,14 +334,14 @@ fun TakesScreen(auditionId: String) {
             if (takes.isEmpty()) {
                 PrimaryButton(
                     "Record take",
-                    onClick = { nav.push(Route.ShootMode(auditionId, sceneIndex)) },
+                    onClick = { nav.openCamera(CameraFlow.Shoot(auditionId, sceneIndex)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {
                 SecondaryButton("Go again", onClick = { showOneMore = true }, modifier = Modifier.width(130.dp))
                 PrimaryButton(
                     if (circled != null) "Send take ${circled.number}" else "Check & send",
-                    onClick = { nav.push(Route.TapeCheck(auditionId)) },
+                    onClick = { nav.push(Route.Package(auditionId)) },
                     modifier = Modifier.weight(1f),
                 )
             }

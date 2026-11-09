@@ -33,4 +33,12 @@ class NavigationTest {
     fun testRouteNewAuditionDefinition() {
         assertEquals("newAudition", com.onetake.app.Route.NewAudition.path)
     }
+
+    @Test
+    fun testLegacyInterstitialRoutesArePruned() {
+        val routeClassNames = com.onetake.app.Route::class.sealedSubclasses.map { it.simpleName }
+        org.junit.Assert.assertFalse("ShootMode must be pruned", routeClassNames.contains("ShootMode"))
+        org.junit.Assert.assertFalse("ShootSetup must be pruned", routeClassNames.contains("ShootSetup"))
+        org.junit.Assert.assertFalse("TapeCheck must be pruned", routeClassNames.contains("TapeCheck"))
+    }
 }

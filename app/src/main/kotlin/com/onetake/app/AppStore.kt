@@ -238,40 +238,6 @@ class AppStore(application: Application) : AndroidViewModel(application) {
         auditions = listOf(audition) + auditions
     }
 
-    /** Creates the next round for [original]: same role and project, the chosen scenes, a fresh
-     *  set of pieces to record, and casting's notes. With [shareReader] the scenes keep their ids,
-     *  so the reader recordings carry over; otherwise they're new scenes with no reader track. */
-    fun startCallback(
-        original: Audition,
-        due: LocalDateTime,
-        sceneIds: Set<String>,
-        notes: String,
-        shareReader: Boolean,
-    ): Audition {
-        val scenes = original.scenes.filter { it.id in sceneIds }
-            .map { if (shareReader) it else it.copy(id = UUID.randomUUID().toString()) }
-        val pieces = buildList {
-            original.pieces.firstOrNull { it.kind == PieceKind.Headshot }
-                ?.let { add(it.copy(id = UUID.randomUUID().toString(), isDone = headshots.isNotEmpty())) }
-            if (original.pieces.any { it.kind == PieceKind.Slate }) add(Piece(kind = PieceKind.Slate, title = "Slate", detail = "Name, height, city", isDone = false))
-            scenes.forEach { add(Piece(kind = PieceKind.Scene, title = it.title, detail = "", isDone = false)) }
-        }
-        val callback = original.copy(
-            id = UUID.randomUUID().toString(),
-            due = due,
-            pieces = pieces,
-            scenes = scenes,
-            status = AuditionStatus.Due,
-            sentDate = null,
-            slateVideoUri = null,
-            fullLengthVideoUri = null,
-            exportedFileUri = null,
-            notes = notes.trim(),
-        )
-        add(callback)
-        return callback
-    }
-
     /** Deletes an audition along with everything recorded for it: its takes, slate,
      *  full length, export, reader recordings, and the practice pieces made from its scenes (and
      *  their practice takes). An export file another audition also points at is kept. */

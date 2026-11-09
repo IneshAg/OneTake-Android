@@ -587,7 +587,7 @@ fun HeadshotsScreen(auditionId: String? = null) {
             val updated = store.audition(targetAudition.id)
             val next = updated?.nextPiece
             when (next?.kind) {
-                PieceKind.Slate, PieceKind.FullLength -> nav.push(Route.ShootMode(targetAudition.id))
+                PieceKind.Slate, PieceKind.FullLength -> nav.openCamera(CameraFlow.Shoot(targetAudition.id))
                 PieceKind.Scene -> {
                     if (updated.scenes.isNotEmpty()) {
                         nav.push(Route.Prepare(targetAudition.id, 0))

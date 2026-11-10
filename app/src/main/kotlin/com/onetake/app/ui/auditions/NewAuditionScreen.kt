@@ -125,7 +125,6 @@ import com.onetake.app.ui.components.PrimaryStageCta
 import com.onetake.app.ui.components.SectionLabel
 import com.onetake.app.ui.components.SheetHeader
 import com.onetake.app.ui.components.SpotlightStageScaffold
-import com.onetake.app.ui.components.StageLightBar
 import com.onetake.app.ui.system.clipboardText
 import com.onetake.app.ui.system.fileProviderUri
 import com.onetake.app.ui.system.rememberHaptics
@@ -1037,10 +1036,7 @@ private fun AddReviewStep(
                     modifier = Modifier.size(18.dp),
                 )
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                StageLightBar(isPulsing = false)
-                Text("NEW AUDITION", style = OT.type.navCaption, color = c.labelSecondary)
-            }
+            Text("NEW AUDITION", style = OT.type.navCaption, color = c.labelSecondary)
             Box(
                 Modifier
                     .heightIn(min = 36.dp)

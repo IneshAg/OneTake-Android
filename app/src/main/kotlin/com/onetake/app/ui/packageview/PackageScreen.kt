@@ -1256,8 +1256,6 @@ private fun PkgSent(a: Audition, onDone: () -> Unit) {
     val nextAudition = activeAuditions.firstOrNull()
 
     SpotlightStageScaffold(
-        showStageLight = true,
-        isStageLightPulsing = false,
         stageContent = {
             Text(
                 text = "CURTAIN",

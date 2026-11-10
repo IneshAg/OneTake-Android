@@ -172,17 +172,7 @@ fun PracticeScreen(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = TabBarClearance + 20.dp),
         ) {
-            // Stage Light Bar at top of stage
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp, bottom = 2.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                com.onetake.app.ui.components.StageLightBar()
-            }
-
-            // Top Action Bar with Editorial Headline + PROMINENT "+ Add Script" Button
+            // Top Action Bar with Editorial Headline + PROMINENT Glowing "+ Add Script" Button
             com.onetake.app.ui.practice.components.PracticeTopBar(
                 onAddClick = { nav.push(Route.PracticeSetup) },
                 onAvatarClick = { onOpenProfile?.invoke() ?: nav.push(Route.Headshots) },

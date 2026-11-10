@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,7 +48,6 @@ import com.onetake.app.ui.auditions.components.AuditionsTopBar
 import com.onetake.app.ui.auditions.components.HeroStageCard
 import com.onetake.app.ui.auditions.components.InsetRosterList
 import com.onetake.app.ui.components.SFSymbols
-import com.onetake.app.ui.components.StageLightBar
 import com.onetake.app.ui.theme.OT
 import java.time.Duration
 import java.time.LocalDateTime
@@ -121,17 +121,7 @@ fun AuditionsScreen(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = TabBarClearance + 20.dp),
         ) {
-            // Stage Light Bar at top of stage
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp, bottom = 2.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                StageLightBar()
-            }
-
-            // Top Action Bar with Editorial Headline + PROMINENT "+ New" Button
+            // Top Action Bar with Editorial Headline + PROMINENT Glowing "+ New" Button
             AuditionsTopBar(
                 currentFilter = currentFilter,
                 onSelectFilter = { currentFilter = it },
@@ -210,30 +200,54 @@ fun AuditionsScreen(
 
                         Spacer(modifier = Modifier.height(26.dp))
 
-                        // Prominent Add Audition Button
-                        Row(
-                            modifier = Modifier
-                                .height(48.dp)
-                                .clip(RoundedCornerShape(24.dp))
-                                .background(OT.colors.accentGold)
-                                .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(24.dp))
-                                .clickable { nav.push(Route.NewAudition) }
-                                .padding(horizontal = 24.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                                tint = Color(0xFF141416),
-                                modifier = Modifier.size(20.dp),
+                        // Glowing Prominent Add Audition Button
+                        Box(contentAlignment = Alignment.Center) {
+                            // Radiant Glow Aura
+                            Box(
+                                modifier = Modifier
+                                    .height(62.dp)
+                                    .width(190.dp)
+                                    .clip(RoundedCornerShape(31.dp))
+                                    .background(
+                                        Brush.radialGradient(
+                                            colors = listOf(
+                                                Color(0xFFFFE5B4).copy(alpha = 0.55f),
+                                                Color(0xFFE9D2A8).copy(alpha = 0.22f),
+                                                Color.Transparent,
+                                            )
+                                        )
+                                    )
                             )
-                            Text(
-                                text = "Add Audition",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF141416),
-                            )
+
+                            // Button Core with luminous warm gold gradient and specular rim
+                            Row(
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(24.dp))
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(Color(0xFFF3E2BD), Color(0xFFE9D2A8))
+                                        )
+                                    )
+                                    .border(1.dp, Color.White.copy(alpha = 0.75f), RoundedCornerShape(24.dp))
+                                    .clickable { nav.push(Route.NewAudition) }
+                                    .padding(horizontal = 24.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = null,
+                                    tint = Color(0xFF141416),
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Text(
+                                    text = "Add Audition",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF141416),
+                                )
+                            }
                         }
                     }
                 }

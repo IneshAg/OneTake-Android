@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -112,35 +114,59 @@ fun AuditionsTopBar(
                 )
             }
 
-            // 2. PROMINENT High-Visibility "+ New" Pill Button
-            Row(
-                modifier = Modifier
-                    .height(38.dp)
-                    .clip(RoundedCornerShape(19.dp))
-                    .background(OT.colors.accentGold)
-                    .border(0.5.dp, Color(0x40FFFFFF), RoundedCornerShape(19.dp))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        role = Role.Button,
-                        onClick = onAddClick,
+            // 2. PROMINENT Glowing "+ New" Pill Button
+            Box(contentAlignment = Alignment.Center) {
+                // Radiant Ambient Glowing Halo
+                Box(
+                    modifier = Modifier
+                        .height(50.dp)
+                        .width(96.dp)
+                        .clip(RoundedCornerShape(25.dp))
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    Color(0xFFFFE5B4).copy(alpha = 0.55f),
+                                    Color(0xFFE9D2A8).copy(alpha = 0.22f),
+                                    Color.Transparent,
+                                )
+                            )
+                        )
+                )
+
+                // Luminous Gold Button Core with specular rim
+                Row(
+                    modifier = Modifier
+                        .height(38.dp)
+                        .clip(RoundedCornerShape(19.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Color(0xFFF3E2BD), Color(0xFFE9D2A8))
+                            )
+                        )
+                        .border(1.dp, Color.White.copy(alpha = 0.75f), RoundedCornerShape(19.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Button,
+                            onClick = onAddClick,
+                        )
+                        .padding(horizontal = 15.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = Color(0xFF141416),
+                        modifier = Modifier.size(16.dp),
                     )
-                    .padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = null,
-                    tint = Color(0xFF141416),
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    text = "New",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF141416),
-                )
+                    Text(
+                        text = "New",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF141416),
+                    )
+                }
             }
 
             // 3. Avatar Profile Button

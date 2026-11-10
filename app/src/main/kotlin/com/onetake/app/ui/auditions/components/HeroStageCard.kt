@@ -161,20 +161,42 @@ fun HeroStageCard(
                     color = OT.colors.accentGold,
                 )
 
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(OT.colors.stageLight)
-                        .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Open",
-                        tint = Color(0xFF050505),
-                        modifier = Modifier.size(18.dp),
+                // Glowing launch action button
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFFFFE5B4).copy(alpha = 0.55f),
+                                        Color(0xFFE9D2A8).copy(alpha = 0.20f),
+                                        Color.Transparent,
+                                    )
+                                )
+                            )
                     )
+
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color(0xFFF3E2BD), Color(0xFFE9D2A8))
+                                )
+                            )
+                            .border(1.dp, Color.White.copy(alpha = 0.75f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Open",
+                            tint = Color(0xFF050505),
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
         }

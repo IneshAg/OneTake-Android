@@ -166,7 +166,7 @@ fun SpotlightStageScaffold(
     onClose: (() -> Unit)? = null,
     topTrailingContent: (@Composable () -> Unit)? = null,
     wingsContent: (@Composable ColumnScope.() -> Unit)? = null,
-    showStageLight: Boolean = true,
+    showStageLight: Boolean = false,
     isStageLightPulsing: Boolean = false,
     stageContent: @Composable ColumnScope.() -> Unit,
 ) {

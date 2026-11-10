@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -274,7 +275,7 @@ fun LiquidGlassNavBar(
             }
         }
 
-        // ── 2. ColorOS 17 Floating Action Orb (Right Edge) ──────────────────
+        // ── 2. ColorOS 17 Floating Action Orb (Right Edge with Glowing Aura) ──
         if (orbAlpha > 0.01f) {
             val orbBg = Color(0xFFB4BCE8) // ColorOS 17 signature light pastel periwinkle
             val orbIconTint = Color(0xFF141416)
@@ -282,38 +283,67 @@ fun LiquidGlassNavBar(
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .size(orbSize)
-                    .graphicsLayer {
-                        translationX = orbTranslateX.toPx()
-                        scaleX = orbScale
-                        scaleY = orbScale
-                        alpha = orbAlpha
-                    }
-                    .clip(circleShape)
-                    .background(orbBg)
-                    .border(0.5.dp, Color(0x40FFFFFF), circleShape)
-                    .clickable(
-                        enabled = isSearchAvailable,
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        role = Role.Tab,
-                    ) {
-                        haptics.play(Haptic.Select)
-                        currentOnSelect(AppTab.Search)
-                    }
-                    .semantics {
-                        contentDescription = "Search"
-                        this.selected = isSearchSelected
-                        this.role = Role.Tab
-                    },
+                    .size(orbSize + 14.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = orbIconTint,
-                    modifier = Modifier.size(24.dp),
+                // Soft Radiant Glowing Aura
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            translationX = orbTranslateX.toPx()
+                            scaleX = orbScale
+                            scaleY = orbScale
+                            alpha = orbAlpha
+                        }
+                        .clip(circleShape)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(
+                                    Color(0xFFC7CFF8).copy(alpha = 0.50f),
+                                    Color(0xFFB4BCE8).copy(alpha = 0.18f),
+                                    Color.Transparent,
+                                )
+                            )
+                        )
                 )
+
+                // Orb Core
+                Box(
+                    modifier = Modifier
+                        .size(orbSize)
+                        .graphicsLayer {
+                            translationX = orbTranslateX.toPx()
+                            scaleX = orbScale
+                            scaleY = orbScale
+                            alpha = orbAlpha
+                        }
+                        .clip(circleShape)
+                        .background(orbBg)
+                        .border(1.dp, Color.White.copy(alpha = 0.50f), circleShape)
+                        .clickable(
+                            enabled = isSearchAvailable,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Tab,
+                        ) {
+                            haptics.play(Haptic.Select)
+                            currentOnSelect(AppTab.Search)
+                        }
+                        .semantics {
+                            contentDescription = "Search"
+                            this.selected = isSearchSelected
+                            this.role = Role.Tab
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = orbIconTint,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
             }
         }
     }

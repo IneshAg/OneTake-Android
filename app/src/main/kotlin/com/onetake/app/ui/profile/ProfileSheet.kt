@@ -69,15 +69,7 @@ fun ProfileSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xF2121016),
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .padding(vertical = 12.dp)
-                    .size(width = 38.dp, height = 4.dp)
-                    .clip(CircleShape)
-                    .background(Color(0x33FFFFFF))
-            )
-        },
+        dragHandle = null,
     ) {
         Column(
             modifier = Modifier

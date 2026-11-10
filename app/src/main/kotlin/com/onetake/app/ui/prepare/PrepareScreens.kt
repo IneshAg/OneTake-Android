@@ -866,7 +866,7 @@ private fun PrepEditDialog(
 private fun PrompterSettingsSheet(onDismiss: () -> Unit) {
     val c = OT.colors
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.bgCanvas) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.bgCanvas, dragHandle = null) {
         Column(
             Modifier
                 .fillMaxWidth()

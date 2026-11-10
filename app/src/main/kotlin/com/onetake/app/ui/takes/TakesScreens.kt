@@ -387,6 +387,7 @@ fun TakesScreen(auditionId: String) {
             onDismissRequest = { showOneMore = false },
             sheetState = sheetState,
             containerColor = c.surfaceCard,
+            dragHandle = null,
         ) {
             Column(
                 Modifier
@@ -1000,6 +1001,7 @@ private fun TkTrimSheet(take: Take, onClose: () -> Unit) {
         onDismissRequest = { if (!saving) onClose() },
         sheetState = sheetState,
         containerColor = c.bgCanvas,
+        dragHandle = null,
     ) {
         Column(
             Modifier

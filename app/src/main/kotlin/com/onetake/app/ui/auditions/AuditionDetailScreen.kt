@@ -657,6 +657,7 @@ private fun DetailPackageSheet(a: Audition, onDismiss: () -> Unit, onOpen: (Piec
         onDismissRequest = onDismiss,
         sheetState = state,
         containerColor = c.surfaceCard,
+        dragHandle = null,
     ) {
         Column(
             Modifier
@@ -841,7 +842,7 @@ private fun DetailEditSheet(a: Audition, onDismiss: () -> Unit) {
     var status by remember { mutableStateOf(a.status) }
     var showPicker by remember { mutableStateOf(false) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = c.bgCanvas) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = c.bgCanvas, dragHandle = null) {
         Column(Modifier.fillMaxWidth()) {
             SheetHeader("Edit details", leading = "Cancel", onLeading = onDismiss)
             Column(
@@ -1071,7 +1072,7 @@ private fun DetailRevisedSidesSheet(a: Audition, onDismiss: () -> Unit) {
         else com.onetake.app.data.ScriptParser.parseScenes(text, a.role)
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = c.bgCanvas) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = c.bgCanvas, dragHandle = null) {
         Column(Modifier.fillMaxWidth()) {
             SheetHeader("Revised sides", leading = "Cancel", onLeading = onDismiss)
             Column(

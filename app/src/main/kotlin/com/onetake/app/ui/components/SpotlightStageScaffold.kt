@@ -32,7 +32,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.onetake.app.ui.theme.OT
@@ -52,8 +54,8 @@ fun StageLightBar(modifier: Modifier = Modifier, isPulsing: Boolean = false) {
     val alphaAnim = if (isPulsing) {
         val infinite = rememberInfiniteTransition(label = "stagePulse")
         val a by infinite.animateFloat(
-            initialValue = 0.30f,
-            targetValue = 0.95f,
+            initialValue = 0.35f,
+            targetValue = 1.0f,
             animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
             label = "pulseAlpha"
         )
@@ -61,12 +63,42 @@ fun StageLightBar(modifier: Modifier = Modifier, isPulsing: Boolean = false) {
     } else 1f
 
     Box(
-        modifier = modifier
-            .width(SpotlightStageGeometry.STAGE_LIGHT_BAR_WIDTH_DP.dp)
-            .height(SpotlightStageGeometry.STAGE_LIGHT_BAR_HEIGHT_DP.dp)
-            .clip(RoundedCornerShape(50))
-            .background(OT.colors.stageLight.copy(alpha = alphaAnim))
-    )
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        // Glowing radiant halo behind the light bar
+        Box(
+            modifier = Modifier
+                .width(68.dp)
+                .height(18.dp)
+                .graphicsLayer { alpha = alphaAnim }
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            Color(0xFFFFF6DF).copy(alpha = 0.45f),
+                            Color(0xFFE9D2A8).copy(alpha = 0.20f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+        // Luminous core light bar
+        Box(
+            modifier = Modifier
+                .width(SpotlightStageGeometry.STAGE_LIGHT_BAR_WIDTH_DP.dp)
+                .height(SpotlightStageGeometry.STAGE_LIGHT_BAR_HEIGHT_DP.dp)
+                .clip(RoundedCornerShape(50))
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            Color(0xFFE9D2A8),
+                            Color(0xFFFFFDF7),
+                            Color(0xFFE9D2A8)
+                        )
+                    )
+                )
+        )
+    }
 }
 
 @Composable
@@ -75,7 +107,7 @@ fun PrimaryStageCta(
     modifier: Modifier = Modifier,
     caption: String? = null,
     isRecord: Boolean = false,
-    onClick: () -> Unit,
+    onClick: UnitFunction = {},
 ) {
     val ctaColor = if (isRecord) OT.colors.recRed else OT.colors.stageLight
     val iconColor = if (isRecord) Color.White else Color(0xFF050505)
@@ -90,19 +122,28 @@ fun PrimaryStageCta(
                 .size((SpotlightStageGeometry.PRIMARY_CTA_DIAMETER_DP + SpotlightStageGeometry.PRIMARY_CTA_HALO_WIDTH_DP * 2).dp),
             contentAlignment = Alignment.Center
         ) {
-            // Halo ring
+            // Radiant Glowing Halo ring
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(CircleShape)
-                    .background(ctaColor.copy(alpha = 0.14f))
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                ctaColor.copy(alpha = 0.35f),
+                                ctaColor.copy(alpha = 0.12f),
+                                Color.Transparent
+                            )
+                        )
+                    )
             )
-            // Button core
+            // Button core with luminous specular rim
             Box(
                 modifier = Modifier
                     .size(SpotlightStageGeometry.PRIMARY_CTA_DIAMETER_DP.dp)
                     .clip(CircleShape)
                     .background(ctaColor)
+                    .border(1.dp, Color.White.copy(alpha = 0.40f), CircleShape)
                     .clickable(onClick = onClick),
                 contentAlignment = Alignment.Center
             ) {
@@ -114,6 +155,8 @@ fun PrimaryStageCta(
         }
     }
 }
+
+private typealias UnitFunction = () -> Unit
 
 @Composable
 fun SpotlightStageScaffold(
@@ -186,14 +229,37 @@ fun SpotlightStageScaffold(
             }
         }
 
-        // The Lit Stage (~68%)
-        Column(
+        // The Lit Stage (~68%) with ambient spotlight glow
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(SpotlightStageGeometry.LIT_STAGE_WEIGHT),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            content = stageContent
-        )
+        ) {
+            if (showStageLight) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xFFFFF8EB).copy(alpha = 0.12f),
+                                    Color(0xFFE9D2A8).copy(alpha = 0.05f),
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                content = stageContent
+            )
+        }
 
         // Hairline Divider & In the Wings (~32%)
         if (wingsContent != null) {
@@ -208,7 +274,8 @@ fun SpotlightStageScaffold(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(SpotlightStageGeometry.IN_THE_WINGS_WEIGHT)
-                    .background(OT.colors.surfaceStage),
+                    .background(OT.colors.surfaceStage)
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
                 content = wingsContent
             )
         }

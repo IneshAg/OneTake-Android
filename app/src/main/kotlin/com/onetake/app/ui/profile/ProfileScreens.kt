@@ -787,6 +787,7 @@ private fun HeadshotOptionsSheet(
         onDismissRequest = onDismiss,
         sheetState = state,
         containerColor = c.surfaceCard,
+        dragHandle = null,
     ) {
         Column(
             Modifier
@@ -898,6 +899,7 @@ private fun HeadshotCropSheet(
         onDismissRequest = { if (!saving) onDismiss() },
         sheetState = state,
         containerColor = c.surfaceCard,
+        dragHandle = null,
     ) {
         Column(
             Modifier

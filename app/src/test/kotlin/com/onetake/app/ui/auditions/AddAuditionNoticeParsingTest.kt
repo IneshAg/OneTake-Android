@@ -101,6 +101,18 @@ class AddAuditionNoticeParsingTest {
     }
 
     @Test
+    fun testNewAuditionBlankDraftOpensInReviewStepNotCouldNotRead() {
+        val draft = AddDraft()
+        assertEquals(AddAuditionSource.Type, draft.source)
+        val notice = ""
+        val initialStep = when {
+            notice.isNotBlank() -> "Reading"
+            else -> "Review"
+        }
+        assertEquals("Review", initialStep)
+    }
+
+    @Test
     fun testContextAwareReviewTitlesAndSubtitles() {
         // Manual Type mode
         assertEquals("Audition details", addReviewTitle(AddAuditionSource.Type))

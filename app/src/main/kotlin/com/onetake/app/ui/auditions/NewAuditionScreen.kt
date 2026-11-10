@@ -207,7 +207,7 @@ internal data class AddDraft(
     val asks: List<String> = emptyList(),
     val destination: Destination = Destination.ActorsAccess,
     val rawScriptText: String = "",
-    val source: AddAuditionSource = AddAuditionSource.Paste,
+    val source: AddAuditionSource = AddAuditionSource.Type,
     val kind: DocumentKind = DocumentKind.CastingNotice,
     val detectedCharacters: List<String> = emptyList(),
     val allAvailableRoles: List<String> = emptyList(),
@@ -353,10 +353,8 @@ fun NewAuditionScreen(onClose: () -> Unit) {
     var showDiscardConfirm by remember { mutableStateOf(false) }
 
     val initialStep = when {
-        draft.source == AddAuditionSource.Type -> AddStep.Review
         store.incomingShare != null -> AddStep.Reading
         store.pendingNewAuditionUris.isNotEmpty() -> AddStep.Reading
-        draft.source == AddAuditionSource.Paste && notice.isBlank() -> AddStep.CouldNotRead
         notice.isNotBlank() -> AddStep.Reading
         else -> AddStep.Review
     }
